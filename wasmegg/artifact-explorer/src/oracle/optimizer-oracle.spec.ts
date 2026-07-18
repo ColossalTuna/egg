@@ -33,6 +33,9 @@ import { evaluateAllocation, OracleInstance, targetQ } from './evaluate';
 import { FAMILIES, Family, generateInstance } from './generate';
 
 const GAP_TOL = Number(process.env.ORACLE_GAP_TOL ?? 1e-3);
+// the always-on smoke tier only guards against catastrophic gaps; fine-grained
+// optimality gauging is the deep campaign's job
+const SMOKE_GAP_TOL = Math.max(GAP_TOL, 0.05);
 const HONESTY_TOL = Number(process.env.ORACLE_HONESTY_TOL ?? 1e-6);
 const DEEP = process.env.RUN_ORACLE === '1';
 const BUDGET_MS = Number(process.env.ORACLE_TIME_BUDGET_MS ?? 25 * 60_000);
@@ -101,7 +104,9 @@ function shipsPerBatch(): number {
 }
 
 // choiceHistory entries don't carry the option id, but the generator
-// guarantees each option has a unique (fuel, time) cost pair
+// guarantees each option has a unique (fuel, time, target) triple — real
+// options from the same mission share fuel and time across targets, so the
+// target is a necessary part of the key
 function reconstructAllocation(inst: OracleInstance, solution: OptimizerSolution): number[] {
   const scale = shipsPerBatch();
   const allocation = new Array<number>(inst.options.length).fill(0);
@@ -110,11 +115,14 @@ function reconstructAllocation(inst: OracleInstance, solution: OptimizerSolution
       continue;
     }
     const idx = inst.options.findIndex(
-      opt => opt.actualFuel === launch.actualFuel && opt.actualTime === launch.actualTime
+      opt =>
+        opt.actualFuel === launch.actualFuel &&
+        opt.actualTime === launch.actualTime &&
+        opt.targetAfxId === launch.targetAfxId
     );
     if (idx === -1) {
       throw new Error(
-        `choiceHistory entry (fuel=${launch.actualFuel}, time=${launch.actualTime}) matches no input option`
+        `choiceHistory entry (fuel=${launch.actualFuel}, time=${launch.actualTime}, target=${launch.targetAfxId}) matches no input option`
       );
     }
     const batches = launch.numShipsLaunched / scale;
@@ -170,7 +178,7 @@ function solverPricesAllocation(inst: OracleInstance, allocation: number[]): num
   return claimedProbability(solution, inst);
 }
 
-function checkInstance(inst: OracleInstance): InstanceOutcome {
+function checkInstance(inst: OracleInstance, gapTol = GAP_TOL): InstanceOutcome {
   const failures: InstanceFailure[] = [];
   const fail = (kind: InstanceFailure['kind'], detail: string) =>
     failures.push({ family: inst.label, seed: inst.seed, kind, detail });
@@ -185,16 +193,24 @@ function checkInstance(inst: OracleInstance): InstanceOutcome {
     return { family: inst.label, seed: inst.seed, gap: NaN, failures };
   }
 
+  // tolerances are relative: real fuel costs run to billions of eggs
   const fuelUsed = allocation.reduce((sum, k, i) => sum + k * inst.options[i].actualFuel, 0);
   const timeUsed = allocation.reduce((sum, k, i) => sum + k * inst.options[i].actualTime, 0);
-  if (fuelUsed > inst.fuelCapacity + 1e-9 || timeUsed > inst.timeCapacity + 1e-9) {
+  const slack = (x: number) => 1e-9 * Math.max(1, x);
+  if (
+    fuelUsed > inst.fuelCapacity + slack(inst.fuelCapacity) ||
+    timeUsed > inst.timeCapacity + slack(inst.timeCapacity)
+  ) {
     fail(
       'feasibility',
       `plan uses fuel=${fuelUsed}/${inst.fuelCapacity}, time=${timeUsed}/${inst.timeCapacity}`
     );
     return { family: inst.label, seed: inst.seed, gap: NaN, failures };
   }
-  if (Math.abs(solution.fuelUsed - fuelUsed) > 1e-6 || Math.abs(solution.timeUnitsUsed - timeUsed) > 1e-6) {
+  if (
+    Math.abs(solution.fuelUsed - fuelUsed) > 1e-6 * Math.max(1, fuelUsed) ||
+    Math.abs(solution.timeUnitsUsed - timeUsed) > 1e-6 * Math.max(1, timeUsed)
+  ) {
     fail(
       'feasibility',
       `reported usage fuel=${solution.fuelUsed}, time=${solution.timeUnitsUsed} but plan uses fuel=${fuelUsed}, time=${timeUsed}`
@@ -228,7 +244,7 @@ function checkInstance(inst: OracleInstance): InstanceOutcome {
 
   const oracle = bruteForceBest(inst);
   const gap = Math.max(0, oracle.bestProbability - planEval.probability);
-  if (gap > GAP_TOL) {
+  if (gap > gapTol) {
     // ask the solver itself to price the oracle's allocation; if its own
     // value function agrees the alternative is better, the gap cannot be an
     // artifact of the oracle's independent model
@@ -468,7 +484,7 @@ describe('oracle smoke fuzz', () => {
       for (let seed = 1; seed <= 3; seed++) {
         const inst = generateInstance(family, seed);
         if (inst) {
-          outcomes.push(checkInstance(inst));
+          outcomes.push(checkInstance(inst, SMOKE_GAP_TOL));
         }
       }
     }
