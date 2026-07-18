@@ -81,13 +81,22 @@ default suite doesn't flake on known heuristic-scale gaps; the deep campaign
 asserts the strict tolerance. Every failure line carries the family and
 seed, so any finding can be reproduced exactly.
 
-## Baseline (2026-07-18, real-data harness)
+## Baseline (2026-07-18, real-data harness, ~200k instances)
 
-Feasibility, honesty, and calibration all pass. On real game data the solver
-is far closer to optimal than on adversarial synthetic fixtures, but still
-not within tolerance everywhere: see the summary block `pnpm test:oracle`
-prints (gap rate, mean/max gap, worst seeds) for the current numbers. In the
-initial campaign the misses concentrate in `cheap-filler`-shaped budgets
-(~2% of that family above 1e-3, worst ~2e-2): plans that under-use the
-budget remainder a cheap mission should fill. Until the solver improves,
-expect the deep campaign to be red.
+Honesty and calibration pass everywhere. Two classes of defect found:
+
+- **Optimality**: 0.41% of instances above the 1e-3 tolerance (2.0% with any
+  nonzero gap; mean gap ~1.8e-5, worst 3.4e-2). Misses concentrate in
+  `cheap-filler`-shaped budgets (~1.7% of that family): plans that under-use
+  the budget remainder a cheap mission should fill.
+- **Feasibility**: one instance (`random-single` seed 104282, loot snapshot
+  of this date) where the returned plan overshoots BOTH budgets — 15 batches
+  of chickfiant-short reporting fuelUsed at 1.59x the fuel budget and
+  timeUnitsUsed at 4.57x the time budget. Two of the four offered options
+  individually exceed the time budget and could never legally launch, which
+  may be the trigger. This violates the invariant the pipeline spec itself
+  asserts (`fuelUsed <= fuelTankCapacity`).
+
+Until the solver improves, expect the deep campaign to be red; the summary
+block it prints (gap rate, mean/max gap, worst seeds) is the number to
+watch.
