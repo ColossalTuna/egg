@@ -38,6 +38,7 @@
     "serve": "vite preview",
     "format": "prettier --write \"src/**/*.{js,ts,vue}\"",
     "test": "vitest run",
+    "test:oracle": "RUN_ORACLE=1 vitest run src/oracle/optimizer-oracle.spec.ts --disable-console-intercept",
     "coverage": "vitest run --coverage",
     "test:watch": "vitest"
   }
