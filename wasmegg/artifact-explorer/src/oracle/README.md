@@ -63,10 +63,13 @@ reproduced exactly.
 
 ## Baseline (2026-07-18, first run of the harness)
 
-Feasibility, honesty, and calibration all pass. Optimality does not: across
-hundreds of thousands of instances, roughly **3% have a confirmed optimality
-gap above 1e-3**, with worst cases losing ~0.7 in absolute probability. Every
-sampled gap was confirmed by the solver's own value function, so this is the
-outer search (not the value model) leaving probability on the table. Until
+Feasibility, honesty, and calibration all pass across ~3.8M instances (a
+24-minute campaign over seeds 200000–810924). Optimality does not: **2.9% of
+instances have an optimality gap above 1e-3** (3.5% have any nonzero gap,
+mean gap ~7e-4), with worst cases losing up to 0.95 in absolute probability.
+The gap rate is highest for `near-tie` (~5%) and `chunky-knapsack` (~4.6%)
+instances and lowest for `edge` (~0.8%). Every sampled gap was confirmed by
+the solver's own value function, so this is the outer search (not the value
+model) leaving probability on the table. Until
 the solver improves, expect `pnpm test:oracle` to be red; the summary block
 it prints (gap rate, mean/max gap, worst seeds) is the number to watch.
