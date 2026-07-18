@@ -7,13 +7,29 @@ silently return a suboptimal plan. This harness measures that, treating the
 solver as a black box: nothing in this directory imports the solver's
 internals, only the public entry point and types.
 
+## Real game data
+
+Instances are built from the production data pipeline, not synthetic
+fixtures: real recipe DAGs (`buildRecipeDag` over every craftable artifact
+that can actually come out legendary), real launch options
+(`enumerateLaunchOptions` over `perfectShipsConfig` — actual ships,
+durations, fuel costs, and loot-derived yield/legendary-drop vectors), and
+real crafting-level legendary probabilities (levels 10/20/30). The generator
+only chooses which real target(s) to pursue, which subset of real missions
+is on the table, the budgets (expressed as multiples of the subset's own
+real costs, so brute force stays exhaustive), and the owned inventory.
+Because instances derive from live loot data, refreshing that data shifts
+what each seed generates; findings should be reproduced against the same
+loot snapshot they were found on.
+
 ## How it works
 
 For each generated instance the harness:
 
 1. runs `optimizeFull` and maps its `choiceHistory` back onto the input
-   options (the ships-per-batch scale is measured at runtime by a probe whose
-   optimal batch count is provable from the reported probability alone);
+   options by their (fuel, time, target) triple (the ships-per-batch scale
+   is measured at runtime by a probe whose optimal batch count is provable
+   from the reported probability alone);
 2. **feasibility** — recomputes fuel/time usage and checks it against the
    budgets and against the reported totals;
 3. **honesty** — re-evaluates the returned plan with an evaluator built from
@@ -35,12 +51,14 @@ has drifted, and the fuzz results are void.
 
 ## Instance families
 
-Seeded and fully reproducible: `random-single`, `random-multi` (two targets
-competing for shared ingredients), `cheap-filler` (leftover budget only cheap
-options can fill — the case the dual filter knowingly discards),
-`near-tie` (options with almost identical per-fuel value), `chunky-knapsack`
-(large indivisible costs under a tight budget), `edge` (zero/degenerate
-budgets, drop-only options, time-bound plans).
+Seeded and fully reproducible selection/budget strategies over the real
+mission pool: `random-single`, `random-multi` (two real targets competing
+for shared ingredients), `cheap-filler` (an expensive real mission plus a
+cheap one, with a budget remainder only the cheap one can use — the case the
+dual filter knowingly discards), `near-tie` (the two real missions with the
+closest fuel costs), `chunky-knapsack` (only expensive missions under a
+tight budget), `edge` (zero/degenerate budgets, missions with observed
+direct legendary drops, time-bound plans).
 
 ## Running it
 
@@ -58,18 +76,18 @@ Knobs (environment variables):
 | `ORACLE_HONESTY_TOL` | `1e-6` | tolerated reporting discrepancy |
 | `ORACLE_SEED_BASE` | `1000` | first seed; change to explore fresh instances |
 
-Every failure line carries the family and seed, so any finding can be
-reproduced exactly.
+The always-on smoke tier asserts only a catastrophic-gap guard (0.05) so the
+default suite doesn't flake on known heuristic-scale gaps; the deep campaign
+asserts the strict tolerance. Every failure line carries the family and
+seed, so any finding can be reproduced exactly.
 
-## Baseline (2026-07-18, first run of the harness)
+## Baseline (2026-07-18, real-data harness)
 
-Feasibility, honesty, and calibration all pass across ~3.8M instances (a
-24-minute campaign over seeds 200000–810924). Optimality does not: **2.9% of
-instances have an optimality gap above 1e-3** (3.5% have any nonzero gap,
-mean gap ~7e-4), with worst cases losing up to 0.95 in absolute probability.
-The gap rate is highest for `near-tie` (~5%) and `chunky-knapsack` (~4.6%)
-instances and lowest for `edge` (~0.8%). Every sampled gap was confirmed by
-the solver's own value function, so this is the outer search (not the value
-model) leaving probability on the table. Until
-the solver improves, expect `pnpm test:oracle` to be red; the summary block
-it prints (gap rate, mean/max gap, worst seeds) is the number to watch.
+Feasibility, honesty, and calibration all pass. On real game data the solver
+is far closer to optimal than on adversarial synthetic fixtures, but still
+not within tolerance everywhere: see the summary block `pnpm test:oracle`
+prints (gap rate, mean/max gap, worst seeds) for the current numbers. In the
+initial campaign the misses concentrate in `cheap-filler`-shaped budgets
+(~2% of that family above 1e-3, worst ~2e-2): plans that under-use the
+budget remainder a cheap mission should fill. Until the solver improves,
+expect the deep campaign to be red.

@@ -1,17 +1,24 @@
-// Seeded instance generator for the oracle harness.
+// Seeded instance generator for the oracle harness, built from REAL game
+// data: instances use the production recipe DAGs (buildRecipeDag), the
+// production launch options (enumerateLaunchOptions over perfectShipsConfig
+// — actual ships, durations, fuel costs, and loot-derived yield vectors),
+// and real crafting-level legendary probabilities. The generator only
+// chooses which real target(s) to pursue, which subset of real launch
+// options is on the table, the budgets, and the owned inventory — never the
+// game numbers themselves.
 //
-// Families mix broad randomized coverage with adversarial shapes aimed at
-// spots where a heuristic outer search could plausibly go wrong (leftover
-// budget that only cheap options can fill, near-tied efficiencies, chunky
-// indivisible costs, degenerate budgets). All numeric data is dyadic
-// (representable exactly as k/4 or k/64) so the oracle's rational evaluator
-// sees the instance exactly as the optimizer does.
-//
-// Everything is derived from the public input contract in types.ts; the
-// generator knows nothing about how the optimizer searches.
+// Families are selection/budget strategies aimed at spots where a heuristic
+// outer search could plausibly go wrong (leftover budget that only cheap
+// missions can fill, near-tied fuel costs, chunky indivisible costs under a
+// tight budget, degenerate budgets). Brute force caps instance size, so each
+// instance offers a handful of options and budgets worth a handful of
+// batches; the campaign gets its power from volume, not per-instance size.
 
-import type { DAGNode, LaunchOption } from '../lib/types';
-import { makeNode, makeOpt } from '../lib/spec-helpers';
+import { perfectShipsConfig } from 'lib';
+import type { LaunchOption, RecipeDAG } from '../lib/types';
+import { buildRecipeDag } from '../lib';
+import { enumerateLaunchOptions } from '../lib/phases';
+import { artifactTiers } from '../lib/artifacts';
 import { countFeasible } from './enumerate';
 import type { OracleInstance } from './evaluate';
 
@@ -26,6 +33,7 @@ export const FAMILIES = [
 export type Family = (typeof FAMILIES)[number];
 
 const FEASIBLE_CAP = 60_000;
+const CRAFTING_LEVELS = [10, 20, 30];
 
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -61,158 +69,127 @@ function sample<T>(rng: Rng, items: T[], count: number): T[] {
   return out;
 }
 
-interface DagPlan {
-  nodes: DAGNode[];
+// ---------------------------------------------------------------------------
+// Real-data pools
+// ---------------------------------------------------------------------------
+
+// Real artifacts that can actually come out legendary from a craft.
+let candidateTargetsMemo: string[] | null = null;
+function candidateTargets(): string[] {
+  if (candidateTargetsMemo === null) {
+    candidateTargetsMemo = artifactTiers
+      .filter(tier => tier.craftable)
+      .map(tier => tier.id)
+      .filter(id => {
+        try {
+          // craftChance throws for tiers that cannot be legendary at all
+          const dag = buildRecipeDag([id], 30, null, 0);
+          return dag.get(id)!.legendaryCraftProbability > 0;
+        } catch {
+          return false;
+        }
+      });
+    if (candidateTargetsMemo.length === 0) {
+      throw new Error('no real craftable-legendary targets found in game data');
+    }
+  }
+  return candidateTargetsMemo;
+}
+
+interface RealPool {
+  dag: RecipeDAG;
   targets: string[];
-  ingredientIds: string[]; // ids options may drop (leaves + intermediates)
-  targetIngredients: string[]; // ingredients reachable from some target
+  options: LaunchOption[]; // all real options, as production would offer them
+  useful: LaunchOption[]; // options that can contribute anything at all
 }
 
-function buildDag(rng: Rng, targetCount: number): DagPlan {
-  const nLeaves = randInt(rng, 2, 5);
-  const nMids = randInt(rng, 0, 2);
-  const leaves = Array.from({ length: nLeaves }, (_, i) => `leaf${i}`);
-  const mids = Array.from({ length: nMids }, (_, i) => `mid${i}`);
-  const nodes: DAGNode[] = leaves.map(id => makeNode(id, true));
-
-  mids.forEach((id, i) => {
-    // intermediates consume leaves and strictly earlier intermediates,
-    // which keeps the graph acyclic by construction
-    const pool = [...leaves, ...mids.slice(0, i)];
-    const children = sample(rng, pool, randInt(rng, 1, Math.min(3, pool.length))).map(
-      c => [c, randInt(rng, 1, 3)] as [string, number]
-    );
-    nodes.push(makeNode(id, false, children));
-  });
-
-  const targets: string[] = [];
-  const targetIngredients = new Set<string>();
-  for (let t = 0; t < targetCount; t++) {
-    const id = `target${t}`;
-    const pool = [...leaves, ...mids];
-    let childIds = sample(rng, pool, randInt(rng, 1, Math.min(3, pool.length)));
-    if (t > 0 && !childIds.some(c => targetIngredients.has(c))) {
-      // force multi-target instances to fight over at least one ingredient
-      childIds = [...childIds, pick(rng, [...targetIngredients])];
-    }
-    const children = childIds.map(c => [c, randInt(rng, 1, 4)] as [string, number]);
-    nodes.push(makeNode(id, false, children, 0.05 + rng() * 0.85));
-    targets.push(id);
-    for (const c of childIds) {
-      targetIngredients.add(c);
-      const node = nodes.find(n => n.id === c);
-      for (const grand of node?.children ?? []) {
-        targetIngredients.add(grand.nodeId);
+const poolCache = new Map<string, RealPool>();
+function getPool(targets: string[], craftingLevel: number): RealPool {
+  const key = `${targets.join('+')}#${craftingLevel}`;
+  let pool = poolCache.get(key);
+  if (!pool) {
+    const dag = buildRecipeDag(targets, craftingLevel, null, 0);
+    // distinct real missions can collide on (fuel, time, target), and the
+    // solver's output carries nothing else to tell them apart, so keep one
+    // option per triple
+    const seen = new Set<string>();
+    const options = enumerateLaunchOptions(perfectShipsConfig, dag).filter(o => {
+      const tripleKey = `${o.actualFuel}:${o.actualTime}:${o.targetAfxId}`;
+      if (seen.has(tripleKey)) {
+        return false;
       }
-    }
+      seen.add(tripleKey);
+      return true;
+    });
+    pool = {
+      dag,
+      targets,
+      options,
+      useful: options.filter(o => o.yieldVector.size > 0 || o.legendaryYieldVector.size > 0),
+    };
+    poolCache.set(key, pool);
   }
-
-  // occasionally add a decoy root: craftable, never targeted, zero legendary
-  // probability — crafting it is pure waste
-  if (rng() < 0.25) {
-    const pool = [...leaves, ...mids];
-    const children = sample(rng, pool, randInt(rng, 1, Math.min(2, pool.length))).map(
-      c => [c, randInt(rng, 1, 3)] as [string, number]
-    );
-    nodes.push(makeNode('decoy', false, children));
-  }
-
-  return { nodes, targets, ingredientIds: [...leaves, ...mids], targetIngredients: [...targetIngredients] };
+  return pool;
 }
 
-function yieldEntries(rng: Rng, dag: DagPlan, maxItems = 3): [string, number][] {
-  const count = randInt(rng, 1, maxItems);
-  const entries = new Map<string, number>();
-  for (let i = 0; i < count; i++) {
-    // bias drops toward items the targets actually need, so instances are
-    // rarely degenerate, while still exercising useless drops
-    const pool =
-      rng() < 0.75 && dag.targetIngredients.length > 0 ? dag.targetIngredients : dag.ingredientIds;
-    entries.set(pick(rng, pool), dyadic(rng, 0.25, 4));
-  }
-  return [...entries];
-}
-
-function drawCost(
-  rng: Rng,
-  taken: Set<string>,
-  fuelRange: [number, number],
-  timeRange: [number, number]
-): [number, number] {
-  for (let guard = 0; guard < 200; guard++) {
-    const fuel = randInt(rng, fuelRange[0], fuelRange[1]);
-    const time = randInt(rng, timeRange[0], timeRange[1]);
-    const key = `${fuel}:${time}`;
-    if (!taken.has(key)) {
-      taken.add(key);
-      return [fuel, time];
+function pickLevel(rng: Rng, targets: string[]): number {
+  // low crafting levels can zero out the legendary chance for some targets;
+  // fall back to max level rather than emit a degenerate instance
+  for (const level of sample(rng, CRAFTING_LEVELS, CRAFTING_LEVELS.length)) {
+    const dag = buildRecipeDag(targets, level, null, 0);
+    if (targets.every(t => dag.get(t)!.legendaryCraftProbability > 0)) {
+      return level;
     }
   }
-  throw new Error('could not draw a distinct cost pair');
+  return 30;
 }
 
-function uniqueCosts(rng: Rng, count: number, fuelRange: [number, number], timeRange: [number, number]): [number, number][] {
-  const costs: [number, number][] = [];
-  const seen = new Set<string>();
-  let guard = 0;
-  while (costs.length < count) {
-    const fuel = randInt(rng, fuelRange[0], fuelRange[1]);
-    const time = randInt(rng, timeRange[0], timeRange[1]);
-    const key = `${fuel}:${time}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      costs.push([fuel, time]);
-    }
-    if (++guard > 200) {
-      throw new Error('could not draw distinct costs');
-    }
-  }
-  return costs;
-}
-
-function maybeBaseYield(rng: Rng, dag: DagPlan): Map<string, number> {
+function maybeBaseYield(rng: Rng, dag: RecipeDAG, targets: string[]): Map<string, number> {
   const base = new Map<string, number>();
   if (rng() < 0.5) {
-    for (const item of sample(rng, dag.ingredientIds, randInt(rng, 1, 3))) {
-      base.set(item, dyadic(rng, 0.25, 6));
+    // owned inventory: whole items, on real ingredient nodes only
+    const roots = new Set(targets);
+    const items = [...dag.keys()].filter(id => !roots.has(id));
+    for (const item of sample(rng, items, randInt(rng, 1, Math.min(3, items.length)))) {
+      base.set(item, randInt(rng, 1, 40));
     }
   }
   return base;
 }
 
-function maybeLegendaryDrops(rng: Rng, dag: DagPlan, options: LaunchOption[]): void {
-  for (const opt of options) {
-    if (rng() < 0.3) {
-      opt.legendaryYieldVector.set(pick(rng, dag.targets), dyadic(rng, 1 / 64, 8 / 64, 64));
-    }
-  }
+function minPositiveFuel(options: LaunchOption[]): number {
+  const fuels = options.map(o => o.actualFuel).filter(f => f > 0);
+  return fuels.length > 0 ? Math.min(...fuels) : 1;
+}
+
+function minTime(options: LaunchOption[]): number {
+  return Math.min(...options.map(o => o.actualTime));
 }
 
 function finalize(
   label: Family,
   seed: number,
-  rng: Rng,
-  dag: DagPlan,
+  pool: RealPool,
   options: LaunchOption[],
   fuelCapacity: number,
   timeCapacity: number,
   baseYield: Map<string, number>
 ): OracleInstance | null {
-  // unique (fuel, time) pairs are the precondition for mapping the solver's
-  // choiceHistory back onto input options
-  const costKeys = new Set(options.map(o => `${o.actualFuel}:${o.actualTime}`));
-  if (costKeys.size !== options.length) {
-    throw new Error(`${label} seed ${seed}: duplicate option cost pair`);
+  // unique (fuel, time, target) triples are the precondition for mapping the
+  // solver's choiceHistory back onto input options
+  const keys = new Set(options.map(o => `${o.actualFuel}:${o.actualTime}:${o.targetAfxId}`));
+  if (keys.size !== options.length) {
+    throw new Error(`${label} seed ${seed}: duplicate option cost/target triple`);
   }
   let fuel = fuelCapacity;
   let time = timeCapacity;
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < 25; attempt++) {
     const inst: OracleInstance = {
       label,
       seed,
       options,
-      dag: new Map(dag.nodes.map(n => [n.id, n])),
-      targets: dag.targets,
+      dag: pool.dag,
+      targets: pool.targets,
       fuelCapacity: fuel,
       timeCapacity: time,
       baseYield,
@@ -220,10 +197,19 @@ function finalize(
     if (countFeasible(inst, FEASIBLE_CAP) !== null) {
       return inst;
     }
-    fuel = Math.max(1, Math.floor(fuel * 0.8));
-    time = Math.max(1, Math.floor(time * 0.8));
+    fuel *= 0.7;
+    time *= 0.7;
   }
   return null;
+}
+
+// generous multiples of the subset's own real costs, so budgets are in
+// authentic units while enumeration stays exhaustive
+function scaledBudgets(rng: Rng, options: LaunchOption[]): [number, number] {
+  return [
+    minPositiveFuel(options) * dyadic(rng, 2, 16),
+    minTime(options) * dyadic(rng, 1.5, 10),
+  ];
 }
 
 export function generateInstance(family: Family, seed: number): OracleInstance | null {
@@ -232,116 +218,151 @@ export function generateInstance(family: Family, seed: number): OracleInstance |
   switch (family) {
     case 'random-single':
     case 'random-multi': {
-      const dag = buildDag(rng, family === 'random-multi' ? 2 : 1);
-      const nOpts = randInt(rng, 2, 4);
-      const costs = uniqueCosts(rng, nOpts, [1, 9], [1, 9]);
-      const options = costs.map(([fuel, time]) => makeOpt(fuel, time, yieldEntries(rng, dag)));
-      maybeLegendaryDrops(rng, dag, options);
-      return finalize(
-        family,
-        seed,
-        rng,
-        dag,
-        options,
-        randInt(rng, 6, 30),
-        randInt(rng, 6, 30),
-        maybeBaseYield(rng, dag)
-      );
+      const targets =
+        family === 'random-multi'
+          ? sample(rng, candidateTargets(), 2)
+          : [pick(rng, candidateTargets())];
+      const pool = getPool(targets, pickLevel(rng, targets));
+      if (pool.useful.length < 2) {
+        return null;
+      }
+      const options = sample(rng, pool.useful, randInt(rng, 2, Math.min(4, pool.useful.length)));
+      const [fuel, time] = scaledBudgets(rng, options);
+      return finalize(family, seed, pool, options, fuel, time, maybeBaseYield(rng, pool.dag, targets));
     }
 
     case 'cheap-filler': {
-      // one expensive workhorse plus cheap low-yield fillers; the budget is
-      // deliberately not a multiple of the workhorse cost, so an optimal plan
-      // must top up with fillers
-      const dag = buildDag(rng, 1);
-      const mainFuel = randInt(rng, 6, 9);
-      const options = [
-        makeOpt(mainFuel, randInt(rng, 4, 8), yieldEntries(rng, dag)),
-        makeOpt(randInt(rng, 1, 2), randInt(rng, 1, 2), yieldEntries(rng, dag, 2).map(([id, q]) => [id, q / 4])),
-      ];
-      if (rng() < 0.5) {
-        options.push(makeOpt(randInt(rng, 3, 5), randInt(rng, 2, 5), yieldEntries(rng, dag, 2)));
+      // one expensive real mission plus a cheap one; the budget deliberately
+      // leaves a remainder the workhorse can't use, so an optimal plan must
+      // top up with the cheap mission
+      const targets = [pick(rng, candidateTargets())];
+      const pool = getPool(targets, pickLevel(rng, targets));
+      const byFuel = pool.useful.filter(o => o.actualFuel > 0).sort((a, b) => a.actualFuel - b.actualFuel);
+      if (byFuel.length < 3) {
+        return null;
       }
-      const remainder = randInt(rng, 1, mainFuel - 1);
-      const fuelCapacity = mainFuel * randInt(rng, 2, 4) + remainder;
-      maybeLegendaryDrops(rng, dag, options);
-      return finalize(family, seed, rng, dag, options, fuelCapacity, randInt(rng, 15, 40), maybeBaseYield(rng, dag));
+      const cheap = pick(rng, byFuel.slice(0, Math.max(1, Math.floor(byFuel.length / 4))));
+      const expensive = pick(rng, byFuel.slice(-Math.max(1, Math.floor(byFuel.length / 4))));
+      if (expensive.actualFuel <= cheap.actualFuel * 2) {
+        return null;
+      }
+      const options = [expensive, cheap];
+      if (rng() < 0.5) {
+        const mid = pick(rng, byFuel);
+        if (!options.includes(mid)) {
+          options.push(mid);
+        }
+      }
+      const fuel = expensive.actualFuel * (randInt(rng, 2, 4) + dyadic(rng, 0.1, 0.9, 16));
+      const time = Math.max(...options.map(o => o.actualTime)) * dyadic(rng, 3, 10);
+      return finalize(family, seed, pool, options, fuel, time, maybeBaseYield(rng, pool.dag, targets));
     }
 
     case 'near-tie': {
-      // two options whose per-fuel value is (almost) identical — prime
-      // territory for aggressive dual/dominance filtering to drop one that
-      // the budget arithmetic still needs
-      const dag = buildDag(rng, 1);
-      const baseEntries = yieldEntries(rng, dag);
-      const taken = new Set<string>();
-      const [costA, costB, costC] = [
-        drawCost(rng, taken, [2, 5], [1, 5]),
-        drawCost(rng, taken, [3, 7], [1, 5]),
-        drawCost(rng, taken, [1, 9], [1, 9]),
-      ];
-      const wobble = pick(rng, [1, 1, 1 + 1 / 64, 1 - 1 / 64]);
-      const scaled = baseEntries.map(
-        ([id, q]) => [id, (q * costB[0] * wobble) / costA[0]] as [string, number]
-      );
-      const options = [
-        makeOpt(costA[0], costA[1], baseEntries),
-        makeOpt(costB[0], costB[1], scaled),
-        makeOpt(costC[0], costC[1], yieldEntries(rng, dag, 2)),
-      ];
-      return finalize(family, seed, rng, dag, options, randInt(rng, 10, 30), randInt(rng, 10, 30), maybeBaseYield(rng, dag));
+      // the two real missions with the closest fuel costs — prime territory
+      // for aggressive dual/dominance filtering to drop one that the budget
+      // arithmetic still needs
+      const targets = [pick(rng, candidateTargets())];
+      const pool = getPool(targets, pickLevel(rng, targets));
+      const byFuel = pool.useful.filter(o => o.actualFuel > 0).sort((a, b) => a.actualFuel - b.actualFuel);
+      if (byFuel.length < 3) {
+        return null;
+      }
+      let bestPair: [LaunchOption, LaunchOption] | null = null;
+      let bestRatio = Infinity;
+      const start = randInt(rng, 0, Math.max(0, byFuel.length - 6));
+      for (let i = start; i < byFuel.length - 1 && i < start + 8; i++) {
+        const ratio = byFuel[i + 1].actualFuel / byFuel[i].actualFuel;
+        if (ratio < bestRatio && ratio > 1 - 1e-12) {
+          bestRatio = ratio;
+          bestPair = [byFuel[i], byFuel[i + 1]];
+        }
+      }
+      if (!bestPair) {
+        return null;
+      }
+      const third = pick(rng, byFuel);
+      const options = bestPair[0] === third || bestPair[1] === third ? [...bestPair] : [...bestPair, third];
+      const [fuel, time] = scaledBudgets(rng, options);
+      return finalize(family, seed, pool, options, fuel, time, maybeBaseYield(rng, pool.dag, targets));
     }
 
     case 'chunky-knapsack': {
-      // large indivisible costs and a tight budget: the payoff as a function
-      // of any single count is stepped, not smooth, stressing searches that
-      // assume approximate concavity along an axis
-      const dag = buildDag(rng, 1);
-      const nOpts = randInt(rng, 3, 4);
-      const costs = uniqueCosts(rng, nOpts, [3, 9], [3, 9]);
-      const options = costs.map(([fuel, time]) => makeOpt(fuel, time, yieldEntries(rng, dag)));
-      maybeLegendaryDrops(rng, dag, options);
-      return finalize(family, seed, rng, dag, options, randInt(rng, 12, 24), randInt(rng, 12, 24), maybeBaseYield(rng, dag));
+      // only expensive real missions under a tight budget: the payoff as a
+      // function of any single count is stepped, not smooth, stressing
+      // searches that assume approximate concavity
+      const targets = [pick(rng, candidateTargets())];
+      const pool = getPool(targets, pickLevel(rng, targets));
+      const byFuel = pool.useful.filter(o => o.actualFuel > 0).sort((a, b) => a.actualFuel - b.actualFuel);
+      if (byFuel.length < 4) {
+        return null;
+      }
+      const upperHalf = byFuel.slice(Math.floor(byFuel.length / 2));
+      const options = sample(rng, upperHalf, Math.min(randInt(rng, 3, 4), upperHalf.length));
+      const fuel = minPositiveFuel(options) * dyadic(rng, 2, 6);
+      const time = minTime(options) * dyadic(rng, 2, 6);
+      return finalize(family, seed, pool, options, fuel, time, maybeBaseYield(rng, pool.dag, targets));
     }
 
     case 'edge': {
+      const targets = [pick(rng, candidateTargets())];
+      const pool = getPool(targets, pickLevel(rng, targets));
+      if (pool.useful.length < 2) {
+        return null;
+      }
       const variant = seed % 5;
-      const dag = buildDag(rng, 1);
       if (variant === 0) {
         // nothing can launch: answer comes purely from owned inventory
         const base = new Map<string, number>();
-        for (const item of dag.targetIngredients) {
+        const roots = new Set(targets);
+        for (const item of [...pool.dag.keys()].filter(id => !roots.has(id))) {
           if (rng() < 0.7) {
-            base.set(item, dyadic(rng, 0.25, 5));
+            base.set(item, randInt(rng, 1, 30));
           }
         }
-        return finalize(family, seed, rng, dag, [makeOpt(5, 5, yieldEntries(rng, dag))], 0, 20, base);
+        return finalize(family, seed, pool, sample(rng, pool.useful, 1), 0, minTime(pool.useful) * 4, base);
       }
       if (variant === 1) {
         // budgets positive but below every option's cost
-        const options = [makeOpt(6, 3, yieldEntries(rng, dag)), makeOpt(4, 7, yieldEntries(rng, dag))];
-        return finalize(family, seed, rng, dag, options, 3, 2, maybeBaseYield(rng, dag));
+        const options = sample(rng, pool.useful, 2);
+        return finalize(
+          family,
+          seed,
+          pool,
+          options,
+          minPositiveFuel(options) * 0.5,
+          minTime(options) * 0.5,
+          maybeBaseYield(rng, pool.dag, targets)
+        );
       }
       if (variant === 2) {
-        // single option, budget an exact multiple of its cost
-        const fuel = randInt(rng, 2, 5);
-        const options = [makeOpt(fuel, randInt(rng, 1, 3), yieldEntries(rng, dag))];
-        maybeLegendaryDrops(rng, dag, options);
-        return finalize(family, seed, rng, dag, options, fuel * randInt(rng, 1, 8), 60, maybeBaseYield(rng, dag));
+        // single mission, fuel budget an exact multiple of its cost
+        const opt = pick(rng, pool.useful.filter(o => o.actualFuel > 0));
+        return finalize(
+          family,
+          seed,
+          pool,
+          [opt],
+          opt.actualFuel * randInt(rng, 1, 8),
+          opt.actualTime * 20,
+          maybeBaseYield(rng, pool.dag, targets)
+        );
       }
       if (variant === 3) {
-        // pure direct-drop option (no craftable yields at all)
-        const options = [
-          makeOpt(randInt(rng, 2, 4), randInt(rng, 2, 4), []),
-          makeOpt(randInt(rng, 5, 8), randInt(rng, 5, 8), yieldEntries(rng, dag)),
-        ];
-        options[0].legendaryYieldVector.set(dag.targets[0], dyadic(rng, 2 / 64, 12 / 64, 64));
-        return finalize(family, seed, rng, dag, options, randInt(rng, 8, 24), randInt(rng, 8, 24), maybeBaseYield(rng, dag));
+        // prefer a mission with observed direct legendary drops, if the real
+        // loot data has one for this target
+        const droppy = pool.useful.filter(o => o.legendaryYieldVector.size > 0);
+        const first = droppy.length > 0 ? pick(rng, droppy) : pick(rng, pool.useful);
+        const second = pick(rng, pool.useful);
+        const options = first === second ? [first] : [first, second];
+        const [fuel, time] = scaledBudgets(rng, options);
+        return finalize(family, seed, pool, options, fuel, time, maybeBaseYield(rng, pool.dag, targets));
       }
       // time budget binding, fuel effectively unconstrained
-      const costs = uniqueCosts(rng, 3, [1, 3], [4, 9]);
-      const options = costs.map(([fuel, time]) => makeOpt(fuel, time, yieldEntries(rng, dag)));
-      return finalize(family, seed, rng, dag, options, 500, randInt(rng, 10, 25), maybeBaseYield(rng, dag));
+      const options = sample(rng, pool.useful, Math.min(3, pool.useful.length));
+      const fuel = options.reduce((s, o) => s + o.actualFuel, 0) * 100;
+      const time = minTime(options) * dyadic(rng, 1, 6);
+      return finalize(family, seed, pool, options, fuel, time, maybeBaseYield(rng, pool.dag, targets));
     }
   }
 }
