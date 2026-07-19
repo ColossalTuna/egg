@@ -6,7 +6,7 @@
 // the types in types.ts), never from its implementation:
 //
 //   inventory_u = baseYield_u + sum_i k_i * yield_i[u]
-//   crafts      = argmax of an exact LP over the recipe DAG:
+//   crafts      = argmax of an LP over the recipe DAG:
 //                   maximize sum_T Q_T * c_T
 //                   s.t. for every ingredient u:
 //                     consumption(u) - produced(u) <= inventory_u
@@ -15,14 +15,17 @@
 //   score       = LP optimum + sum_T drops_T
 //   probability = 1 - exp(-score)
 //
-// The calibration probes in the spec cross-check this model against the
-// optimizer's outputs on instances whose optimum is unambiguous; a mismatch
-// there means the oracle's reading of the contract diverged and the whole
-// comparison is void.
+// Two evaluation paths share one LP template per instance: a float simplex
+// for cheaply ranking the thousands of candidate allocations the brute-force
+// search visits, and an exact BigInt-rational simplex for the numbers that
+// are actually asserted or reported. The calibration probes in the spec
+// cross-check this model against the optimizer's outputs on instances whose
+// optimum is unambiguous; a mismatch there means the oracle's reading of the
+// contract diverged and the whole comparison is void.
 
 import type { LaunchOption, RecipeDAG } from '../lib/types';
 import { Frac } from './rational';
-import { simplexMaximize } from './simplex';
+import { simplexMaximize, simplexMaximizeFloat } from './simplex';
 
 export interface OracleInstance {
   label: string;
@@ -53,6 +56,75 @@ export function targetQ(inst: OracleInstance, target: string): number {
   return -Math.log(1 - node.legendaryCraftProbability);
 }
 
+// LP structure shared by every allocation of one instance: only the
+// right-hand side (the inventory) changes with the allocation.
+interface LpTemplate {
+  craftables: string[];
+  items: string[];
+  A: number[][];
+  c: number[];
+  AFrac: Frac[][] | null;
+  cFrac: Frac[] | null;
+}
+
+const templateCache = new WeakMap<OracleInstance, LpTemplate>();
+
+function lpTemplate(inst: OracleInstance): LpTemplate {
+  let template = templateCache.get(inst);
+  if (template) {
+    return template;
+  }
+
+  const craftables: string[] = [];
+  for (const [id, node] of inst.dag) {
+    if (!node.isLeaf) {
+      craftables.push(id);
+    }
+  }
+  const varIndex = new Map(craftables.map((id, i) => [id, i]));
+
+  const ingredients = new Set<string>();
+  for (const node of inst.dag.values()) {
+    for (const child of node.children) {
+      ingredients.add(child.nodeId);
+    }
+  }
+  const items = [...ingredients];
+
+  const A = items.map(item => {
+    const row = new Array<number>(craftables.length).fill(0);
+    for (const node of inst.dag.values()) {
+      if (node.isLeaf) {
+        continue;
+      }
+      const j = varIndex.get(node.id)!;
+      for (const child of node.children) {
+        if (child.nodeId === item) {
+          row[j] += child.quantity;
+        }
+      }
+    }
+    const producer = varIndex.get(item);
+    if (producer !== undefined) {
+      row[producer] -= 1;
+    }
+    return row;
+  });
+
+  const c = new Array<number>(craftables.length).fill(0);
+  for (const target of inst.targets) {
+    const j = varIndex.get(target);
+    if (j === undefined) {
+      throw new Error(`target ${target} is not craftable`);
+    }
+    c[j] += targetQ(inst, target);
+  }
+
+  template = { craftables, items, A, c, AFrac: null, cFrac: null };
+  templateCache.set(inst, template);
+  return template;
+}
+
 function inventoryFor(inst: OracleInstance, allocation: number[]): Map<string, Frac> {
   const inv = new Map<string, Frac>();
   const bump = (item: string, amount: Frac) => {
@@ -73,67 +145,47 @@ function inventoryFor(inst: OracleInstance, allocation: number[]): Map<string, F
   return inv;
 }
 
-export function evaluateAllocation(inst: OracleInstance, allocation: number[]): OracleEvaluation {
-  const inv = inventoryFor(inst, allocation);
-
-  // Craft variables: every non-leaf node.
-  const craftables: string[] = [];
-  for (const [id, node] of inst.dag) {
-    if (!node.isLeaf) {
-      craftables.push(id);
-    }
-  }
-  const varIndex = new Map(craftables.map((id, i) => [id, i]));
-
-  // One constraint per item consumed as an ingredient anywhere in the DAG.
-  const ingredients = new Set<string>();
-  for (const node of inst.dag.values()) {
-    for (const child of node.children) {
-      ingredients.add(child.nodeId);
-    }
-  }
-
-  const A: Frac[][] = [];
-  const b: Frac[] = [];
-  for (const item of ingredients) {
-    const row: Frac[] = new Array(craftables.length).fill(Frac.ZERO);
-    for (const node of inst.dag.values()) {
-      if (node.isLeaf) {
-        continue;
-      }
-      const j = varIndex.get(node.id)!;
-      for (const child of node.children) {
-        if (child.nodeId === item) {
-          row[j] = row[j].add(Frac.fromNumber(child.quantity));
-        }
-      }
-    }
-    const producer = varIndex.get(item);
-    if (producer !== undefined) {
-      row[producer] = row[producer].sub(Frac.ONE);
-    }
-    A.push(row);
-    b.push(inv.get(item) ?? Frac.ZERO);
-  }
-
-  const c: Frac[] = new Array(craftables.length).fill(Frac.ZERO);
-  for (const target of inst.targets) {
-    const j = varIndex.get(target);
-    if (j === undefined) {
-      throw new Error(`target ${target} is not craftable`);
-    }
-    c[j] = c[j].add(Frac.fromNumber(targetQ(inst, target)));
-  }
-
-  const lpScore = simplexMaximize(A, b, c).toNumber();
-
+function directDrops(inst: OracleInstance, allocation: number[]): number {
   let drops = 0;
   inst.options.forEach((opt, i) => {
     for (const target of inst.targets) {
       drops += allocation[i] * (opt.legendaryYieldVector.get(target) ?? 0);
     }
   });
+  return drops;
+}
 
+// Cheap ranking path: float LP, exact enough (~1e-9) to order candidates
+// whose gaps are asserted at 1e-3 scale. Returns the score only.
+export function evaluateAllocationFloat(inst: OracleInstance, allocation: number[]): number {
+  const template = lpTemplate(inst);
+  const inv = new Map<string, number>();
+  for (const [item, qty] of inst.baseYield) {
+    inv.set(item, (inv.get(item) ?? 0) + qty);
+  }
+  inst.options.forEach((opt, i) => {
+    if (allocation[i] === 0) {
+      return;
+    }
+    for (const [item, qty] of opt.yieldVector) {
+      inv.set(item, (inv.get(item) ?? 0) + allocation[i] * qty);
+    }
+  });
+  const b = template.items.map(item => inv.get(item) ?? 0);
+  return simplexMaximizeFloat(template.A, b, template.c) + directDrops(inst, allocation);
+}
+
+export function evaluateAllocation(inst: OracleInstance, allocation: number[]): OracleEvaluation {
+  const template = lpTemplate(inst);
+  if (!template.AFrac || !template.cFrac) {
+    template.AFrac = template.A.map(row => row.map(x => Frac.fromNumber(x)));
+    template.cFrac = template.c.map(x => Frac.fromNumber(x));
+  }
+  const inv = inventoryFor(inst, allocation);
+  const b = template.items.map(item => inv.get(item) ?? Frac.ZERO);
+
+  const lpScore = simplexMaximize(template.AFrac, b, template.cFrac).toNumber();
+  const drops = directDrops(inst, allocation);
   const score = lpScore + drops;
   return {
     score,

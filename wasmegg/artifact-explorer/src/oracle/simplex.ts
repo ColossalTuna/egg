@@ -7,6 +7,76 @@
 
 import { Frac } from './rational';
 
+// Float twin of simplexMaximize, used to rank candidate allocations cheaply;
+// the winner is re-evaluated exactly. Same algorithm, epsilon pivoting.
+export function simplexMaximizeFloat(A: number[][], b: number[], c: number[]): number {
+  const EPS = 1e-9;
+  const m = A.length;
+  const n = c.length;
+  const width = n + m + 1;
+  const T: number[][] = [];
+  for (let i = 0; i < m; i++) {
+    const row = new Array<number>(width).fill(0);
+    for (let j = 0; j < n; j++) {
+      row[j] = A[i][j];
+    }
+    row[n + i] = 1;
+    row[width - 1] = b[i];
+    T.push(row);
+  }
+  const obj = new Array<number>(width).fill(0);
+  for (let j = 0; j < n; j++) {
+    obj[j] = -c[j];
+  }
+  T.push(obj);
+
+  const basis: number[] = [];
+  for (let i = 0; i < m; i++) {
+    basis.push(n + i);
+  }
+
+  for (let iter = 0; iter < 10000; iter++) {
+    let enter = -1;
+    for (let j = 0; j < n + m; j++) {
+      if (T[m][j] < -EPS) {
+        enter = j;
+        break;
+      }
+    }
+    if (enter === -1) {
+      return T[m][width - 1];
+    }
+    let leave = -1;
+    let bestRatio = Infinity;
+    for (let i = 0; i < m; i++) {
+      if (T[i][enter] > EPS) {
+        const ratio = T[i][width - 1] / T[i][enter];
+        if (ratio < bestRatio - EPS || (ratio < bestRatio + EPS && (leave === -1 || basis[i] < basis[leave]))) {
+          bestRatio = ratio;
+          leave = i;
+        }
+      }
+    }
+    if (leave === -1) {
+      throw new Error('float LP is unbounded');
+    }
+    const pivot = T[leave][enter];
+    for (let j = 0; j < width; j++) {
+      T[leave][j] /= pivot;
+    }
+    for (let i = 0; i <= m; i++) {
+      if (i !== leave && Math.abs(T[i][enter]) > 0) {
+        const factor = T[i][enter];
+        for (let j = 0; j < width; j++) {
+          T[i][j] -= factor * T[leave][j];
+        }
+      }
+    }
+    basis[leave] = enter;
+  }
+  throw new Error('float simplex iteration cap exceeded');
+}
+
 export function simplexMaximize(A: Frac[][], b: Frac[], c: Frac[]): Frac {
   const m = A.length;
   const n = c.length;

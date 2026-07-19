@@ -173,7 +173,8 @@ function finalize(
   options: LaunchOption[],
   fuelCapacity: number,
   timeCapacity: number,
-  baseYield: Map<string, number>
+  baseYield: Map<string, number>,
+  minFeasible = 24
 ): OracleInstance | null {
   // unique (fuel, time, target) triples are the precondition for mapping the
   // solver's choiceHistory back onto input options
@@ -194,8 +195,11 @@ function finalize(
       timeCapacity: time,
       baseYield,
     };
-    if (countFeasible(inst, FEASIBLE_CAP) !== null) {
-      return inst;
+    const count = countFeasible(inst, FEASIBLE_CAP);
+    if (count !== null) {
+      // an instance with almost no feasible allocations offers the solver
+      // nothing to get wrong; reject it rather than dilute the campaign
+      return count >= minFeasible ? inst : null;
     }
     fuel *= 0.7;
     time *= 0.7;
@@ -203,13 +207,36 @@ function finalize(
   return null;
 }
 
-// generous multiples of the subset's own real costs, so budgets are in
-// authentic units while enumeration stays exhaustive
-function scaledBudgets(rng: Rng, options: LaunchOption[]): [number, number] {
-  return [
-    minPositiveFuel(options) * dyadic(rng, 2, 16),
-    minTime(options) * dyadic(rng, 1.5, 10),
-  ];
+// Budgets built from a random basket of the subset's own options: draw a
+// concrete mix of batches, price it in real fuel and real seconds, and add a
+// little slack. This guarantees genuinely mixed plans are affordable, so
+// instances pose a real allocation decision instead of a forced move.
+function basketBudgets(rng: Rng, options: LaunchOption[]): [number, number] {
+  const counts = options.map(() => randInt(rng, 0, 3));
+  const [a, b] = sample(rng, options.map((_, i) => i), 2);
+  counts[a] = Math.max(1, counts[a]);
+  if (b !== undefined) {
+    counts[b] = Math.max(1, counts[b]);
+  }
+  const fuel = counts.reduce((s, k, i) => s + k * options[i].actualFuel, 0);
+  const time = counts.reduce((s, k, i) => s + k * options[i].actualTime, 0);
+  return [fuel * dyadic(rng, 1, 1.5, 8), time * dyadic(rng, 1, 1.5, 8)];
+}
+
+// Sample a subset whose fuel costs live within a bounded band of a random
+// pivot. Real missions span many orders of magnitude; an unbanded sample
+// leaves most of the subset unaffordable under any budget that keeps the
+// cheapest option's counts enumerable.
+function bandSample(rng: Rng, useful: LaunchOption[], count: number): LaunchOption[] {
+  const positive = useful.filter(o => o.actualFuel > 0);
+  if (positive.length === 0) {
+    return sample(rng, useful, count);
+  }
+  const pivot = pick(rng, positive);
+  const band = useful.filter(
+    o => o.actualFuel === 0 || (o.actualFuel >= pivot.actualFuel / 32 && o.actualFuel <= pivot.actualFuel * 32)
+  );
+  return sample(rng, band, count);
 }
 
 export function generateInstance(family: Family, seed: number): OracleInstance | null {
@@ -226,8 +253,11 @@ export function generateInstance(family: Family, seed: number): OracleInstance |
       if (pool.useful.length < 2) {
         return null;
       }
-      const options = sample(rng, pool.useful, randInt(rng, 2, Math.min(4, pool.useful.length)));
-      const [fuel, time] = scaledBudgets(rng, options);
+      const options = bandSample(rng, pool.useful, randInt(rng, 3, Math.min(5, pool.useful.length)));
+      if (options.length < 2) {
+        return null;
+      }
+      const [fuel, time] = basketBudgets(rng, options);
       return finalize(family, seed, pool, options, fuel, time, maybeBaseYield(rng, pool.dag, targets));
     }
 
@@ -283,7 +313,7 @@ export function generateInstance(family: Family, seed: number): OracleInstance |
       }
       const third = pick(rng, byFuel);
       const options = bestPair[0] === third || bestPair[1] === third ? [...bestPair] : [...bestPair, third];
-      const [fuel, time] = scaledBudgets(rng, options);
+      const [fuel, time] = basketBudgets(rng, options);
       return finalize(family, seed, pool, options, fuel, time, maybeBaseYield(rng, pool.dag, targets));
     }
 
@@ -299,9 +329,10 @@ export function generateInstance(family: Family, seed: number): OracleInstance |
       }
       const upperHalf = byFuel.slice(Math.floor(byFuel.length / 2));
       const options = sample(rng, upperHalf, Math.min(randInt(rng, 3, 4), upperHalf.length));
-      const fuel = minPositiveFuel(options) * dyadic(rng, 2, 6);
-      const time = minTime(options) * dyadic(rng, 2, 6);
-      return finalize(family, seed, pool, options, fuel, time, maybeBaseYield(rng, pool.dag, targets));
+      // deliberately tighter than a full basket: a mix should fit, but only
+      // just, so counts stay chunky
+      const [fuel, time] = basketBudgets(rng, options);
+      return finalize(family, seed, pool, options, fuel * 0.75, time * 0.75, maybeBaseYield(rng, pool.dag, targets));
     }
 
     case 'edge': {
@@ -320,7 +351,7 @@ export function generateInstance(family: Family, seed: number): OracleInstance |
             base.set(item, randInt(rng, 1, 30));
           }
         }
-        return finalize(family, seed, pool, sample(rng, pool.useful, 1), 0, minTime(pool.useful) * 4, base);
+        return finalize(family, seed, pool, sample(rng, pool.useful, 1), 0, minTime(pool.useful) * 4, base, 0);
       }
       if (variant === 1) {
         // budgets positive but below every option's cost
@@ -332,7 +363,8 @@ export function generateInstance(family: Family, seed: number): OracleInstance |
           options,
           minPositiveFuel(options) * 0.5,
           minTime(options) * 0.5,
-          maybeBaseYield(rng, pool.dag, targets)
+          maybeBaseYield(rng, pool.dag, targets),
+          0
         );
       }
       if (variant === 2) {
@@ -345,7 +377,8 @@ export function generateInstance(family: Family, seed: number): OracleInstance |
           [opt],
           opt.actualFuel * randInt(rng, 1, 8),
           opt.actualTime * 20,
-          maybeBaseYield(rng, pool.dag, targets)
+          maybeBaseYield(rng, pool.dag, targets),
+          0
         );
       }
       if (variant === 3) {
@@ -355,14 +388,14 @@ export function generateInstance(family: Family, seed: number): OracleInstance |
         const first = droppy.length > 0 ? pick(rng, droppy) : pick(rng, pool.useful);
         const second = pick(rng, pool.useful);
         const options = first === second ? [first] : [first, second];
-        const [fuel, time] = scaledBudgets(rng, options);
-        return finalize(family, seed, pool, options, fuel, time, maybeBaseYield(rng, pool.dag, targets));
+        const [fuel, time] = basketBudgets(rng, options);
+        return finalize(family, seed, pool, options, fuel, time, maybeBaseYield(rng, pool.dag, targets), 0);
       }
       // time budget binding, fuel effectively unconstrained
-      const options = sample(rng, pool.useful, Math.min(3, pool.useful.length));
-      const fuel = options.reduce((s, o) => s + o.actualFuel, 0) * 100;
+      const options = bandSample(rng, pool.useful, Math.min(3, pool.useful.length));
+      const fuel = options.reduce((total, o) => total + o.actualFuel, 0) * 100;
       const time = minTime(options) * dyadic(rng, 1, 6);
-      return finalize(family, seed, pool, options, fuel, time, maybeBaseYield(rng, pool.dag, targets));
+      return finalize(family, seed, pool, options, fuel, time, maybeBaseYield(rng, pool.dag, targets), 0);
     }
   }
 }
