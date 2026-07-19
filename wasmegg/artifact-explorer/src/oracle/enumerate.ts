@@ -8,7 +8,7 @@
 // busting a budget). Enumerating only maximal allocations is therefore an
 // exact search, not a heuristic.
 
-import { evaluateAllocation, OracleInstance } from './evaluate';
+import { evaluateAllocation, evaluateAllocationFloat, OracleInstance } from './evaluate';
 
 export interface BruteForceResult {
   bestScore: number;
@@ -38,32 +38,40 @@ export function countFeasible(inst: OracleInstance, cap: number): number | null 
   return walk(0, inst.fuelCapacity, inst.timeCapacity) ? count : null;
 }
 
+// Candidates are ranked with the float evaluator (error ~1e-9 against gaps
+// asserted at 1e-3 scale); every candidate within RANKING_SLOP of the float
+// best is then re-evaluated exactly, so a float near-tie cannot cost the
+// true optimum and the returned numbers are exact.
+const RANKING_SLOP = 1e-7;
+const MAX_FINALISTS = 8;
+
 export function bruteForceBest(inst: OracleInstance): BruteForceResult {
   const n = inst.options.length;
   const allocation = new Array<number>(n).fill(0);
-  let best: BruteForceResult = {
-    bestScore: -Infinity,
-    bestProbability: 0,
-    bestAllocation: allocation.slice(),
-    feasibleCount: 0,
-    evaluatedCount: 0,
-  };
+  let feasibleCount = 0;
+  let evaluatedCount = 0;
+  let bestFloat = -Infinity;
+  let finalists: number[][] = [];
 
   const isMaximal = (fuelLeft: number, timeLeft: number): boolean =>
     !inst.options.some(opt => opt.actualFuel <= fuelLeft && opt.actualTime <= timeLeft);
 
   const walk = (i: number, fuelLeft: number, timeLeft: number) => {
     if (i === n) {
-      best.feasibleCount++;
+      feasibleCount++;
       if (!isMaximal(fuelLeft, timeLeft)) {
         return;
       }
-      const evaluation = evaluateAllocation(inst, allocation);
-      best.evaluatedCount++;
-      if (evaluation.score > best.bestScore) {
-        best.bestScore = evaluation.score;
-        best.bestProbability = evaluation.probability;
-        best.bestAllocation = allocation.slice();
+      const score = evaluateAllocationFloat(inst, allocation);
+      evaluatedCount++;
+      if (score > bestFloat + RANKING_SLOP) {
+        bestFloat = score;
+        finalists = [allocation.slice()];
+      } else if (score > bestFloat - RANKING_SLOP) {
+        bestFloat = Math.max(bestFloat, score);
+        if (finalists.length < MAX_FINALISTS) {
+          finalists.push(allocation.slice());
+        }
       }
       return;
     }
@@ -77,5 +85,21 @@ export function bruteForceBest(inst: OracleInstance): BruteForceResult {
   };
 
   walk(0, inst.fuelCapacity, inst.timeCapacity);
+
+  const best: BruteForceResult = {
+    bestScore: -Infinity,
+    bestProbability: 0,
+    bestAllocation: new Array<number>(n).fill(0),
+    feasibleCount,
+    evaluatedCount,
+  };
+  for (const candidate of finalists) {
+    const exact = evaluateAllocation(inst, candidate);
+    if (exact.score > best.bestScore) {
+      best.bestScore = exact.score;
+      best.bestProbability = exact.probability;
+      best.bestAllocation = candidate;
+    }
+  }
   return best;
 }
