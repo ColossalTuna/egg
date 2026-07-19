@@ -81,21 +81,23 @@ default suite doesn't flake on known heuristic-scale gaps; the deep campaign
 asserts the strict tolerance. Every failure line carries the family and
 seed, so any finding can be reproduced exactly.
 
-## Baseline (2026-07-18, real-data harness, ~200k instances)
+## Baseline (2026-07-19, hardened real-data harness, ~220k instances)
 
-Honesty and calibration pass everywhere. Two classes of defect found:
+Honesty and calibration pass everywhere. With instances that pose genuine
+allocation decisions (basket-priced budgets, banded subsets, decision-free
+instances rejected), the campaign over seeds 1000-14276, 100000-113156, and
+200000-213282 found:
 
-- **Optimality**: 0.41% of instances above the 1e-3 tolerance (2.0% with any
-  nonzero gap; mean gap ~1.8e-5, worst 3.4e-2). Misses concentrate in
-  `cheap-filler`-shaped budgets (~1.7% of that family): plans that under-use
-  the budget remainder a cheap mission should fill.
-- **Feasibility**: one instance (`random-single` seed 104282, loot snapshot
-  of this date) where the returned plan overshoots BOTH budgets — 15 batches
-  of chickfiant-short reporting fuelUsed at 1.59x the fuel budget and
-  timeUnitsUsed at 4.57x the time budget. Two of the four offered options
-  individually exceed the time budget and could never legally launch, which
-  may be the trigger. This violates the invariant the pipeline spec itself
-  asserts (`fuelUsed <= fuelTankCapacity`).
+- **Optimality**: 7.8% of instances have a nonzero gap; **1.8% exceed the
+  1e-3 tolerance** (mean gap 8.3e-5, worst 0.11). `random-multi` is the
+  worst family (~2.7% above tolerance), then `chunky-knapsack` and
+  `random-single` (~1.8%), `cheap-filler` (~1.4%), `near-tie` (~0.3%).
+- **Feasibility**: repeated instances (roughly 1 in 70k) where the returned
+  plan overshoots the fuel and/or time budget — from a 4.5% time overrun
+  (near-tie seed 1545) to 3-4x blowups on both axes (random-single seed
+  1234, and seed 104282 on the earlier run). The solver reports the
+  overspent totals in its own fuelUsed/timeUnitsUsed, violating the
+  invariant the pipeline spec asserts.
 
 Until the solver improves, expect the deep campaign to be red; the summary
 block it prints (gap rate, mean/max gap, worst seeds) is the number to
