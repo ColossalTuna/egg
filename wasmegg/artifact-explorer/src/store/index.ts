@@ -22,6 +22,7 @@ import Spaceship = ei.MissionInfo.Spaceship;
 import DurationType = ei.MissionInfo.DurationType;
 
 import {
+  EffortLevel,
   ExtrasConfig,
   isExtrasConfig,
   isMissionFilters,
@@ -32,7 +33,8 @@ import {
   newOverrides,
   OverrideFlags,
 } from './schema';
-export type { ExtrasConfig, MissionFilters, OverrideFlags } from './schema';
+export type { ExtrasConfig, MissionFilters, OverrideFlags, EffortLevel } from './schema';
+export { EFFORT_LEVELS, EFFORT_SLACK_SECONDS } from './schema';
 
 export const CONFIG_LOCALSTORAGE_KEY = 'config';
 export const OVERRIDES_LOCALSTORAGE_KEY = 'overrides';
@@ -373,12 +375,8 @@ export function persistExtras(): void {
 
 export const missionFilters = ref<MissionFilters>(loadMissionFilters());
 
-export function setMinDurationHoursEnabled(enabled: boolean): void {
-  missionFilters.value.minDurationHoursEnabled = enabled;
-}
-
-export function setMinDurationHours(hours: number): void {
-  missionFilters.value.minDurationHours = Math.max(0, hours);
+export function setEffort(level: EffortLevel): void {
+  missionFilters.value.effort = level;
 }
 
 export function setMaxGemCostEnabled(enabled: boolean): void {

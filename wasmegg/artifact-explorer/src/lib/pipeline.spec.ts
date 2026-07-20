@@ -63,14 +63,17 @@ describe('enumerateLaunchOptions', () => {
     expect(options.some(o => o.targetAfxId === Name.PUZZLE_CUBE)).toBe(true);
   });
 
-  it('drops missions shorter than minDurationSeconds', () => {
-    const all = enumerateLaunchOptions(perfectShipsConfig, dag);
-    const minDuration = 4 * 3600;
-    const longOnly = enumerateLaunchOptions(perfectShipsConfig, dag, minDuration);
-    expect(longOnly.length).toBeGreaterThan(0);
-    expect(longOnly.length).toBeLessThan(all.length);
-    for (const o of longOnly) {
-      expect(o.actualTime).toBeGreaterThanOrEqual(minDuration);
+  it('adds extraTimeSeconds slack to every mission duration without dropping any', () => {
+    const base = enumerateLaunchOptions(perfectShipsConfig, dag);
+    const slack = 4 * 3600;
+    const inflated = enumerateLaunchOptions(perfectShipsConfig, dag, slack);
+    // Nothing is filtered out: the effort slack is a soft penalty, not a cutoff.
+    expect(inflated.length).toBe(base.length);
+    const baseById = new Map(base.map(o => [o.id, o]));
+    for (const o of inflated) {
+      const original = baseById.get(o.id)!;
+      expect(o.actualTime).toBeCloseTo(original.actualTime + slack);
+      expect(o.actualTime).toBeGreaterThanOrEqual(slack);
     }
   });
 
