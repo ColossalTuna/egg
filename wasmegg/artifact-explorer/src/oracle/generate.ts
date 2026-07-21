@@ -34,6 +34,7 @@ export type Family = (typeof FAMILIES)[number];
 
 const FEASIBLE_CAP = 60_000;
 const CRAFTING_LEVELS = [10, 20, 30];
+const NUM_SLOTS = 3;
 
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -182,8 +183,13 @@ function finalize(
   if (keys.size !== options.length) {
     throw new Error(`${label} seed ${seed}: duplicate option cost/target triple`);
   }
+  // timeCapacity is now the PER-SLOT horizon S. Never let it fall below the
+  // longest chosen mission, or that mission could never fit any slot and would
+  // silently drop out — dead weight that dilutes the instance. When budgets are
+  // shrunk to bound the feasible count, shrink fuel and floor the horizon here.
+  const maxDur = Math.max(...options.map(o => o.actualTime));
   let fuel = fuelCapacity;
-  let time = timeCapacity;
+  let time = Math.max(timeCapacity, maxDur);
   for (let attempt = 0; attempt < 25; attempt++) {
     const inst: OracleInstance = {
       label,
@@ -202,7 +208,7 @@ function finalize(
       return count >= minFeasible ? inst : null;
     }
     fuel *= 0.7;
-    time *= 0.7;
+    time = Math.max(time * 0.7, maxDur);
   }
   return null;
 }
@@ -223,7 +229,12 @@ function basketBudgets(rng: Rng, options: LaunchOption[]): [number, number] {
     counts[b] = Math.max(1, counts[b]);
   }
   const fuel = counts.reduce((s, k, i) => s + k * options[i].actualFuel, 0);
-  const time = counts.reduce((s, k, i) => s + k * options[i].actualTime, 0);
+  // The basket's missions are spread across the three concurrent slots, so the
+  // per-slot horizon it needs is roughly a third of the total mission-seconds —
+  // but at least the longest single mission, which must fit one slot on its own.
+  const totalSeconds = counts.reduce((s, k, i) => s + k * options[i].actualTime, 0);
+  const maxDur = Math.max(...options.map(o => o.actualTime));
+  const time = Math.max(maxDur, totalSeconds / NUM_SLOTS);
   return [fuel * dyadic(rng, 1, 1.5, 8), time * dyadic(rng, 1, 1.5, 8)];
 }
 

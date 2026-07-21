@@ -17,13 +17,13 @@ import { evaluateAllocation, OracleInstance } from './evaluate';
 import { FAMILIES, Family, generateInstance } from './generate';
 
 const SPEC = process.env.ORACLE_REPRO ?? '';
-const SHIPS_PER_BATCH = 3; // verified by the probe in optimizer-oracle.spec.ts
+const SHIPS_PER_BATCH = 1; // per-ship options now; verified by the probe in optimizer-oracle.spec.ts
 
 function fmtAlloc(inst: OracleInstance, alloc: number[]): string {
   const parts: string[] = [];
   alloc.forEach((k, i) => {
     if (k > 0) {
-      parts.push(`${k} batches of ${inst.options[i].id}`);
+      parts.push(`${k} ships of ${inst.options[i].id}`);
     }
   });
   return parts.length ? parts.join(', ') : '(launch nothing)';
@@ -48,7 +48,7 @@ describe.skipIf(!SPEC)('oracle repro', () => {
     console.log('options (the ONLY missions the solver was offered):');
     for (const o of inst.options) {
       console.log(
-        `  ${o.id}: fuel/batch=${o.actualFuel}, time/batch=${o.actualTime}s, ` +
+        `  ${o.id}: fuel/ship=${o.actualFuel}, time/ship=${o.actualTime}s, ` +
           `yield=${JSON.stringify([...o.yieldVector])}, legendary=${JSON.stringify([...o.legendaryYieldVector])}`
       );
     }
@@ -71,23 +71,24 @@ describe.skipIf(!SPEC)('oracle repro', () => {
           `choiceHistory entry (fuel=${h.actualFuel}, time=${h.actualTime}, target=${h.targetAfxId}) matches no input option`
         );
       }
-      const batches = h.numShipsLaunched / SHIPS_PER_BATCH;
-      if (!Number.isInteger(batches) || batches < 0) {
-        throw new Error(`ship count ${h.numShipsLaunched} is not a whole number of ${SHIPS_PER_BATCH}-ship batches`);
+      const ships = h.numShipsLaunched / SHIPS_PER_BATCH;
+      if (!Number.isInteger(ships) || ships < 0) {
+        throw new Error(`ship count ${h.numShipsLaunched} is not a whole number of ${SHIPS_PER_BATCH}-ship missions`);
       }
-      alloc[i] += batches;
+      alloc[i] += ships;
     }
     const planEval = evaluateAllocation(inst, alloc);
     const fuelUsed = alloc.reduce((t, k, i) => t + k * inst.options[i].actualFuel, 0);
-    const timeUsed = alloc.reduce((t, k, i) => t + k * inst.options[i].actualTime, 0);
+    const makespan = (sol.slots ?? []).reduce((m, s) => Math.max(m, s.loadSeconds), 0);
 
     console.log(`\nsolver plan: ${fmtAlloc(inst, alloc)}`);
     console.log(`  reported bestProbability: ${sol.bestProbability}`);
     console.log(`  independent evaluation:   ${planEval.probability}`);
     console.log(
       `  uses fuel ${fuelUsed}/${inst.fuelCapacity} (${((100 * fuelUsed) / Math.max(1, inst.fuelCapacity)).toFixed(1)}%), ` +
-        `time ${timeUsed}/${inst.timeCapacity} (${((100 * timeUsed) / Math.max(1, inst.timeCapacity)).toFixed(1)}%)`
+        `busiest slot ${makespan}/${inst.timeCapacity}s (${((100 * makespan) / Math.max(1, inst.timeCapacity)).toFixed(1)}%)`
     );
+    console.log(`  slots: ${JSON.stringify(sol.slots ?? [])}`);
 
     const oracle = bruteForceBest(inst);
     console.log(`\noracle plan: ${fmtAlloc(inst, oracle.bestAllocation)}`);
