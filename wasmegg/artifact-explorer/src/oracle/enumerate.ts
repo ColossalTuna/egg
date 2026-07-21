@@ -58,8 +58,9 @@ function durationModel(inst: OracleInstance): DurationModel {
 
 // Exact: can `durCounts[j]` missions of duration `durations[j]` be partitioned
 // into NUM_SLOTS bins each of capacity `capacity`? Zero-duration missions add no
-// load and always fit. Bounded by nodeBudget; on the oracle's tiny instances the
-// bound is never approached.
+// load and always fit. Throws if the search exceeds `nodeBudget` rather than
+// answering "infeasible" (which would corrupt the enumeration); on the oracle's
+// tiny instances the bound is never approached.
 export function packableInto3Bins(
   durCounts: number[],
   durations: number[],
@@ -83,16 +84,18 @@ export function packableInto3Bins(
 
   const memo = new Map<string, boolean>();
   let nodes = 0;
-  let budgetHit = false;
 
   const feasible = (start: number, loads: number[]): boolean => {
     let j = start;
     while (j < m && (durCounts[j] <= 0 || durations[j] <= 0)) j++;
     if (j === m) return true;
-    if (budgetHit) return false;
     if (++nodes > nodeBudget) {
-      budgetHit = true;
-      return false;
+      // The exact packer must never answer "infeasible" when it merely ran out
+      // of budget — that would let the enumeration prune a genuinely feasible
+      // allocation and silently break its exhaustive/exact guarantee. Oracle
+      // instances are tiny and never approach the budget, so hitting it means an
+      // assumption broke; fail loudly rather than return a wrong answer.
+      throw new Error(`packableInto3Bins exceeded ${nodeBudget} nodes; instance too large for the exact packing check`);
     }
     const s = [loads[0], loads[1], loads[2]].sort((a, b) => a - b);
     const key = `${j}#${Math.round(s[0])},${Math.round(s[1])},${Math.round(s[2])}`;
@@ -125,10 +128,12 @@ export function packableInto3Bins(
 }
 
 // A cheap per-option upper bound on how many of one duration can ever fit: at
-// most floor(S/d) per slot across NUM_SLOTS slots. Infinite for zero-duration
-// missions (fuel is then the only bound).
+// most floor(S/d) per slot across NUM_SLOTS slots. A zero- or negative-duration
+// mission is unlaunchable (a mission takes time; it would otherwise admit
+// unbounded launches per slot), so it is excluded here — matching the solver,
+// which only keeps options with 0 < actualTime <= S.
 function maxByPacking(duration: number, capacity: number): number {
-  if (duration <= 0) return Infinity;
+  if (duration <= 0) return 0;
   return NUM_SLOTS * Math.floor(capacity / duration);
 }
 
@@ -146,6 +151,10 @@ export function countFeasible(inst: OracleInstance, cap: number): number | null 
     }
     const opt = inst.options[i];
     const dj = durIdxByOption[i];
+    if (opt.actualFuel <= 0 && opt.actualTime <= 0) {
+      // an option with no fuel and no duration cost admits unbounded launches
+      throw new Error('option with zero fuel and time cost admits unbounded launches; instance is ill-posed');
+    }
     // durCounts is keyed by DURATION, and several options can share one, so
     // accumulate onto whatever earlier same-duration options already placed.
     const base = durCounts[dj];
@@ -153,10 +162,6 @@ export function countFeasible(inst: OracleInstance, cap: number): number | null 
       opt.actualFuel > 0 ? Math.floor(fuelLeft / opt.actualFuel) : Infinity,
       maxByPacking(opt.actualTime, S)
     );
-    if (!isFinite(maxK)) {
-      // an option with no fuel and no duration cost admits unbounded launches
-      throw new Error('option with zero fuel and time cost admits unbounded launches; instance is ill-posed');
-    }
     for (let k = 0; k <= maxK; k++) {
       durCounts[dj] = base + k;
       if (k > 0 && !packableInto3Bins(durCounts, durations, S)) {
