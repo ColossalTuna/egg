@@ -79,9 +79,7 @@ function shipsPerBatch(): number {
     return shipsPerBatchMemo;
   }
   const dag = new Map(
-    [makeNode('probe-leaf', true), makeNode('probe-t', false, [['probe-leaf', 1]], 0.4)].map(
-      n => [n.id, n] as const
-    )
+    [makeNode('probe-leaf', true), makeNode('probe-t', false, [['probe-leaf', 1]], 0.4)].map(n => [n.id, n] as const)
   );
   const solution = optimizeFull({
     options: [makeOpt(2, 1, [], [['probe-t', 0.125]])],
@@ -127,9 +125,7 @@ function reconstructAllocation(inst: OracleInstance, solution: OptimizerSolution
     }
     const batches = launch.numShipsLaunched / scale;
     if (!Number.isInteger(batches) || batches < 0) {
-      throw new Error(
-        `ship count ${launch.numShipsLaunched} is not a whole number of ${scale}-ship batches`
-      );
+      throw new Error(`ship count ${launch.numShipsLaunched} is not a whole number of ${scale}-ship batches`);
     }
     allocation[idx] += batches;
   }
@@ -201,10 +197,7 @@ function checkInstance(inst: OracleInstance, gapTol = GAP_TOL): InstanceOutcome 
     fuelUsed > inst.fuelCapacity + slack(inst.fuelCapacity) ||
     timeUsed > inst.timeCapacity + slack(inst.timeCapacity)
   ) {
-    fail(
-      'feasibility',
-      `plan uses fuel=${fuelUsed}/${inst.fuelCapacity}, time=${timeUsed}/${inst.timeCapacity}`
-    );
+    fail('feasibility', `plan uses fuel=${fuelUsed}/${inst.fuelCapacity}, time=${timeUsed}/${inst.timeCapacity}`);
     return { family: inst.label, seed: inst.seed, gap: NaN, failures };
   }
   if (
@@ -220,10 +213,7 @@ function checkInstance(inst: OracleInstance, gapTol = GAP_TOL): InstanceOutcome 
   const planEval = evaluateAllocation(inst, allocation);
   const claimed = claimedProbability(solution, inst);
   if (Math.abs(claimed - planEval.probability) > HONESTY_TOL) {
-    fail(
-      'honesty',
-      `claimed p=${claimed} vs independent p=${planEval.probability} for allocation [${allocation}]`
-    );
+    fail('honesty', `claimed p=${claimed} vs independent p=${planEval.probability} for allocation [${allocation}]`);
   } else if (claimed < 1 && planEval.score < 30) {
     // below the float-saturation point of 1 - e^-score, also compare in score
     // space, which stays sharp where probabilities compress toward 1; the
@@ -231,14 +221,8 @@ function checkInstance(inst: OracleInstance, gapTol = GAP_TOL): InstanceOutcome 
     // granularity near p = 1 corresponds to a score error of ~ulp(1) * e^score
     const claimedScore = -Math.log(1 - claimed);
     const roundTripResolution = 4e-16 * Math.exp(planEval.score);
-    if (
-      Math.abs(claimedScore - planEval.score) >
-      HONESTY_TOL * (1 + planEval.score) + roundTripResolution
-    ) {
-      fail(
-        'honesty',
-        `claimed score ${claimedScore} vs independent ${planEval.score} for allocation [${allocation}]`
-      );
+    if (Math.abs(claimedScore - planEval.score) > HONESTY_TOL * (1 + planEval.score) + roundTripResolution) {
+      fail('honesty', `claimed score ${claimedScore} vs independent ${planEval.score} for allocation [${allocation}]`);
     }
   }
 
@@ -310,9 +294,7 @@ function assertNoFailures(outcomes: InstanceOutcome[]): void {
       const key = `${f.family}/${f.kind}`;
       byBucket.set(key, (byBucket.get(key) ?? 0) + 1);
     }
-    console.log(
-      `failure breakdown: ${[...byBucket].map(([k, n]) => `${k}=${n}`).join(', ')}`
-    );
+    console.log(`failure breakdown: ${[...byBucket].map(([k, n]) => `${k}=${n}`).join(', ')}`);
     // sample a few failures of every kind so a flood of one kind can't hide
     // the others
     const byKind = new Map<string, InstanceFailure[]>();
@@ -351,10 +333,15 @@ describe('oracle calibration', () => {
         [
           makeNode('a', true),
           makeNode('b', true),
-          makeNode('t', false, [
-            ['a', 2],
-            ['b', 1],
-          ], p),
+          makeNode(
+            't',
+            false,
+            [
+              ['a', 2],
+              ['b', 1],
+            ],
+            p
+          ),
         ].map(n => [n.id, n])
       ),
       targets: ['t'],
@@ -408,10 +395,15 @@ describe('oracle calibration', () => {
         [
           makeNode('a', true),
           makeNode('mid', false, [['a', 2]]),
-          makeNode('t', false, [
-            ['mid', 1],
-            ['a', 1],
-          ], 0.3),
+          makeNode(
+            't',
+            false,
+            [
+              ['mid', 1],
+              ['a', 1],
+            ],
+            0.3
+          ),
         ].map(n => [n.id, n])
       ),
       targets: ['t'],
@@ -452,11 +444,10 @@ describe('oracle calibration', () => {
       seed: 0,
       options: [],
       dag: new Map(
-        [
-          makeNode('a', true),
-          makeNode('t0', false, [['a', 1]], 0.5),
-          makeNode('t1', false, [['a', 1]], 0.8),
-        ].map(n => [n.id, n])
+        [makeNode('a', true), makeNode('t0', false, [['a', 1]], 0.5), makeNode('t1', false, [['a', 1]], 0.8)].map(n => [
+          n.id,
+          n,
+        ])
       ),
       targets: ['t0', 't1'],
       fuelCapacity: 0,

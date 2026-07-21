@@ -213,7 +213,11 @@ function finalize(
 // instances pose a real allocation decision instead of a forced move.
 function basketBudgets(rng: Rng, options: LaunchOption[]): [number, number] {
   const counts = options.map(() => randInt(rng, 0, 3));
-  const [a, b] = sample(rng, options.map((_, i) => i), 2);
+  const [a, b] = sample(
+    rng,
+    options.map((_, i) => i),
+    2
+  );
   counts[a] = Math.max(1, counts[a]);
   if (b !== undefined) {
     counts[b] = Math.max(1, counts[b]);
@@ -245,10 +249,7 @@ export function generateInstance(family: Family, seed: number): OracleInstance |
   switch (family) {
     case 'random-single':
     case 'random-multi': {
-      const targets =
-        family === 'random-multi'
-          ? sample(rng, candidateTargets(), 2)
-          : [pick(rng, candidateTargets())];
+      const targets = family === 'random-multi' ? sample(rng, candidateTargets(), 2) : [pick(rng, candidateTargets())];
       const pool = getPool(targets, pickLevel(rng, targets));
       if (pool.useful.length < 2) {
         return null;
@@ -369,7 +370,10 @@ export function generateInstance(family: Family, seed: number): OracleInstance |
       }
       if (variant === 2) {
         // single mission, fuel budget an exact multiple of its cost
-        const opt = pick(rng, pool.useful.filter(o => o.actualFuel > 0));
+        const opt = pick(
+          rng,
+          pool.useful.filter(o => o.actualFuel > 0)
+        );
         return finalize(
           family,
           seed,

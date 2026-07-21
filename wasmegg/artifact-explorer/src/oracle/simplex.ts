@@ -132,11 +132,7 @@ export function simplexMaximize(A: Frac[][], b: Frac[], c: Frac[]): Frac {
     for (let i = 0; i < m; i++) {
       if (T[i][enter].isPositive()) {
         const ratio = T[i][width - 1].div(T[i][enter]);
-        if (
-          bestRatio === null ||
-          ratio.cmp(bestRatio) < 0 ||
-          (ratio.cmp(bestRatio) === 0 && basis[i] < basis[leave])
-        ) {
+        if (bestRatio === null || ratio.cmp(bestRatio) < 0 || (ratio.cmp(bestRatio) === 0 && basis[i] < basis[leave])) {
           bestRatio = ratio;
           leave = i;
         }

@@ -66,6 +66,11 @@ describe.skipIf(!SPEC)('oracle repro', () => {
       const i = inst.options.findIndex(
         o => o.actualFuel === h.actualFuel && o.actualTime === h.actualTime && o.targetAfxId === h.targetAfxId
       );
+      if (i === -1) {
+        throw new Error(
+          `choiceHistory entry (fuel=${h.actualFuel}, time=${h.actualTime}, target=${h.targetAfxId}) matches no input option`
+        );
+      }
       alloc[i] += h.numShipsLaunched / SHIPS_PER_BATCH;
     }
     const planEval = evaluateAllocation(inst, alloc);
