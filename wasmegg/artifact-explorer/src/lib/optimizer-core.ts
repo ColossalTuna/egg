@@ -175,13 +175,13 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
   if (feasibleOptions.length > 0 && S > 0) {
     // Relaxed solve over three slots' worth of aggregate time: an upper bound U
     // plus a candidate allocation that may not be 3-bin packable.
-    const relaxed = coreSearch(ctx, R, NUM_SLOTS * S);
+    const relaxed = coreSearch(ctx, R, NUM_SLOTS * S, epsilon);
     U = Math.max(U, relaxed.U);
 
     // Floor solve: batch-of-three, i.e. three identical single-slot plans. Each
     // slot gets horizon S and an equal third of the fuel; tripling the counts
     // is always packable and reproduces the pre-change optimum exactly.
-    const floor = coreSearch(ctx, R / NUM_SLOTS, S);
+    const floor = coreSearch(ctx, R / NUM_SLOTS, S, epsilon);
     const floorAlloc = new Map<number, number>();
     for (const [i, k] of floor.bestAlloc) floorAlloc.set(i, k * NUM_SLOTS);
 
@@ -220,8 +220,10 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
 
 // The single-time-budget integer search (LP relaxation + dominance/dual
 // pruning + pair/triple ternary scans + greedy repair). Budget-agnostic: the
-// caller decides whether S_budget is 3S (relaxed) or S (floor).
-function coreSearch(ctx: EvalContext, R: number, S: number): CoreResult {
+// caller decides whether S_budget is 3S (relaxed) or S (floor). epsilon is the
+// caller's optimality tolerance, controlling the dual-filter loss budget and
+// the triple-scan gap trigger.
+function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): CoreResult {
   const { options, evalScoreAt, baseScore, innerLp, baseYield, targets, recipeDag, QByTarget } = ctx;
 
   // Single-option sweep. Also records each option's solo score, which the
@@ -295,7 +297,7 @@ function coreSearch(ctx: EvalContext, R: number, S: number): CoreResult {
   // does discard cheap budget-filler options — the greedy repair at the end
   // re-admits those from the full list.
   if (scoreLP > ZERO_TOL) {
-    const lossBudget = 0.5 * DEFAULT_EPSILON * scoreLP;
+    const lossBudget = 0.5 * epsilon * scoreLP;
     const yR = jointLp.dualR;
     const yS = jointLp.dualS;
     const nodeDuals = jointLp.nodeDuals;
@@ -333,7 +335,7 @@ function coreSearch(ctx: EvalContext, R: number, S: number): CoreResult {
   // near-duplicate missions the solo ranking would otherwise fill up with
   // clones of the best standalone option and crowd them out.
   const gap = scoreLP > ZERO_TOL ? (scoreLP - bestScore) / scoreLP : 0;
-  if (gap > DEFAULT_EPSILON) {
+  if (gap > epsilon) {
     const bySingle = survivorsAfter
       .filter(i => isFinite(scoreAlone[i]) && scoreAlone[i] > -Infinity)
       .sort((x, y) => scoreAlone[y] - scoreAlone[x])

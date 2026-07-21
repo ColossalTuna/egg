@@ -14,8 +14,9 @@
 // option can be added without busting fuel or the 3-slot packing. Enumerating
 // only maximal allocations is therefore an exact search, not a heuristic.
 //
-// This packing check is re-derived here, independent of src/lib/packing.ts, to
-// keep the correctness harness from sharing code with the solver it audits.
+// This packing check is re-derived here, independent of the production solver's
+// own packer, to keep the correctness harness from sharing code with the code
+// it audits.
 
 import { evaluateAllocation, evaluateAllocationFloat, OracleInstance } from './evaluate';
 

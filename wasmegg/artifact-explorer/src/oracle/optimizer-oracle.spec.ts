@@ -236,6 +236,7 @@ function checkInstance(inst: OracleInstance, gapTol = GAP_TOL): InstanceOutcome 
   }
   if (slotMissionSum !== totalMissions) {
     fail('feasibility', `slot witness holds ${slotMissionSum} missions but plan has ${totalMissions}`);
+    return { family: inst.label, seed: inst.seed, gap: NaN, failures };
   }
   if (
     Math.abs(solution.fuelUsed - fuelUsed) > 1e-6 * Math.max(1, fuelUsed) ||

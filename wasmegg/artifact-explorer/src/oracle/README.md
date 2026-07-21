@@ -7,8 +7,8 @@ three concurrent mission slots with a greedy per-slot fill — any of which can
 silently return a suboptimal or infeasible plan. This harness measures that,
 treating the solver as a black box: nothing in this directory imports the
 solver's internals, only the public entry point and types. The three-slot
-packing feasibility check is re-derived here independently of
-`src/lib/packing.ts`.
+packing feasibility check is re-derived here independently of the solver's
+own packer.
 
 ## Real game data
 
