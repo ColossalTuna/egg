@@ -1,11 +1,14 @@
 # Brute-force oracle for the artifact optimizer
 
 Correctness assurance for the heuristic outer solver (`optimizeFull`). The
-solver stacks heuristics — ternary search over batch counts, dominance
-pruning, an aggressive dual filter with greedy repair — any of which can
-silently return a suboptimal plan. This harness measures that, treating the
-solver as a black box: nothing in this directory imports the solver's
-internals, only the public entry point and types.
+solver stacks heuristics — ternary search over launch counts, dominance
+pruning, an aggressive dual filter, and packing candidate allocations into the
+three concurrent mission slots with a greedy per-slot fill — any of which can
+silently return a suboptimal or infeasible plan. This harness measures that,
+treating the solver as a black box: nothing in this directory imports the
+solver's internals, only the public entry point and types. The three-slot
+packing feasibility check is re-derived here independently of the solver's
+own packer.
 
 ## Real game data
 
@@ -27,17 +30,19 @@ loot snapshot they were found on.
 For each generated instance the harness:
 
 1. runs `optimizeFull` and maps its `choiceHistory` back onto the input
-   options by their (fuel, time, target) triple (the ships-per-batch scale
-   is measured at runtime by a probe whose optimal batch count is provable
-   from the reported probability alone);
-2. **feasibility** — recomputes fuel/time usage and checks it against the
-   budgets and against the reported totals;
+   options by their (fuel, time, target) triple (options are per single ship,
+   so the ships-per-mission scale measured by the runtime probe is 1);
+2. **feasibility** — checks the plan against the single shared fuel budget and
+   the three-slot time model: its missions must partition into 3 slots each
+   within the horizon S (never merely `sum(k*d) <= 3S`), the solver's per-slot
+   witness must be self-consistent, and the reported totals must match;
 3. **honesty** — re-evaluates the returned plan with an evaluator built from
    disparate logic (an exact BigInt-rational simplex over the recipe DAG,
    derived only from the documented objective) and checks the reported
    probability against it;
 4. **optimality** — exhaustively enumerates every maximal feasible integer
-   allocation (exact, because the objective is monotone in inventory),
+   allocation (exact, because the objective is monotone in inventory and the
+   feasible region is downward-closed under both fuel and 3-slot packing),
    evaluates each with the independent evaluator, and requires the solver's
    plan to be within `ORACLE_GAP_TOL` of the best;
 5. **second opinion** — any optimality gap is re-priced through the solver's
@@ -82,6 +87,13 @@ asserts the strict tolerance. Every failure line carries the family and
 seed, so any finding can be reproduced exactly.
 
 ## Baseline (2026-07-19, hardened real-data harness, ~220k instances)
+
+> Note: the figures below predate the move to three independent mission slots
+> (the solver now allocates single ships packed into 3 slots of horizon S, not
+> lockstep batches of three). They describe the old batch-of-three model and
+> should be re-measured with a fresh full campaign; a short spot-check under the
+> 3-slot model shows a comparable (slightly lower) above-tolerance rate.
+
 
 Honesty and calibration pass everywhere. With instances that pose genuine
 allocation decisions (basket-priced budgets, banded subsets, decision-free

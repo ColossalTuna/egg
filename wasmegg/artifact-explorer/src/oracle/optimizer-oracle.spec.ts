@@ -7,8 +7,9 @@
 // simplex over the recipe DAG plus exhaustive enumeration of integer launch
 // allocations — and checks three properties per instance:
 //
-//   1. feasibility — the returned plan respects the fuel/time budgets and
-//      the reported totals match the plan;
+//   1. feasibility — the returned plan respects the fuel budget, its missions
+//      pack into the three mission slots (each within the horizon S), and the
+//      reported totals match the plan;
 //   2. honesty     — the reported probability equals an independent
 //      re-evaluation of the returned plan;
 //   3. optimality  — no feasible allocation beats the plan by more than
@@ -28,7 +29,7 @@ import { describe, expect, test } from 'vitest';
 import { optimizeFull } from '../lib/optimizer-core';
 import type { OptimizerSolution } from '../lib/types';
 import { makeNode, makeOpt } from '../lib/spec-helpers';
-import { bruteForceBest } from './enumerate';
+import { bruteForceBest, packableInto3Bins } from './enumerate';
 import { evaluateAllocation, OracleInstance, targetQ } from './evaluate';
 import { FAMILIES, Family, generateInstance } from './generate';
 
@@ -66,13 +67,13 @@ function runOptimizer(inst: OracleInstance): OptimizerSolution {
   });
 }
 
-// numShipsLaunched counts individual ships, while costs and yields are per
-// batch. The ships-per-batch constant is not part of the public types, so it
-// is measured once from a probe whose true batch count is provable from the
-// reported probability alone: with only a direct-drop option (0.125 expected
-// legendaries per batch, 3 batches affordable), probability is strictly
-// monotone in batches, so a report of 1 - e^-0.375 pins the plan at exactly
-// 3 batches.
+// numShipsLaunched counts individual ships, and costs and yields are now per
+// single ship, so the ships-per-batch scale is 1. Rather than assume that, it
+// is measured once from a probe whose optimum is provable from the reported
+// probability alone: with only a direct-drop option (0.125 expected legendaries
+// per ship, 3 ships affordable on fuel, horizon far larger than needed),
+// probability is strictly monotone in ships, so a report of 1 - e^-0.375 pins
+// the plan at exactly 3 ships and the measured scale at 1.
 let shipsPerBatchMemo: number | null = null;
 function shipsPerBatch(): number {
   if (shipsPerBatchMemo !== null) {
@@ -191,22 +192,59 @@ function checkInstance(inst: OracleInstance, gapTol = GAP_TOL): InstanceOutcome 
 
   // tolerances are relative: real fuel costs run to billions of eggs
   const fuelUsed = allocation.reduce((sum, k, i) => sum + k * inst.options[i].actualFuel, 0);
-  const timeUsed = allocation.reduce((sum, k, i) => sum + k * inst.options[i].actualTime, 0);
   const slack = (x: number) => 1e-9 * Math.max(1, x);
-  if (
-    fuelUsed > inst.fuelCapacity + slack(inst.fuelCapacity) ||
-    timeUsed > inst.timeCapacity + slack(inst.timeCapacity)
-  ) {
-    fail('feasibility', `plan uses fuel=${fuelUsed}/${inst.fuelCapacity}, time=${timeUsed}/${inst.timeCapacity}`);
+
+  // Time feasibility is now a three-slot packing question: the plan's missions
+  // must partition into 3 slots each within the horizon S — never merely
+  // sum(k*d) <= 3S. Reduce the allocation to per-duration counts and check
+  // packability independently.
+  const durList: number[] = [];
+  const durCounts: number[] = [];
+  const durIndex = new Map<number, number>();
+  inst.options.forEach((opt, i) => {
+    const key = Math.round(opt.actualTime);
+    let di = durIndex.get(key);
+    if (di === undefined) {
+      di = durList.length;
+      durList.push(opt.actualTime);
+      durCounts.push(0);
+      durIndex.set(key, di);
+    }
+    durCounts[di] += allocation[i];
+  });
+  if (fuelUsed > inst.fuelCapacity + slack(inst.fuelCapacity)) {
+    fail('feasibility', `plan uses fuel=${fuelUsed}/${inst.fuelCapacity}`);
+    return { family: inst.label, seed: inst.seed, gap: NaN, failures };
+  }
+  if (!packableInto3Bins(durCounts, durList, inst.timeCapacity)) {
+    fail('feasibility', `plan [${allocation}] does not pack into 3 slots of ${inst.timeCapacity}s`);
+    return { family: inst.label, seed: inst.seed, gap: NaN, failures };
+  }
+
+  // The solver's slot witness must be self-consistent: every slot within the
+  // horizon, its mission counts summing to the plan, and the reported
+  // timeUnitsUsed equal to the busiest slot's load (the wall-clock makespan).
+  const slots = solution.slots ?? [];
+  const totalMissions = allocation.reduce((sum, k) => sum + k, 0);
+  const slotMissionSum = slots.reduce((sum, sl) => sum + sl.missionCount, 0);
+  const makespan = slots.reduce((m, sl) => Math.max(m, sl.loadSeconds), 0);
+  for (const sl of slots) {
+    if (sl.loadSeconds > inst.timeCapacity + slack(inst.timeCapacity)) {
+      fail('feasibility', `slot load ${sl.loadSeconds} exceeds horizon ${inst.timeCapacity}`);
+      return { family: inst.label, seed: inst.seed, gap: NaN, failures };
+    }
+  }
+  if (slotMissionSum !== totalMissions) {
+    fail('feasibility', `slot witness holds ${slotMissionSum} missions but plan has ${totalMissions}`);
     return { family: inst.label, seed: inst.seed, gap: NaN, failures };
   }
   if (
     Math.abs(solution.fuelUsed - fuelUsed) > 1e-6 * Math.max(1, fuelUsed) ||
-    Math.abs(solution.timeUnitsUsed - timeUsed) > 1e-6 * Math.max(1, timeUsed)
+    Math.abs(solution.timeUnitsUsed - Math.round(makespan)) > 1
   ) {
     fail(
       'feasibility',
-      `reported usage fuel=${solution.fuelUsed}, time=${solution.timeUnitsUsed} but plan uses fuel=${fuelUsed}, time=${timeUsed}`
+      `reported usage fuel=${solution.fuelUsed}, time=${solution.timeUnitsUsed} but plan uses fuel=${fuelUsed}, makespan=${makespan}`
     );
   }
 

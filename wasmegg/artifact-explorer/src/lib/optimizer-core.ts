@@ -1,19 +1,31 @@
-// Outer search for the Path of Virtue optimizer: pick integer batch counts
-// k_i for each launch option to maximize the chance of the desired legendary,
-// under a fuel budget R and a time budget S.
+// Outer search for the Path of Virtue optimizer: pick integer counts of each
+// launch option to maximize the chance of the desired legendary, under a fuel
+// budget R and a time horizon S. The game has THREE independent mission slots:
+// each runs its own back-to-back sequence of single-ship missions within the
+// shared horizon S, and slots may run different missions. So a chosen multiset
+// of missions is realizable only if its durations pack into 3 bins of capacity
+// S (never the sum across slots — a mission must fit ONE slot's remaining time).
 //
 // We don't maximize the probability directly. Instead the objective is
 //   score = sum_T Q_T * (crafts of T) + direct legendary drops,
 // with Q_T = -log(1 - pCraftLegendary_T). The probability is monotone in
 // score, and score is concave in inventory (the inner LP value is concave,
 // the legendary term is linear), which is what makes the ternary searches,
-// dominance pruning, and dual filter below work.
+// dominance pruning, and dual filter in coreSearch work.
+//
+// coreSearch solves the single-time-budget relaxation (its callers pass either
+// 3S — three slots' worth of aggregate time, an upper bound — or S with a third
+// of the fuel, the always-packable batch-of-three floor). optimizeFull then
+// packs candidate allocations into the three real slots and greedily fills the
+// leftover per-slot time, so the returned plan is always 3-bin feasible and
+// never worse than the batch-of-three optimum.
 
-import type { LaunchOption, LaunchSolution, OptimizerSolution, RecipeDAG } from './types';
+import type { LaunchOption, LaunchSolution, OptimizerSolution, RecipeDAG, SlotSummary } from './types';
 import { ei } from 'lib';
 import { compileInnerLp, alphaToProb, InnerLp } from './value-function';
 import { solveLp } from './lp';
 
+const NUM_SLOTS = 3;
 const TRIPLE_TOP_K = 20;
 const DEFAULT_EPSILON = 1e-3;
 const ZERO_TOL = 1e-9;
@@ -28,25 +40,41 @@ interface OptimizeArgs {
   epsilon?: number;
 }
 
-export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
-  const {
-    options,
-    recipeDag,
-    desiredArtifactNodeIds,
-    fuelCapacity: rawR,
-    timeCapacity: rawS,
-    baseYield,
-    epsilon = DEFAULT_EPSILON,
-  } = args;
+type EvalFn = (multipliers: ReadonlyArray<readonly [number, number]>) => number;
 
-  // A NaN or negative budget (e.g. an empty input field upstream) must not
-  // reach the search: NaN comparisons silently take different branches in
-  // the single sweep, the pairwise/triple scans, and the joint LP, so each
-  // path sees a different effective budget. Clamp to zero — no budget, no
-  // launches — and let the caller decide how to present invalid input.
-  const R = Number.isFinite(rawR) && rawR > 0 ? rawR : 0;
-  const S = Number.isFinite(rawS) && rawS > 0 ? rawS : 0;
+// Everything the outer search needs that depends only on the option set and
+// the recipe DAG (not on the fuel/time budgets), so it is built once and reused
+// across the relaxed and floor solves.
+interface EvalContext {
+  options: LaunchOption[];
+  recipeDag: RecipeDAG;
+  targets: string[];
+  baseYield: Map<string, number>;
+  QByTarget: Map<string, number>;
+  innerLp: InnerLp;
+  evalScoreAt: EvalFn;
+  baseScore: number;
+}
 
+interface CoreResult {
+  bestAlloc: Map<number, number>;
+  bestScore: number;
+  U: number; // joint-LP relaxation value: an upper bound on the score
+  support: Set<number>; // options with positive weight at the LP optimum
+}
+
+interface PackResult {
+  alloc: Map<number, number>;
+  slots: SlotSummary[];
+  score: number;
+}
+
+function buildEvalContext(
+  options: LaunchOption[],
+  recipeDag: RecipeDAG,
+  desiredArtifactNodeIds: string[],
+  baseYield: Map<string, number>
+): EvalContext {
   // Q_T weights the inner LP's craft objective so a craft of a target with
   // better legendary odds counts for more.
   const targets = desiredArtifactNodeIds;
@@ -58,16 +86,11 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
 
   const innerLp = compileInnerLp(recipeDag, desiredArtifactNodeIds, QByTarget);
 
-  // score(alloc) = inner weighted craft value + direct legendary drops.
-  // Note non-legendary drops of a final target are inert (it has no
-  // conservation row), so they never inflate the craft value.
-  //
   // The inner LP only sees inventory through its b vector, so the base yield
   // and each option's yield vector are preindexed down to constraint rows
   // here; yields to nodes without a conservation row can't affect the score.
   const nRows = innerLp.constraintNodes.length;
   const rowIdxByNode = new Map<string, number>();
-
   for (let i = 0; i < nRows; i++) {
     rowIdxByNode.set(innerLp.constraintNodes[i], i);
   }
@@ -81,7 +104,6 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
 
   const optYieldRows: Int32Array[] = new Array(options.length);
   const optYieldRates: Float64Array[] = new Array(options.length);
-
   for (let i = 0; i < options.length; i++) {
     const rows: number[] = [];
     const rates: number[] = [];
@@ -97,8 +119,7 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
   }
 
   const bEval = new Float64Array(nRows);
-
-  const evalScoreAt = (multipliers: ReadonlyArray<readonly [number, number]>): number => {
+  const evalScoreAt: EvalFn = multipliers => {
     bEval.set(bBase);
     let directLegendary = 0;
     for (const [idx, k] of multipliers) {
@@ -117,6 +138,93 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
   };
 
   const baseScore = innerLp.solveScore(bBase);
+
+  return { options, recipeDag, targets, baseYield, QByTarget, innerLp, evalScoreAt, baseScore };
+}
+
+export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
+  const {
+    options,
+    recipeDag,
+    desiredArtifactNodeIds,
+    fuelCapacity: rawR,
+    timeCapacity: rawS,
+    baseYield,
+    epsilon = DEFAULT_EPSILON,
+  } = args;
+
+  // A NaN or negative budget (e.g. an empty input field upstream) must not
+  // reach the search: NaN comparisons silently take different branches, so
+  // clamp to zero — no budget, no launches — and let the caller present the
+  // invalid input.
+  const R = Number.isFinite(rawR) && rawR > 0 ? rawR : 0;
+  const S = Number.isFinite(rawS) && rawS > 0 ? rawS : 0;
+
+  // Only missions that fit a single slot's horizon can ever run. Filtering the
+  // rest here is also what keeps the relaxed upper bound valid: a mission no
+  // slot can hold must not be fractionally usable under the 3S relaxation.
+  const feasibleOptions = options.filter(o => o.actualTime > ZERO_TOL && o.actualTime <= S);
+
+  const ctx = buildEvalContext(feasibleOptions, recipeDag, desiredArtifactNodeIds, baseYield);
+
+  let bestAlloc = new Map<number, number>();
+  let bestScore = ctx.baseScore;
+  let bestSlots: SlotSummary[] = [];
+  let U = ctx.baseScore;
+
+  if (feasibleOptions.length > 0 && S > 0) {
+    // Relaxed solve over three slots' worth of aggregate time: an upper bound U
+    // plus a candidate allocation that may not be 3-bin packable.
+    const relaxed = coreSearch(ctx, R, NUM_SLOTS * S, epsilon);
+    U = Math.max(U, relaxed.U);
+
+    // Floor solve: batch-of-three, i.e. three identical single-slot plans. Each
+    // slot gets horizon S and an equal third of the fuel; tripling the counts
+    // is always packable and reproduces the pre-change optimum exactly.
+    const floor = coreSearch(ctx, R / NUM_SLOTS, S, epsilon);
+    const floorAlloc = new Map<number, number>();
+    for (const [i, k] of floor.bestAlloc) floorAlloc.set(i, k * NUM_SLOTS);
+
+    // Three packable candidates: repair the relaxed optimum into real slots,
+    // do the same for the guaranteed floor, and build one greedily from empty
+    // slots (which directly exploits per-slot independence). These scan the full
+    // option list in the greedy fill so cheap budget-fillers the dual filter
+    // pruned are still re-admitted (as the single-budget repair does).
+    const candidates = [
+      packAndFill(relaxed.bestAlloc, ctx, R, S),
+      packAndFill(floorAlloc, ctx, R, S),
+      packAndFill(new Map(), ctx, R, S),
+    ];
+    for (const cand of candidates) {
+      if (cand.score > bestScore + ZERO_TOL) {
+        bestScore = cand.score;
+        bestAlloc = cand.alloc;
+        bestSlots = cand.slots;
+      }
+    }
+
+    // Certificate-guided escalation: only when the packable best still trails
+    // the upper bound. Seed one slot with each LP-support option and re-fill,
+    // recovering the marginal per-slot specialization the relaxation dropped.
+    if (U > ZERO_TOL && (U - bestScore) / U > epsilon) {
+      const escalated = escalatePacking(relaxed, floor, ctx, R, S);
+      if (escalated && escalated.score > bestScore + ZERO_TOL) {
+        bestAlloc = escalated.alloc;
+        bestSlots = escalated.slots;
+      }
+    }
+  }
+
+  return assembleFullSolution(ctx, bestAlloc, bestSlots, baseYield, desiredArtifactNodeIds, recipeDag);
+}
+
+// The single-time-budget integer search (LP relaxation + dominance/dual
+// pruning + pair/triple ternary scans + greedy repair). Budget-agnostic: the
+// caller decides whether S_budget is 3S (relaxed) or S (floor). epsilon is the
+// caller's optimality tolerance, controlling the dual-filter loss budget and
+// the triple-scan gap trigger.
+function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): CoreResult {
+  const { options, evalScoreAt, baseScore, innerLp, baseYield, targets, recipeDag, QByTarget } = ctx;
 
   // Single-option sweep. Also records each option's solo score, which the
   // triple fallback uses for its top-K ranking.
@@ -267,16 +375,202 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
     bestAlloc = lpRounded;
   }
 
-  // Assemble the solution.
-  const { finalYieldVector, totalLegendary, fuelUsed, fuelByEgg, timeSecs, choiceHistory } = assembleSolution(
+  return { bestAlloc, bestScore, U: scoreLP, support: lpSupport };
+}
+
+// Turn an allocation (option -> count, possibly not 3-bin packable) into a
+// realizable plan: best-fit-decreasing pack its missions into the three slots,
+// drop whatever spills over (marginal excess from the relaxation), then greedily
+// fill each slot's remaining time with the highest-marginal-value missions the
+// leftover fuel affords. The result is always packable by construction and
+// carries the per-slot witness.
+function packAndFill(
+  startAlloc: Map<number, number>,
+  ctx: EvalContext,
+  R: number,
+  S: number,
+  fillOptions?: Set<number>
+): PackResult {
+  const options = ctx.options;
+
+  const missionOpt: number[] = [];
+  const missionDur: number[] = [];
+  for (const [i, k] of startAlloc) {
+    if (k <= 0) continue;
+    const d = options[i].actualTime;
+    if (d <= ZERO_TOL || d > S + ZERO_TOL) continue;
+    for (let c = 0; c < k; c++) {
+      missionOpt.push(i);
+      missionDur.push(d);
+    }
+  }
+
+  // Best-fit-decreasing into the three slots, respecting BOTH the per-slot
+  // horizon and the shared fuel budget. Missions that fit no slot's remaining
+  // time, or that the fuel budget can no longer afford, are dropped — they are
+  // marginal excess from the 3S relaxation or a fuel-blind escalation seed.
+  const order = missionOpt.map((_, idx) => idx).sort((a, b) => missionDur[b] - missionDur[a]);
+  const slotLoad = new Array<number>(NUM_SLOTS).fill(0);
+  const slotCount = new Array<number>(NUM_SLOTS).fill(0);
+  const alloc = new Map<number, number>();
+  let usedFuel = 0;
+  for (const flat of order) {
+    const i = missionOpt[flat];
+    const d = missionDur[flat];
+    const f = options[i].actualFuel;
+    if (usedFuel + f > R + ZERO_TOL) continue;
+    let best = -1;
+    let bestLoad = -1;
+    for (let b = 0; b < NUM_SLOTS; b++) {
+      if (slotLoad[b] + d <= S + ZERO_TOL && slotLoad[b] > bestLoad) {
+        best = b;
+        bestLoad = slotLoad[b];
+      }
+    }
+    if (best === -1) continue;
+    slotLoad[best] += d;
+    slotCount[best] += 1;
+    alloc.set(i, (alloc.get(i) ?? 0) + 1);
+    usedFuel += f;
+  }
+
+  let score = evalOf(ctx, alloc);
+
+  // The fill loop considers the LP-relevant options plus whatever the start
+  // allocation already carries; scanning every option per round is needlessly
+  // expensive at production scale and adds nothing the support doesn't.
+  const fillList: number[] = [];
+  if (fillOptions) {
+    const seen = new Set<number>();
+    for (const i of fillOptions) {
+      if (!seen.has(i)) {
+        seen.add(i);
+        fillList.push(i);
+      }
+    }
+    for (const i of alloc.keys()) {
+      if (!seen.has(i)) {
+        seen.add(i);
+        fillList.push(i);
+      }
+    }
+  } else {
+    for (let i = 0; i < options.length; i++) fillList.push(i);
+  }
+
+  // Greedy fill. Score is non-decreasing in inventory, so for each option the
+  // best add is as many as fit the emptiest slot (and the fuel), and each
+  // accepted add consumes most of a slot's remaining time — so the loop
+  // terminates in a handful of rounds like the single-budget repair.
+  for (;;) {
+    let bestAddScore = score;
+    let bestOpt = -1;
+    let bestSlot = -1;
+    let bestCount = 0;
+    for (const i of fillList) {
+      const o = options[i];
+      const d = o.actualTime;
+      if (d <= ZERO_TOL || d > S + ZERO_TOL) continue;
+      // slot with the most remaining time that can hold at least one
+      let slot = -1;
+      let bestRem = -1;
+      for (let b = 0; b < NUM_SLOTS; b++) {
+        const rem = S - slotLoad[b];
+        if (rem + ZERO_TOL >= d && rem > bestRem) {
+          bestRem = rem;
+          slot = b;
+        }
+      }
+      if (slot === -1) continue;
+      const fitTime = Math.floor((bestRem + ZERO_TOL) / d);
+      const fitFuel = o.actualFuel > ZERO_TOL ? Math.floor((R - usedFuel + ZERO_TOL) / o.actualFuel) : Infinity;
+      const add = Math.min(fitTime, fitFuel);
+      if (!isFinite(add) || add <= 0) continue;
+      const trial = mergeAdd(alloc, i, add);
+      const s = ctx.evalScoreAt(trial);
+      if (s > bestAddScore + ZERO_TOL) {
+        bestAddScore = s;
+        bestOpt = i;
+        bestSlot = slot;
+        bestCount = add;
+      }
+    }
+    if (bestOpt === -1) break;
+    alloc.set(bestOpt, (alloc.get(bestOpt) ?? 0) + bestCount);
+    usedFuel += bestCount * options[bestOpt].actualFuel;
+    slotLoad[bestSlot] += bestCount * options[bestOpt].actualTime;
+    slotCount[bestSlot] += bestCount;
+    score = bestAddScore;
+  }
+
+  const slots: SlotSummary[] = slotLoad.map((load, b) => ({ loadSeconds: load, missionCount: slotCount[b] }));
+  return { alloc, slots, score };
+}
+
+function mergeAdd(alloc: Map<number, number>, i: number, add: number): [number, number][] {
+  const trial: [number, number][] = [];
+  let merged = false;
+  for (const [idx, k] of alloc) {
+    if (idx === i) {
+      trial.push([idx, k + add]);
+      merged = true;
+    } else {
+      trial.push([idx, k]);
+    }
+  }
+  if (!merged) trial.push([i, add]);
+  return trial;
+}
+
+function evalOf(ctx: EvalContext, alloc: Map<number, number>): number {
+  return ctx.evalScoreAt([...alloc]);
+}
+
+// Seed one slot full of each LP-support option and re-fill the other two,
+// exploring per-slot specializations the balanced relaxation misses. Bounded to
+// a handful of starts so it can never dominate the latency budget; only reached
+// when the packable best still trails the LP upper bound.
+function escalatePacking(
+  relaxed: CoreResult,
+  floor: CoreResult,
+  ctx: EvalContext,
+  R: number,
+  S: number
+): PackResult | null {
+  const support = new Set<number>([...relaxed.support, ...floor.support]);
+  let best: PackResult | null = null;
+  let starts = 0;
+  for (const i of support) {
+    if (starts++ >= 8) break;
+    const d = ctx.options[i].actualTime;
+    if (d <= ZERO_TOL || d > S + ZERO_TOL) continue;
+    const seed = new Map<number, number>([[i, Math.floor(S / d)]]);
+    const r = packAndFill(seed, ctx, R, S, support);
+    if (!best || r.score > best.score) best = r;
+  }
+  return best;
+}
+
+function assembleFullSolution(
+  ctx: EvalContext,
+  bestAlloc: Map<number, number>,
+  bestSlots: SlotSummary[],
+  baseYield: Map<string, number>,
+  desiredArtifactNodeIds: string[],
+  recipeDag: RecipeDAG
+): OptimizerSolution {
+  const { finalYieldVector, totalLegendary, fuelUsed, fuelByEgg, choiceHistory } = assembleSolution(
     baseYield,
     bestAlloc,
-    options
+    ctx.options
   );
+
+  // Wall-clock is the makespan of the busiest slot (the three run concurrently).
+  const makespan = bestSlots.reduce((m, s) => Math.max(m, s.loadSeconds), 0);
 
   // One extra inner-LP solve at the chosen allocation to recover the
   // per-target craftable counts.
-  const finalSolve = innerLp.solve(finalYieldVector);
+  const finalSolve = ctx.innerLp.solve(finalYieldVector);
   const perTarget = desiredArtifactNodeIds.map(t => {
     const craftCount =
       finalSolve.craftByTarget.get(t) ?? (recipeDag.get(t)?.isLeaf ? (finalYieldVector.get(t) ?? 0) : 0);
@@ -297,12 +591,13 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
     expectedCrafts: primary.expectedCrafts,
     fuelUsed: fuelUsed,
     fuelByEgg: fuelByEgg,
-    timeUnitsUsed: Math.round(timeSecs),
+    timeUnitsUsed: Math.round(makespan),
     // The running/idle split depends on the effort slack baked into each
     // option's actualTime, which is only known upstream; index.ts fills these
-    // in. Default to all-running (slack of zero).
-    runningTimeSeconds: Math.round(timeSecs),
+    // in from the slot witness. Default to all-running (slack of zero).
+    runningTimeSeconds: Math.round(makespan),
     idleTimeSeconds: 0,
+    slots: bestSlots.length > 0 ? bestSlots : undefined,
     choiceHistory: choiceHistory,
     expectedDrops: [], // populated by index.ts
     finalYieldVector: finalYieldVector,
@@ -313,12 +608,9 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
   };
 }
 
-type EvalFn = (multipliers: ReadonlyArray<readonly [number, number]>) => number;
-
 function assembleSolution(baseYield: Map<string, number>, bestAlloc: Map<number, number>, options: LaunchOption[]) {
   const choiceHistory: LaunchSolution[] = [];
   let fuelUsed = 0;
-  let timeSecs = 0;
   const finalYieldVector = new Map<string, number>(baseYield);
   const totalLegendary = new Map<string, number>();
   const fuelByEgg = new Map<ei.Egg, number>();
@@ -326,7 +618,6 @@ function assembleSolution(baseYield: Map<string, number>, bestAlloc: Map<number,
     if (k <= 0) continue;
     const opt = options[idx];
     fuelUsed += k * opt.actualFuel;
-    timeSecs += k * opt.actualTime;
     for (const [n, r] of opt.yieldVector) {
       finalYieldVector.set(n, (finalYieldVector.get(n) ?? 0) + k * r);
     }
@@ -343,12 +634,12 @@ function assembleSolution(baseYield: Map<string, number>, bestAlloc: Map<number,
       actualTime: opt.actualTime,
       target: opt.target ?? '',
       targetAfxId: opt.targetAfxId,
-      numShipsLaunched: k * 3,
+      numShipsLaunched: k,
       supplyVector: opt.supplyVector,
       legendarySupplyVector: opt.legendaryYieldVector,
     });
   }
-  return { finalYieldVector, totalLegendary, fuelUsed, fuelByEgg, timeSecs, choiceHistory };
+  return { finalYieldVector, totalLegendary, fuelUsed, fuelByEgg, choiceHistory };
 }
 
 function dominates(j: LaunchOption, i: LaunchOption): boolean {

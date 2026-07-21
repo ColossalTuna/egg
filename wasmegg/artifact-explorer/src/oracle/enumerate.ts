@@ -1,12 +1,22 @@
 // Brute-force side of the oracle: exhaustively search integer launch
-// allocations under the fuel/time budgets and return the best achievable
-// score according to the independent evaluator.
+// allocations under the fuel budget and the three-slot time model, returning
+// the best achievable score according to the independent evaluator.
+//
+// Time model: the player has three mission slots, each running a back-to-back
+// sequence of single-ship missions within the horizon S = timeCapacity. An
+// allocation is realizable iff its mission durations partition into 3 bins of
+// capacity S (packableInto3Bins below) — never merely Sum(k*d) <= 3S.
 //
 // Yields and direct drops are nonnegative and the LP value is monotone in
-// inventory, so the objective is monotone in every k_i: some optimal
-// allocation is always "maximal" (no option can be incremented without
-// busting a budget). Enumerating only maximal allocations is therefore an
-// exact search, not a heuristic.
+// inventory, so the objective is monotone in every k_i. The feasible region is
+// downward-closed under BOTH fuel and packing (dropping a mission never busts
+// the budget nor breaks a partition), so some optimum is always "maximal" — no
+// option can be added without busting fuel or the 3-slot packing. Enumerating
+// only maximal allocations is therefore an exact search, not a heuristic.
+//
+// This packing check is re-derived here, independent of the production solver's
+// own packer, to keep the correctness harness from sharing code with the code
+// it audits.
 
 import { evaluateAllocation, evaluateAllocationFloat, OracleInstance } from './evaluate';
 
@@ -18,24 +28,155 @@ export interface BruteForceResult {
   evaluatedCount: number; // maximal vectors actually run through the LP
 }
 
+const NUM_SLOTS = 3;
+const EPS = 1e-9;
+
+// Distinct mission durations of an instance and the duration index of each
+// option, so a running allocation can be summarized as per-duration counts
+// (all packing feasibility depends on is those counts).
+interface DurationModel {
+  durations: number[];
+  durIdxByOption: number[];
+}
+
+function durationModel(inst: OracleInstance): DurationModel {
+  const durations: number[] = [];
+  const keyToIdx = new Map<number, number>();
+  const durIdxByOption = inst.options.map(o => {
+    const d = o.actualTime;
+    const key = Math.round(d);
+    let idx = keyToIdx.get(key);
+    if (idx === undefined) {
+      idx = durations.length;
+      durations.push(d);
+      keyToIdx.set(key, idx);
+    }
+    return idx;
+  });
+  return { durations, durIdxByOption };
+}
+
+// Exact: can `durCounts[j]` missions of duration `durations[j]` be partitioned
+// into NUM_SLOTS bins each of capacity `capacity`? Zero-duration missions add no
+// load and always fit. Throws if the search exceeds `nodeBudget` rather than
+// answering "infeasible" (which would corrupt the enumeration); on the oracle's
+// tiny instances the bound is never approached.
+export function packableInto3Bins(
+  durCounts: number[],
+  durations: number[],
+  capacity: number,
+  nodeBudget = 500_000
+): boolean {
+  const m = durCounts.length;
+  let total = 0;
+  let big = 0;
+  for (let j = 0; j < m; j++) {
+    const c = durCounts[j];
+    if (c <= 0) continue;
+    const d = durations[j];
+    if (d <= 0) continue; // zero-duration: no slot load
+    if (d > capacity + EPS) return false;
+    total += c * d;
+    if (d > capacity / 2 + EPS) big += c;
+  }
+  if (total > NUM_SLOTS * capacity + EPS) return false;
+  if (big > NUM_SLOTS) return false;
+
+  const memo = new Map<string, boolean>();
+  let nodes = 0;
+
+  const feasible = (start: number, loads: number[]): boolean => {
+    let j = start;
+    while (j < m && (durCounts[j] <= 0 || durations[j] <= 0)) j++;
+    if (j === m) return true;
+    if (++nodes > nodeBudget) {
+      // The exact packer must never answer "infeasible" when it merely ran out
+      // of budget — that would let the enumeration prune a genuinely feasible
+      // allocation and silently break its exhaustive/exact guarantee. Oracle
+      // instances are tiny and never approach the budget, so hitting it means an
+      // assumption broke; fail loudly rather than return a wrong answer.
+      throw new Error(`packableInto3Bins exceeded ${nodeBudget} nodes; instance too large for the exact packing check`);
+    }
+    const s = [loads[0], loads[1], loads[2]].sort((a, b) => a - b);
+    const key = `${j}#${Math.round(s[0])},${Math.round(s[1])},${Math.round(s[2])}`;
+    const cached = memo.get(key);
+    if (cached !== undefined) return cached;
+
+    const c = durCounts[j];
+    const d = durations[j];
+    const room = (l: number) => Math.floor((capacity - l + EPS) / d);
+    let res = false;
+    const r0 = Math.min(c, room(loads[0]));
+    for (let x0 = 0; x0 <= r0 && !res; x0++) {
+      const rem1 = c - x0;
+      const r1 = Math.min(rem1, room(loads[1]));
+      for (let x1 = 0; x1 <= r1; x1++) {
+        const x2 = rem1 - x1;
+        const l2 = loads[2] + x2 * d;
+        if (l2 > capacity + EPS) continue;
+        if (feasible(j + 1, [loads[0] + x0 * d, loads[1] + x1 * d, l2])) {
+          res = true;
+          break;
+        }
+      }
+    }
+    memo.set(key, res);
+    return res;
+  };
+
+  return feasible(0, [0, 0, 0]);
+}
+
+// A cheap per-option upper bound on how many of one duration can ever fit: at
+// most floor(S/d) per slot across NUM_SLOTS slots. A zero- or negative-duration
+// mission is unlaunchable (a mission takes time; it would otherwise admit
+// unbounded launches per slot), so it is excluded here — matching the solver,
+// which only keeps options with 0 < actualTime <= S.
+function maxByPacking(duration: number, capacity: number): number {
+  if (duration <= 0) return 0;
+  return NUM_SLOTS * Math.floor(capacity / duration);
+}
+
 export function countFeasible(inst: OracleInstance, cap: number): number | null {
   const n = inst.options.length;
+  const { durations, durIdxByOption } = durationModel(inst);
+  const durCounts = new Array<number>(durations.length).fill(0);
+  const S = inst.timeCapacity;
   let count = 0;
-  const walk = (i: number, fuelLeft: number, timeLeft: number): boolean => {
+
+  const walk = (i: number, fuelLeft: number): boolean => {
     if (i === n) {
       count++;
       return count <= cap;
     }
     const opt = inst.options[i];
-    const maxK = Math.min(Math.floor(fuelLeft / opt.actualFuel), Math.floor(timeLeft / opt.actualTime));
+    const dj = durIdxByOption[i];
+    if (opt.actualFuel <= 0 && opt.actualTime <= 0) {
+      // an option with no fuel and no duration cost admits unbounded launches
+      throw new Error('option with zero fuel and time cost admits unbounded launches; instance is ill-posed');
+    }
+    // durCounts is keyed by DURATION, and several options can share one, so
+    // accumulate onto whatever earlier same-duration options already placed.
+    const base = durCounts[dj];
+    const maxK = Math.min(
+      opt.actualFuel > 0 ? Math.floor(fuelLeft / opt.actualFuel) : Infinity,
+      maxByPacking(opt.actualTime, S)
+    );
     for (let k = 0; k <= maxK; k++) {
-      if (!walk(i + 1, fuelLeft - k * opt.actualFuel, timeLeft - k * opt.actualTime)) {
+      durCounts[dj] = base + k;
+      if (k > 0 && !packableInto3Bins(durCounts, durations, S)) {
+        break; // more of this duration can only stay unpackable
+      }
+      if (!walk(i + 1, fuelLeft - k * opt.actualFuel)) {
+        durCounts[dj] = base;
         return false;
       }
     }
+    durCounts[dj] = base;
     return true;
   };
-  return walk(0, inst.fuelCapacity, inst.timeCapacity) ? count : null;
+
+  return walk(0, inst.fuelCapacity) ? count : null;
 }
 
 // Candidates are ranked with the float evaluator (error ~1e-9 against gaps
@@ -51,25 +192,45 @@ export function bruteForceBest(inst: OracleInstance): BruteForceResult {
   // maximal, the enumeration finds no finalists, and the result would silently
   // collapse to bestProbability = 0. The generator's feasibility filter never
   // emits such an instance, but guard here so a direct caller fails loudly
-  // instead of receiving a fake gap = 0.
+  // instead of receiving a fake gap = 0. A zero-duration option also packs
+  // without bound unless fuel constrains it.
   for (const opt of inst.options) {
     if (opt.actualFuel <= 0 && opt.actualTime <= 0) {
       throw new Error('option with zero fuel and time cost admits unbounded launches; instance is ill-posed');
     }
   }
+
+  const { durations, durIdxByOption } = durationModel(inst);
+  const durCounts = new Array<number>(durations.length).fill(0);
+  const S = inst.timeCapacity;
+
   const allocation = new Array<number>(n).fill(0);
   let feasibleCount = 0;
   let evaluatedCount = 0;
   let bestFloat = -Infinity;
   let finalists: number[][] = [];
 
-  const isMaximal = (fuelLeft: number, timeLeft: number): boolean =>
-    !inst.options.some(opt => opt.actualFuel <= fuelLeft && opt.actualTime <= timeLeft);
+  // No option can be added without busting fuel or breaking the 3-slot packing.
+  const isMaximal = (fuelLeft: number): boolean => {
+    for (let i = 0; i < n; i++) {
+      const opt = inst.options[i];
+      // maxByPacking() never places a zero-duration option, so it can never
+      // make an allocation non-maximal either; skip it to stay consistent.
+      if (opt.actualTime <= 0) continue;
+      if (opt.actualFuel > fuelLeft + EPS) continue;
+      const dj = durIdxByOption[i];
+      durCounts[dj] += 1;
+      const canAdd = packableInto3Bins(durCounts, durations, S);
+      durCounts[dj] -= 1;
+      if (canAdd) return false;
+    }
+    return true;
+  };
 
-  const walk = (i: number, fuelLeft: number, timeLeft: number) => {
+  const walk = (i: number, fuelLeft: number) => {
     if (i === n) {
       feasibleCount++;
-      if (!isMaximal(fuelLeft, timeLeft)) {
+      if (!isMaximal(fuelLeft)) {
         return;
       }
       const score = evaluateAllocationFloat(inst, allocation);
@@ -86,15 +247,27 @@ export function bruteForceBest(inst: OracleInstance): BruteForceResult {
       return;
     }
     const opt = inst.options[i];
-    const maxK = Math.min(Math.floor(fuelLeft / opt.actualFuel), Math.floor(timeLeft / opt.actualTime));
+    const dj = durIdxByOption[i];
+    // durCounts is keyed by DURATION, and several options can share one, so
+    // accumulate onto whatever earlier same-duration options already placed.
+    const base = durCounts[dj];
+    const maxK = Math.min(
+      opt.actualFuel > 0 ? Math.floor(fuelLeft / opt.actualFuel) : Infinity,
+      maxByPacking(opt.actualTime, S)
+    );
     for (let k = 0; k <= maxK; k++) {
+      durCounts[dj] = base + k;
+      if (k > 0 && !packableInto3Bins(durCounts, durations, S)) {
+        break;
+      }
       allocation[i] = k;
-      walk(i + 1, fuelLeft - k * opt.actualFuel, timeLeft - k * opt.actualTime);
+      walk(i + 1, fuelLeft - k * opt.actualFuel);
     }
+    durCounts[dj] = base;
     allocation[i] = 0;
   };
 
-  walk(0, inst.fuelCapacity, inst.timeCapacity);
+  walk(0, inst.fuelCapacity);
 
   const best: BruteForceResult = {
     bestScore: -Infinity,
