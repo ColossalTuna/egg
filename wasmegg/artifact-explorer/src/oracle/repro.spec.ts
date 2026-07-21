@@ -71,7 +71,11 @@ describe.skipIf(!SPEC)('oracle repro', () => {
           `choiceHistory entry (fuel=${h.actualFuel}, time=${h.actualTime}, target=${h.targetAfxId}) matches no input option`
         );
       }
-      alloc[i] += h.numShipsLaunched / SHIPS_PER_BATCH;
+      const batches = h.numShipsLaunched / SHIPS_PER_BATCH;
+      if (!Number.isInteger(batches) || batches < 0) {
+        throw new Error(`ship count ${h.numShipsLaunched} is not a whole number of ${SHIPS_PER_BATCH}-ship batches`);
+      }
+      alloc[i] += batches;
     }
     const planEval = evaluateAllocation(inst, alloc);
     const fuelUsed = alloc.reduce((t, k, i) => t + k * inst.options[i].actualFuel, 0);

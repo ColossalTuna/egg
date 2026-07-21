@@ -47,6 +47,16 @@ const MAX_FINALISTS = 8;
 
 export function bruteForceBest(inst: OracleInstance): BruteForceResult {
   const n = inst.options.length;
+  // A zero-cost option can be launched without bound, so no allocation is ever
+  // maximal, the enumeration finds no finalists, and the result would silently
+  // collapse to bestProbability = 0. The generator's feasibility filter never
+  // emits such an instance, but guard here so a direct caller fails loudly
+  // instead of receiving a fake gap = 0.
+  for (const opt of inst.options) {
+    if (opt.actualFuel <= 0 && opt.actualTime <= 0) {
+      throw new Error('option with zero fuel and time cost admits unbounded launches; instance is ill-posed');
+    }
+  }
   const allocation = new Array<number>(n).fill(0);
   let feasibleCount = 0;
   let evaluatedCount = 0;

@@ -51,8 +51,13 @@ export function simplexMaximizeFloat(A: number[][], b: number[], c: number[]): n
     for (let i = 0; i < m; i++) {
       if (T[i][enter] > EPS) {
         const ratio = T[i][width - 1] / T[i][enter];
-        if (ratio < bestRatio - EPS || (ratio < bestRatio + EPS && (leave === -1 || basis[i] < basis[leave]))) {
+        if (ratio < bestRatio - EPS) {
           bestRatio = ratio;
+          leave = i;
+        } else if (ratio < bestRatio + EPS && (leave === -1 || basis[i] < basis[leave])) {
+          // Near-tie within float tolerance: apply Bland's lowest-basis-index
+          // tie-break, but keep bestRatio at the smaller value so it cannot
+          // drift upward across successive near-ties.
           leave = i;
         }
       }
@@ -87,7 +92,9 @@ export function simplexMaximize(A: Frac[][], b: Frac[], c: Frac[]): Frac {
   }
 
   // Tableau columns: [x_0..x_{n-1}, s_0..s_{m-1}, rhs]; last row is the
-  // objective row holding reduced costs (starts as -c) and -objective value.
+  // objective row holding reduced costs (starts as -c). Its rhs starts at 0
+  // and accumulates the (positive) objective value as pivots proceed, so it is
+  // returned directly at optimum.
   const width = n + m + 1;
   const T: Frac[][] = [];
   for (let i = 0; i < m; i++) {
