@@ -214,6 +214,9 @@ export function bruteForceBest(inst: OracleInstance): BruteForceResult {
   const isMaximal = (fuelLeft: number): boolean => {
     for (let i = 0; i < n; i++) {
       const opt = inst.options[i];
+      // maxByPacking() never places a zero-duration option, so it can never
+      // make an allocation non-maximal either; skip it to stay consistent.
+      if (opt.actualTime <= 0) continue;
       if (opt.actualFuel > fuelLeft + EPS) continue;
       const dj = durIdxByOption[i];
       durCounts[dj] += 1;
