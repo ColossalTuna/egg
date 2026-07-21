@@ -72,9 +72,9 @@ export function isExtrasConfig(x: unknown): x is ExtrasConfig {
 // Lower effort adds more slack to each mission's duration when the optimizer
 // budgets time, which biases it away from lots of tiny, babysitting-heavy
 // launches. See EFFORT_SLACK_SECONDS for the added time per level.
-export type EffortLevel = 'low' | 'medium' | 'high' | 'infinite';
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'infinite'] as const;
 
-export const EFFORT_LEVELS: EffortLevel[] = ['low', 'medium', 'high', 'infinite'];
+export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
 // Slack added to every mission's duration for budgeting, per effort level.
 // A shorter mission carries proportionally more of this fixed overhead, so
@@ -87,7 +87,7 @@ export const EFFORT_SLACK_SECONDS: Record<EffortLevel, number> = {
 };
 
 export function isEffortLevel(x: unknown): x is EffortLevel {
-  return x === 'low' || x === 'medium' || x === 'high' || x === 'infinite';
+  return (EFFORT_LEVELS as readonly unknown[]).includes(x);
 }
 
 export interface MissionFilters {
@@ -109,7 +109,9 @@ export function isMissionFilters(x: unknown): x is MissionFilters {
   if (!x || typeof x !== 'object') return false;
   const m = x as MissionFilters;
   return (
-    isEffortLevel(m.effort) &&
+    // effort may be absent on filters persisted before the effort slider
+    // existed; loadMissionFilters defaults it rather than discarding the rest.
+    (m.effort === undefined || isEffortLevel(m.effort)) &&
     (m.maxGemCostEnabled === undefined || typeof m.maxGemCostEnabled === 'boolean') &&
     (m.maxGemCost === undefined || typeof m.maxGemCost === 'number')
   );

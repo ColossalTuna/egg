@@ -119,4 +119,28 @@ describe('optimize', () => {
       expect(row.iconUrl).toMatch(/^https:/);
     }
   });
+
+  it('splits budgeted time into idle slack and running time', () => {
+    const config = {
+      desiredArtifactNodeIds: ['puzzle-cube-4'],
+      includeNotEnoughData: false,
+      fuelTankCapacity: 2_000_000_000,
+      timeBudgetSeconds: 3 * 24 * 3600,
+    };
+    const dag = buildRecipeDag(config.desiredArtifactNodeIds, 30);
+    const baseYield = computeBaseYield(null, config.desiredArtifactNodeIds, dag);
+    const slack = 3600; // medium effort: ~1h of relaunch slack per wave
+    const [sol] = optimize(config, perfectShipsConfig, dag, baseYield, slack);
+
+    // Each choice launches 3 ships per wave, so idle slack accrues per wave.
+    const waves = sol.choiceHistory.reduce((sum, choice) => sum + choice.numShipsLaunched / 3, 0);
+    expect(waves).toBeGreaterThan(0);
+    expect(sol.idleTimeSeconds).toBe(Math.round(waves * slack));
+    expect(sol.runningTimeSeconds).toBe(Math.max(0, sol.timeUnitsUsed - sol.idleTimeSeconds));
+
+    // With zero slack there is no idle time and everything is running time.
+    const [rawSol] = optimize(config, perfectShipsConfig, dag, baseYield, 0);
+    expect(rawSol.idleTimeSeconds).toBe(0);
+    expect(rawSol.runningTimeSeconds).toBe(rawSol.timeUnitsUsed);
+  });
 });

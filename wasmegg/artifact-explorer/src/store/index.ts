@@ -24,6 +24,7 @@ import DurationType = ei.MissionInfo.DurationType;
 import {
   EffortLevel,
   ExtrasConfig,
+  isEffortLevel,
   isExtrasConfig,
   isMissionFilters,
   isOverrideFlags,
@@ -395,6 +396,7 @@ export function loadMissionFilters(): MissionFilters {
     if (isMissionFilters(parsed)) {
       return {
         ...parsed,
+        effort: isEffortLevel(parsed.effort) ? parsed.effort : 'medium',
         maxGemCostEnabled: parsed.maxGemCostEnabled ?? false,
         maxGemCost: parsed.maxGemCost ?? 0,
       };
