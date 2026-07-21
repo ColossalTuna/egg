@@ -54,7 +54,7 @@
             @keydown="onTrackKeydown"
           >
             <!-- rail: end dot centers sit at its 0% and 100% -->
-            <div class="absolute inset-x-2 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-gray-200">
+            <div ref="effortRail" class="absolute inset-x-2 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-gray-200">
               <div
                 class="absolute left-0 top-0 h-full rounded-full bg-green-500"
                 :style="{ width: `${(effortIndex / (EFFORT_LEVELS.length - 1)) * 100}%` }"
@@ -321,6 +321,7 @@ export default defineComponent({
     const shipsVisibleCount = computed(() => spaceshipList.filter(s => effectiveConfig.value.shipVisibility[s]).length);
 
     const effortTrack = ref<HTMLElement | null>(null);
+    const effortRail = ref<HTMLElement | null>(null);
     const dragging = ref(false);
     const effortIndex = computed(() => Math.max(0, EFFORT_LEVELS.indexOf(missionFilters.value.effort)));
 
@@ -329,12 +330,13 @@ export default defineComponent({
       setEffort(EFFORT_LEVELS[clamped]);
     }
 
-    // Map a pointer x-position over the track to the nearest notch.
+    // Map a pointer x-position to the nearest notch. Measure against the rail,
+    // not the outer track: the notch centers sit at the rail's 0%/100% (the
+    // rail is inset from the track by half a dot on each side), so using the
+    // track width would shift the 0↔1 and last split points off the notches.
     function selectFromClientX(clientX: number) {
-      const el = effortTrack.value;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      if (rect.width <= 0) return;
+      const rect = (effortRail.value ?? effortTrack.value)?.getBoundingClientRect();
+      if (!rect || rect.width <= 0) return;
       const ratio = (clientX - rect.left) / rect.width;
       setEffortByIndex(Math.round(ratio * (EFFORT_LEVELS.length - 1)));
     }
@@ -400,6 +402,7 @@ export default defineComponent({
       EFFORT_LEVELS,
       effortMeta,
       effortTrack,
+      effortRail,
       effortIndex,
       onTrackPointerDown,
       onTrackPointerMove,
