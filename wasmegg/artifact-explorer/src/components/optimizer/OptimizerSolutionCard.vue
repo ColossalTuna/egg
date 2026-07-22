@@ -92,7 +92,7 @@ export default defineComponent({
     const dropTooltip =
       'The probability of at least one legendary dropping directly from the missions themselves, without crafting.';
     const idleTooltip =
-      'Estimated wall-clock time spent not launching — the relaunch slack implied by your effort setting. Lower effort assumes longer gaps before you send the next wave.';
+      'Estimated wall-clock time the busiest slot sits idle waiting for your next relaunch, implied by your effort setting. Lower effort means longer launch periods and more idle time between sends.';
     return {
       eggIconPath,
       formatDuration,

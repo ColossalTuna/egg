@@ -11,7 +11,13 @@ export interface LaunchOption {
   targetAfxId: ei.ArtifactSpec.Name; // UNKNOWN when untargeted
   actualFuel: number;
   fuelByEgg: Map<ei.Egg, number>;
+  // effective (floored) duration the optimizer budgets against: at least the
+  // launch period of the current effort level, so a mission shorter than the
+  // period is stretched to occupy the whole period.
   actualTime: number;
+  // the mission's true (unfloored) boosted duration; equals actualTime when the
+  // mission is at least as long as the launch period.
+  rawTime: number;
   // everything this launch drops, per single ship — display only
   supplyVector: Map<string, number>;
   // subset of supplyVector restricted to recipe ingredients; this is what
@@ -47,11 +53,14 @@ export interface LaunchSolution {
   legendarySupplyVector: Map<string, number>;
 }
 
-// One slot's share of the plan: how much of the horizon it occupies (relaunch
-// slack included) and how many single-ship missions it runs. The three slots
+// One slot's share of the plan: how much of the horizon it occupies (floored
+// mission durations) and how many single-ship missions it runs. The three slots
 // run concurrently, so the plan's wall-clock is the busiest slot's load.
+// rawLoadSeconds is the same sum over the missions' true durations, so the
+// slot's floor-induced idle is loadSeconds - rawLoadSeconds.
 export interface SlotSummary {
   loadSeconds: number;
+  rawLoadSeconds: number;
   missionCount: integer;
 }
 
@@ -82,8 +91,8 @@ export interface OptimizerSolution {
   fuelByEgg: Map<ei.Egg, number>;
   // timeUnitsUsed is the plan's wall-clock: the makespan of the busiest of the
   // three concurrent slots (<= the horizon). It splits into runningTimeSeconds
-  // (ships in flight on that slot) + idleTimeSeconds (effort slack spent
-  // between that slot's relaunches).
+  // (ships in flight on that slot) + idleTimeSeconds (the floor-induced wait
+  // between that slot's relaunches, i.e. its floored load minus its raw load).
   timeUnitsUsed: integer;
   runningTimeSeconds: integer;
   idleTimeSeconds: integer;

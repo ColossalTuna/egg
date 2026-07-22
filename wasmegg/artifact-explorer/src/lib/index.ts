@@ -115,11 +115,11 @@ export function optimize(
   playerConfig: ShipsConfig,
   dag: RecipeDAG,
   baseYield: Map<string, number>,
-  extraTimeSeconds = 0,
+  launchPeriodSeconds = 0,
   maxGemCost?: number
 ) {
   const { desiredArtifactNodeIds, fuelTankCapacity, timeBudgetSeconds } = config;
-  const options = enumerateLaunchOptions(playerConfig, dag, extraTimeSeconds, maxGemCost);
+  const options = enumerateLaunchOptions(playerConfig, dag, launchPeriodSeconds, maxGemCost);
 
   const solutions: OptimizerSolution[] = [
     optimizeFull({
@@ -139,16 +139,16 @@ export function optimize(
     solution.fuelByEgg = computeFuelByEgg(solution);
 
     // Split the wall-clock (the busiest slot's makespan; timeUnitsUsed) into
-    // ships-in-flight vs. idle relaunch slack. The three slots run concurrently,
-    // so the idle the player waits through is the busiest slot's slack:
-    // (its mission count) × extraTimeSeconds, which was added to every option's
-    // actualTime.
+    // ships-in-flight vs. floor-induced idle. The three slots run concurrently,
+    // so the idle the player waits through is the busiest slot's floored load
+    // minus its raw load: the time it spends stretched past real mission time by
+    // the launch-period floor.
     let idle = 0;
     let makespan = -1;
     for (const slot of solution.slots ?? []) {
       if (slot.loadSeconds > makespan) {
         makespan = slot.loadSeconds;
-        idle = slot.missionCount * extraTimeSeconds;
+        idle = slot.loadSeconds - slot.rawLoadSeconds;
       }
     }
     solution.idleTimeSeconds = Math.round(idle);

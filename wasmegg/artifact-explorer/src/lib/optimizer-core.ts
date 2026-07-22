@@ -395,6 +395,7 @@ function packAndFill(
 
   const missionOpt: number[] = [];
   const missionDur: number[] = [];
+  const missionRawDur: number[] = [];
   for (const [i, k] of startAlloc) {
     if (k <= 0) continue;
     const d = options[i].actualTime;
@@ -402,6 +403,7 @@ function packAndFill(
     for (let c = 0; c < k; c++) {
       missionOpt.push(i);
       missionDur.push(d);
+      missionRawDur.push(options[i].rawTime);
     }
   }
 
@@ -411,6 +413,7 @@ function packAndFill(
   // marginal excess from the 3S relaxation or a fuel-blind escalation seed.
   const order = missionOpt.map((_, idx) => idx).sort((a, b) => missionDur[b] - missionDur[a]);
   const slotLoad = new Array<number>(NUM_SLOTS).fill(0);
+  const slotRawLoad = new Array<number>(NUM_SLOTS).fill(0);
   const slotCount = new Array<number>(NUM_SLOTS).fill(0);
   const alloc = new Map<number, number>();
   let usedFuel = 0;
@@ -429,6 +432,7 @@ function packAndFill(
     }
     if (best === -1) continue;
     slotLoad[best] += d;
+    slotRawLoad[best] += missionRawDur[flat];
     slotCount[best] += 1;
     alloc.set(i, (alloc.get(i) ?? 0) + 1);
     usedFuel += f;
@@ -499,11 +503,16 @@ function packAndFill(
     alloc.set(bestOpt, (alloc.get(bestOpt) ?? 0) + bestCount);
     usedFuel += bestCount * options[bestOpt].actualFuel;
     slotLoad[bestSlot] += bestCount * options[bestOpt].actualTime;
+    slotRawLoad[bestSlot] += bestCount * options[bestOpt].rawTime;
     slotCount[bestSlot] += bestCount;
     score = bestAddScore;
   }
 
-  const slots: SlotSummary[] = slotLoad.map((load, b) => ({ loadSeconds: load, missionCount: slotCount[b] }));
+  const slots: SlotSummary[] = slotLoad.map((load, b) => ({
+    loadSeconds: load,
+    rawLoadSeconds: slotRawLoad[b],
+    missionCount: slotCount[b],
+  }));
   return { alloc, slots, score };
 }
 

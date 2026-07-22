@@ -35,7 +35,7 @@ import {
   OverrideFlags,
 } from './schema';
 export type { ExtrasConfig, MissionFilters, OverrideFlags, EffortLevel } from './schema';
-export { EFFORT_LEVELS, EFFORT_SLACK_SECONDS } from './schema';
+export { EFFORT_LEVELS, EFFORT_LAUNCH_PERIOD_SECONDS } from './schema';
 
 export const CONFIG_LOCALSTORAGE_KEY = 'config';
 export const OVERRIDES_LOCALSTORAGE_KEY = 'overrides';
@@ -393,6 +393,12 @@ export function loadMissionFilters(): MissionFilters {
   if (!str) return newMissionFilters();
   try {
     const parsed: unknown = JSON.parse(str);
+    // The 'infinite' level was renamed to 'max'; upgrade any value persisted
+    // under the old name before validation so the rest of the filters survive
+    // (isEffortLevel, and therefore isMissionFilters, no longer accepts it).
+    if (parsed && typeof parsed === 'object' && (parsed as MissionFilters).effort === ('infinite' as EffortLevel)) {
+      (parsed as MissionFilters).effort = 'max';
+    }
     if (isMissionFilters(parsed)) {
       return {
         ...parsed,

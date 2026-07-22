@@ -34,6 +34,9 @@ export function makeOpt(
     actualFuel,
     fuelByEgg: new Map(),
     actualTime,
+    // Fixtures treat the effective and raw durations as equal, so floor-induced
+    // idle is zero for them unless a test sets rawTime explicitly.
+    rawTime: actualTime,
     supplyVector: new Map(yieldEntries),
     yieldVector: new Map(yieldEntries),
     legendaryYieldVector: new Map(legendaryEntries),
