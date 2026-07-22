@@ -5,34 +5,13 @@ import { describe, expect, it } from 'vitest';
 import { ei, getMissionTypeFromId } from 'lib';
 
 import { computeMissionLegendaryRows, lambdaFromDropProbability, legendaryCraftProbabilityOf } from './optimizer-views';
-import { makeNode } from './spec-helpers';
-import type { LaunchSolution, OptimizerSolution, RecipeDAG } from './types';
+import { makeNode, makeSolution } from './spec-helpers';
+import type { LaunchSolution, RecipeDAG } from './types';
 
 const Name = ei.ArtifactSpec.Name;
 
 const lt1 = 'lunar-totem-1';
 const lt4 = 'lunar-totem-4';
-
-function makeSolution(overrides: Partial<OptimizerSolution>): OptimizerSolution {
-  return {
-    bestProbability: 0,
-    craftProbability: 0,
-    dropProbability: 0,
-    expectedCrafts: 0,
-    fuelUsed: 0,
-    fuelByEgg: new Map(),
-    timeUnitsUsed: 0,
-    runningTimeSeconds: 0,
-    choiceHistory: [],
-    expectedDrops: [],
-    finalYieldVector: new Map(),
-    baseYield: new Map(),
-    recipeDag: new Map(),
-    craftPrimal: new Map(),
-    perTarget: [],
-    ...overrides,
-  };
-}
 
 describe('computeMissionLegendaryRows', () => {
   const ship = getMissionTypeFromId('henerprise-extended');

@@ -1,5 +1,5 @@
 <template>
-  <div v-if="tree" class="mt-4 border border-gray-200 rounded-lg p-4">
+  <div v-if="tree && hasInventory" class="mt-4 border border-gray-200 rounded-lg p-4">
     <details>
       <summary class="text-base font-semibold text-gray-700 mb-3">Inventory</summary>
       <ul class="space-y-1 text-sm">
@@ -27,6 +27,7 @@ export default defineComponent({
   components: { OptimizerRecipeTreeRow },
   props: {
     tree: { type: Object as PropType<RecipeTreeNode<{ have: number }> | null>, required: true },
+    hasInventory: { type: Boolean, required: true },
   },
 });
 </script>

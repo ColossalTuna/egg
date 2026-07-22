@@ -38,7 +38,7 @@
         </p>
       </div>
 
-      <optimizer-inventory-panel :tree="inventoryTree" />
+      <optimizer-inventory-panel :tree="inventoryTree" :has-inventory="!!playerInventory" />
 
       <slot />
     </div>

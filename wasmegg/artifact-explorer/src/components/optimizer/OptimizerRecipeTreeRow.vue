@@ -1,7 +1,7 @@
 <template>
   <li>
     <div class="flex items-center gap-1.5" :class="node.isDuplicate ? 'opacity-40' : ''">
-      <img :src="node.iconUrl" class="h-5 w-5 flex-shrink-0" :class="node.isDuplicate ? 'opacity-40' : ''" />
+      <img :src="node.iconUrl" class="h-5 w-5 flex-shrink-0" />
       <span class="flex-shrink-0" :class="node.isDuplicate ? 'text-gray-400' : 'text-gray-700'">{{ node.name }}</span>
       <span v-if="node.qtyPerParentCraft > 1" class="text-xs text-gray-400 ml-0.5 flex-shrink-0"
         >×{{ node.qtyPerParentCraft }}</span

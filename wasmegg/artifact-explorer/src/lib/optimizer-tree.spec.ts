@@ -10,8 +10,8 @@ import {
   computeCraftChainTree,
   computeInventoryTree,
 } from './optimizer-tree';
-import { makeNode } from './spec-helpers';
-import type { OptimizerSolution, RecipeDAG } from './types';
+import { makeNode, makeSolution } from './spec-helpers';
+import type { RecipeDAG } from './types';
 
 const Name = ei.ArtifactSpec.Name;
 const Level = ei.ArtifactSpec.Level;
@@ -49,27 +49,6 @@ function totemInventory(): Inventory {
       { artifact: { spec: { name: Name.LUNAR_TOTEM, level: Level.LESSER, rarity: Rarity.RARE } }, quantity: 2 },
     ],
   });
-}
-
-function makeSolution(overrides: Partial<OptimizerSolution>): OptimizerSolution {
-  return {
-    bestProbability: 0,
-    craftProbability: 0,
-    dropProbability: 0,
-    expectedCrafts: 0,
-    fuelUsed: 0,
-    fuelByEgg: new Map(),
-    timeUnitsUsed: 0,
-    runningTimeSeconds: 0,
-    choiceHistory: [],
-    expectedDrops: [],
-    finalYieldVector: new Map(),
-    baseYield: new Map(),
-    recipeDag: new Map(),
-    craftPrimal: new Map(),
-    perTarget: [],
-    ...overrides,
-  };
 }
 
 describe('computeCanonicalOccurrence', () => {
