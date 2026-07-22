@@ -92,7 +92,7 @@ export default defineComponent({
     const dropTooltip =
       'The probability of at least one legendary dropping directly from the missions themselves, without crafting.';
     const idleTooltip =
-      'Estimated wall-clock time the busiest slot sits idle waiting for your next relaunch, implied by your effort setting. Lower effort means longer launch periods and more idle time between sends.';
+      'All of your time budget not spent with ships in flight — time you wait rather than relaunching sooner, implied by your effort setting. Together with ships-in-flight it sums to your max wait time. Lower effort means longer launch periods and more idle time between sends.';
     return {
       eggIconPath,
       formatDuration,

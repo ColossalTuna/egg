@@ -89,11 +89,12 @@ export interface OptimizerSolution {
   expectedCrafts: number;
   fuelUsed: number;
   fuelByEgg: Map<ei.Egg, number>;
-  // timeUnitsUsed is the plan's wall-clock: the makespan of the busiest of the
-  // three concurrent slots (<= the horizon). It splits into runningTimeSeconds
-  // (ships in flight on that slot) + idleTimeSeconds (the floor-induced wait
-  // between that slot's relaunches, i.e. its floored load minus its raw load).
+  // timeUnitsUsed is the plan's makespan: the busiest of the three concurrent
+  // slots' floored load (<= the horizon).
   timeUnitsUsed: integer;
+  // runningTimeSeconds (the busiest slot's real flight time) + idleTimeSeconds
+  // (the rest of the budget spent waiting rather than relaunching sooner) always
+  // sum to the max wait time, so the card's two lines add up to the horizon.
   runningTimeSeconds: integer;
   idleTimeSeconds: integer;
   // per-slot occupancy of the chosen plan (up to three entries); the packing
