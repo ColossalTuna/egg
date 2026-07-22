@@ -24,7 +24,7 @@
           :max-wait-time-seconds="lastComputedMaxWaitTimeSeconds"
           :p-craft="view.pCraft"
           :lambda="view.lambda"
-          :craft-chain="view.craftChain"
+          :craft-chain-tree="view.craftChainTree"
           :mission-legendary-sources="view.missionLegendarySources"
           :has-inventory="!!playerInventory"
           :drop-data-is-sparse="view.dropDataIsSparse"
@@ -38,7 +38,7 @@
         </p>
       </div>
 
-      <optimizer-inventory-panel :rows="inventoryRows" />
+      <optimizer-inventory-panel :tree="inventoryTree" :has-inventory="!!playerInventory" />
 
       <slot />
     </div>
@@ -65,8 +65,8 @@ import {
 import {
   buildRecipeDag,
   computeBaseYield,
-  computeCraftChainRows,
-  computeInventoryRows,
+  computeCraftChainTree,
+  computeInventoryTree,
   computeMissionLegendaryRows,
   lambdaFromDropProbability,
   legendaryCraftProbabilityOf,
@@ -176,8 +176,8 @@ export default defineComponent({
       }
     });
 
-    const inventoryRows = computed(() =>
-      computeInventoryRows(artifactId.value, recipeDag.value, playerInventory.value)
+    const inventoryTree = computed(() =>
+      computeInventoryTree(artifactId.value, recipeDag.value, playerInventory.value)
     );
 
     const solutionViews = computed(() =>
@@ -185,7 +185,7 @@ export default defineComponent({
         solution,
         pCraft: legendaryCraftProbabilityOf(solution, artifactId.value),
         lambda: lambdaFromDropProbability(solution.dropProbability),
-        craftChain: computeCraftChainRows(solution, artifactId.value, playerInventory.value),
+        craftChainTree: computeCraftChainTree(solution, artifactId.value, playerInventory.value),
         missionLegendarySources: computeMissionLegendaryRows(solution, artifactId.value),
         dropDataIsSparse: legendaryDataIsSparse(artifactId.value),
       }))
@@ -200,7 +200,7 @@ export default defineComponent({
       runCompute,
       submitPlayerId,
       playerInventory,
-      inventoryRows,
+      inventoryTree,
       solutionViews,
     };
   },
