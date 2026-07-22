@@ -396,7 +396,7 @@ export function loadMissionFilters(): MissionFilters {
     // The 'infinite' level was renamed to 'max'; upgrade any value persisted
     // under the old name before validation so the rest of the filters survive
     // (isEffortLevel, and therefore isMissionFilters, no longer accepts it).
-    if (parsed && typeof parsed === 'object' && (parsed as MissionFilters).effort === ('infinite' as EffortLevel)) {
+    if (parsed && typeof parsed === 'object' && (parsed as Record<string, unknown>).effort === 'infinite') {
       (parsed as MissionFilters).effort = 'max';
     }
     if (isMissionFilters(parsed)) {
