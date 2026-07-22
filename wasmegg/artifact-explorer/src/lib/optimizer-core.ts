@@ -574,8 +574,16 @@ function assembleFullSolution(
     ctx.options
   );
 
-  // Wall-clock is the makespan of the busiest slot (the three run concurrently).
-  const makespan = bestSlots.reduce((m, s) => Math.max(m, s.loadSeconds), 0);
+  // Wall-clock is the makespan of the busiest slot (the three run concurrently);
+  // running time is that same slot's real (raw) flight time. Idle time is a
+  // display concern (max wait time minus running), computed by the presentation
+  // layer, so it is not stored here.
+  const busiest = bestSlots.reduce<SlotSummary | null>(
+    (best, s) => (best === null || s.loadSeconds > best.loadSeconds ? s : best),
+    null
+  );
+  const makespan = busiest?.loadSeconds ?? 0;
+  const running = busiest?.rawLoadSeconds ?? 0;
 
   // One extra inner-LP solve at the chosen allocation to recover the
   // per-target craftable counts.
@@ -601,11 +609,7 @@ function assembleFullSolution(
     fuelUsed: fuelUsed,
     fuelByEgg: fuelByEgg,
     timeUnitsUsed: Math.round(makespan),
-    // The running/idle split depends on the effort slack baked into each
-    // option's actualTime, which is only known upstream; index.ts fills these
-    // in from the slot witness. Default to all-running (slack of zero).
-    runningTimeSeconds: Math.round(makespan),
-    idleTimeSeconds: 0,
+    runningTimeSeconds: Math.round(running),
     slots: bestSlots.length > 0 ? bestSlots : undefined,
     choiceHistory: choiceHistory,
     expectedDrops: [], // populated by index.ts

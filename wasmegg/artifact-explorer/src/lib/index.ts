@@ -137,23 +137,6 @@ export function optimize(
     solution.choiceHistory.sort((a: LaunchSolution, b: LaunchSolution) => a.ship.shipType - b.ship.shipType);
     solution.expectedDrops = computeExpectedDrops(solution, dag);
     solution.fuelByEgg = computeFuelByEgg(solution);
-
-    // Split the whole time budget into ships-in-flight vs. idle. Running time is
-    // the busiest slot's real (raw) flight time — the three slots run
-    // concurrently, so that slot's flight defines the wall-clock the player
-    // spends launching. Everything else in the budget is idle: the player waits
-    // out the rest of the horizon rather than relaunching sooner (per the effort
-    // cadence), so running + idle always sums to the max wait time.
-    let running = 0;
-    let makespan = -1;
-    for (const slot of solution.slots ?? []) {
-      if (slot.loadSeconds > makespan) {
-        makespan = slot.loadSeconds;
-        running = slot.rawLoadSeconds;
-      }
-    }
-    solution.runningTimeSeconds = Math.round(running);
-    solution.idleTimeSeconds = Math.max(0, Math.round(timeBudgetSeconds) - solution.runningTimeSeconds);
   }
 
   return solutions;

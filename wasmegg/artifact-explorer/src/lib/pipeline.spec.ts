@@ -136,7 +136,7 @@ describe('optimize', () => {
     }
   });
 
-  it('splits the whole time budget into running (flight) and idle time', () => {
+  it('reports running time as the busiest slot real flight time', () => {
     const config = {
       desiredArtifactNodeIds: ['puzzle-cube-4'],
       includeNotEnoughData: false,
@@ -148,22 +148,23 @@ describe('optimize', () => {
     const launchPeriod = 3600; // high effort: 1 launch / slot / hour
     const [sol] = optimize(config, perfectShipsConfig, dag, baseYield, launchPeriod);
 
-    // Running time is the busiest slot's real flight (raw load); the rest of the
-    // budget is idle. The two always sum to the max wait time.
+    // Running time is the busiest slot's real (raw, unfloored) flight time. Idle
+    // is derived at display time as budget - running, so it isn't on the solution.
     expect(sol.slots).toBeDefined();
     expect(sol.slots!.length).toBe(3);
     const busiest = sol.slots!.reduce((a, b) => (b.loadSeconds > a.loadSeconds ? b : a));
     expect(busiest.missionCount).toBeGreaterThan(0);
     expect(sol.runningTimeSeconds).toBe(Math.round(busiest.rawLoadSeconds));
-    expect(sol.runningTimeSeconds + sol.idleTimeSeconds).toBe(Math.round(config.timeBudgetSeconds));
+    // Raw flight never exceeds the floored makespan (rawTime <= actualTime).
+    expect(sol.runningTimeSeconds).toBeLessThanOrEqual(sol.timeUnitsUsed);
     // every slot fits within the horizon (the per-slot packing contract)
     for (const slot of sol.slots!) {
       expect(slot.loadSeconds).toBeLessThanOrEqual(config.timeBudgetSeconds + 1e-6);
     }
 
-    // The invariant holds regardless of launch period: with a zero period nothing
-    // is floored, but flight + idle still sums to the full budget.
+    // With a zero launch period nothing is floored, so raw flight equals the
+    // makespan: running time fills the whole wall-clock.
     const [rawSol] = optimize(config, perfectShipsConfig, dag, baseYield, 0);
-    expect(rawSol.runningTimeSeconds + rawSol.idleTimeSeconds).toBe(Math.round(config.timeBudgetSeconds));
+    expect(rawSol.runningTimeSeconds).toBe(rawSol.timeUnitsUsed);
   });
 });

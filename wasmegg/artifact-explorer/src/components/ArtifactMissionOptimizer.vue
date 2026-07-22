@@ -21,6 +21,7 @@
           v-for="(view, i) in solutionViews"
           :key="'solution-' + i"
           :solution="view.solution"
+          :max-wait-time-seconds="maxWaitTimeSeconds"
           :p-craft="view.pCraft"
           :lambda="view.lambda"
           :craft-chain="view.craftChain"
@@ -186,6 +187,7 @@ export default defineComponent({
 
     return {
       waitTimeDays,
+      maxWaitTimeSeconds,
       timeBudgetValid,
       pendingCompute,
       playerId,

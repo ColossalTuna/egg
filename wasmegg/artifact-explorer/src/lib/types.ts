@@ -92,11 +92,11 @@ export interface OptimizerSolution {
   // timeUnitsUsed is the plan's makespan: the busiest of the three concurrent
   // slots' floored load (<= the horizon).
   timeUnitsUsed: integer;
-  // runningTimeSeconds (the busiest slot's real flight time) + idleTimeSeconds
-  // (the rest of the budget spent waiting rather than relaunching sooner) always
-  // sum to the max wait time, so the card's two lines add up to the horizon.
+  // runningTimeSeconds is the busiest slot's real (raw) flight time. Idle time
+  // (the rest of the budget spent waiting rather than relaunching sooner) is a
+  // pure display delta — max wait time minus this — computed in the presentation
+  // layer, so it is deliberately not stored on the solution.
   runningTimeSeconds: integer;
-  idleTimeSeconds: integer;
   // per-slot occupancy of the chosen plan (up to three entries); the packing
   // witness the optimizer used to prove every mission fits one slot's horizon
   slots?: SlotSummary[];
