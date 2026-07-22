@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { parseDurationDays } from './time';
+import { formatDuration, parseDurationDays } from './time';
 
 describe('parseDurationDays', () => {
   it('parses bare integer as days (backward compat)', () => {
@@ -24,5 +24,17 @@ describe('parseDurationDays', () => {
     expect(parseDurationDays('')).toBeNaN();
     expect(parseDurationDays('bogus')).toBeNaN();
     expect(parseDurationDays('10x')).toBeNaN();
+  });
+  it('returns NaN for garbage with embedded unit-like substrings', () => {
+    expect(parseDurationDays('1hbogus')).toBeNaN();
+    expect(parseDurationDays('bogus1h')).toBeNaN();
+    expect(parseDurationDays('30dhours')).toBeNaN();
+    expect(parseDurationDays('5hgarbage')).toBeNaN();
+  });
+  it('parses year unit', () => {
+    expect(parseDurationDays('1y35d')).toBe(31_536_000 + 35 * 86400);
+  });
+  it('round-trips long durations through formatDuration without losing precision', () => {
+    expect(parseDurationDays(formatDuration(400 * 86400, true))).toBe(400 * 86400);
   });
 });

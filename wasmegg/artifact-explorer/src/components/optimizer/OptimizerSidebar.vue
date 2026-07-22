@@ -235,7 +235,14 @@
 <script lang="ts">
 import { computed, defineComponent, ref, watch } from 'vue';
 
-import { formatDuration, formatEIValue, fuelTankSizes, parseDurationDays, parseValueWithUnit, spaceshipList } from 'lib';
+import {
+  formatDuration,
+  formatEIValue,
+  fuelTankSizes,
+  parseDurationDays,
+  parseValueWithUnit,
+  spaceshipList,
+} from 'lib';
 import BaseInput from 'ui/components/BaseInput.vue';
 import PlayerIdForm from 'ui/components/PlayerIdForm.vue';
 import LootDataCredit from '@/components/LootDataCredit.vue';
@@ -328,6 +335,10 @@ export default defineComponent({
         return;
       }
       const normalized = formatDuration(seconds, true);
+      if (parseDurationDays(normalized) !== seconds) {
+        // Normalizing would lose precision (e.g. sub-minute durations) — keep the raw text as typed.
+        return;
+      }
       waitTimeDraft.value = normalized;
       emit('update:waitTimeDays', normalized);
     }

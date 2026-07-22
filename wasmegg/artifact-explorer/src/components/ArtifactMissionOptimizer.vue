@@ -33,7 +33,7 @@
           {{
             timeBudgetValid
               ? 'No ship set found for the current settings.'
-              : 'Enter a time budget (a positive number of days) to compute a plan.'
+              : 'Enter a time budget (e.g. 30, 12d12h, 10h5m) to compute a plan.'
           }}
         </p>
       </div>
