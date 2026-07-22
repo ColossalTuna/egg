@@ -17,17 +17,20 @@
       <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Constraints</h3>
       <div class="space-y-3">
         <div>
-          <label for="waitTimeInput" class="block text-sm text-gray-700">Time budget (days)</label>
+          <label for="waitTimeInput" class="block text-sm text-gray-700">Time budget</label>
           <base-input
             id="waitTimeInput"
-            :model-value="waitTimeDays"
-            type="number"
+            :model-value="waitTimeDraft"
+            type="text"
             name="waitTimeInput"
             class="mt-1 appearance-none block w-full px-3 py-1.5 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-            placeholder="Days"
-            @update:model-value="$emit('update:waitTimeDays', String($event))"
+            placeholder="e.g. 30, 12d12h, 10h5m"
+            @update:model-value="onWaitTimeInput"
+            @blur="onWaitTimeBlur"
           />
-          <p v-if="timeBudgetInvalid" class="mt-1 text-xs text-red-500">Enter a positive number of days</p>
+          <p v-if="timeBudgetInvalid" class="mt-1 text-xs text-red-500">
+            Enter a positive duration (e.g. 30, 12d12h, 10h5m)
+          </p>
           <p v-else class="mt-1 text-xs text-gray-400">Maximum time you're willing to spend launching missions</p>
         </div>
 
@@ -230,9 +233,16 @@
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, ref } from 'vue';
+import { computed, defineComponent, ref, watch } from 'vue';
 
-import { formatEIValue, fuelTankSizes, parseValueWithUnit, spaceshipList } from 'lib';
+import {
+  formatDuration,
+  formatEIValue,
+  fuelTankSizes,
+  parseDurationDays,
+  parseValueWithUnit,
+  spaceshipList,
+} from 'lib';
 import BaseInput from 'ui/components/BaseInput.vue';
 import PlayerIdForm from 'ui/components/PlayerIdForm.vue';
 import LootDataCredit from '@/components/LootDataCredit.vue';
@@ -305,7 +315,34 @@ export default defineComponent({
     runCompute: () => true,
     'update:waitTimeDays': (_days: string) => true,
   },
-  setup() {
+  setup(props, { emit }) {
+    const waitTimeDraft = ref(props.waitTimeDays);
+    watch(
+      () => props.waitTimeDays,
+      v => {
+        waitTimeDraft.value = v;
+      }
+    );
+
+    function onWaitTimeInput(value: string) {
+      waitTimeDraft.value = value;
+      emit('update:waitTimeDays', value);
+    }
+
+    function onWaitTimeBlur() {
+      const seconds = parseDurationDays(waitTimeDraft.value);
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        return;
+      }
+      const normalized = formatDuration(seconds, true);
+      if (parseDurationDays(normalized) !== seconds) {
+        // Normalizing would lose precision (e.g. sub-minute durations) — keep the raw text as typed.
+        return;
+      }
+      waitTimeDraft.value = normalized;
+      emit('update:waitTimeDays', normalized);
+    }
+
     const maxTankLevel = fuelTankSizes.length - 1;
     const hasPlayerData = computed(() => !!playerShipsConfig.value);
 
@@ -391,6 +428,9 @@ export default defineComponent({
     }
 
     return {
+      waitTimeDraft,
+      onWaitTimeInput,
+      onWaitTimeBlur,
       hasPlayerData,
       maxTankLevel,
       tankCapacityLabel,
