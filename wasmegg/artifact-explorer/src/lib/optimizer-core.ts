@@ -395,6 +395,7 @@ function packAndFill(
 
   const missionOpt: number[] = [];
   const missionDur: number[] = [];
+  const missionRawDur: number[] = [];
   for (const [i, k] of startAlloc) {
     if (k <= 0) continue;
     const d = options[i].actualTime;
@@ -402,6 +403,7 @@ function packAndFill(
     for (let c = 0; c < k; c++) {
       missionOpt.push(i);
       missionDur.push(d);
+      missionRawDur.push(options[i].rawTime);
     }
   }
 
@@ -411,6 +413,7 @@ function packAndFill(
   // marginal excess from the 3S relaxation or a fuel-blind escalation seed.
   const order = missionOpt.map((_, idx) => idx).sort((a, b) => missionDur[b] - missionDur[a]);
   const slotLoad = new Array<number>(NUM_SLOTS).fill(0);
+  const slotRawLoad = new Array<number>(NUM_SLOTS).fill(0);
   const slotCount = new Array<number>(NUM_SLOTS).fill(0);
   const alloc = new Map<number, number>();
   let usedFuel = 0;
@@ -429,6 +432,7 @@ function packAndFill(
     }
     if (best === -1) continue;
     slotLoad[best] += d;
+    slotRawLoad[best] += missionRawDur[flat];
     slotCount[best] += 1;
     alloc.set(i, (alloc.get(i) ?? 0) + 1);
     usedFuel += f;
@@ -499,11 +503,16 @@ function packAndFill(
     alloc.set(bestOpt, (alloc.get(bestOpt) ?? 0) + bestCount);
     usedFuel += bestCount * options[bestOpt].actualFuel;
     slotLoad[bestSlot] += bestCount * options[bestOpt].actualTime;
+    slotRawLoad[bestSlot] += bestCount * options[bestOpt].rawTime;
     slotCount[bestSlot] += bestCount;
     score = bestAddScore;
   }
 
-  const slots: SlotSummary[] = slotLoad.map((load, b) => ({ loadSeconds: load, missionCount: slotCount[b] }));
+  const slots: SlotSummary[] = slotLoad.map((load, b) => ({
+    loadSeconds: load,
+    rawLoadSeconds: slotRawLoad[b],
+    missionCount: slotCount[b],
+  }));
   return { alloc, slots, score };
 }
 
@@ -565,8 +574,16 @@ function assembleFullSolution(
     ctx.options
   );
 
-  // Wall-clock is the makespan of the busiest slot (the three run concurrently).
-  const makespan = bestSlots.reduce((m, s) => Math.max(m, s.loadSeconds), 0);
+  // Wall-clock is the makespan of the busiest slot (the three run concurrently);
+  // running time is that same slot's real (raw) flight time. Idle time is a
+  // display concern (max wait time minus running), computed by the presentation
+  // layer, so it is not stored here.
+  const busiest = bestSlots.reduce<SlotSummary | null>(
+    (best, s) => (best === null || s.loadSeconds > best.loadSeconds ? s : best),
+    null
+  );
+  const makespan = busiest?.loadSeconds ?? 0;
+  const running = busiest?.rawLoadSeconds ?? 0;
 
   // One extra inner-LP solve at the chosen allocation to recover the
   // per-target craftable counts.
@@ -592,11 +609,7 @@ function assembleFullSolution(
     fuelUsed: fuelUsed,
     fuelByEgg: fuelByEgg,
     timeUnitsUsed: Math.round(makespan),
-    // The running/idle split depends on the effort slack baked into each
-    // option's actualTime, which is only known upstream; index.ts fills these
-    // in from the slot witness. Default to all-running (slack of zero).
-    runningTimeSeconds: Math.round(makespan),
-    idleTimeSeconds: 0,
+    runningTimeSeconds: Math.round(running),
     slots: bestSlots.length > 0 ? bestSlots : undefined,
     choiceHistory: choiceHistory,
     expectedDrops: [], // populated by index.ts

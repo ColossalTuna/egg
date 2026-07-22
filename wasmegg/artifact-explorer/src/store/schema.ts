@@ -69,21 +69,24 @@ export function isExtrasConfig(x: unknown): x is ExtrasConfig {
 }
 
 // How much effort the player is willing to put into relaunching missions.
-// Lower effort adds more slack to each mission's duration when the optimizer
-// budgets time, which biases it away from lots of tiny, babysitting-heavy
-// launches. See EFFORT_SLACK_SECONDS for the added time per level.
-export const EFFORT_LEVELS = ['low', 'medium', 'high', 'infinite'] as const;
+// Lower effort means a longer launch period: the optimizer floors every
+// mission's effective duration up to at least the launch period, so a slot
+// completes at most one launch per period regardless of how short the mission
+// actually is. This biases it away from lots of tiny, babysitting-heavy
+// launches. See EFFORT_LAUNCH_PERIOD_SECONDS for the period per level.
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'max'] as const;
 
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
-// Slack added to every mission's duration for budgeting, per effort level.
-// A shorter mission carries proportionally more of this fixed overhead, so
-// short missions only survive when they're genuinely worth the relaunching.
-export const EFFORT_SLACK_SECONDS: Record<EffortLevel, number> = {
-  low: 4 * 3600, // relaunch roughly every 4 hours
-  medium: 3600, // relaunch roughly hourly
-  high: 300, // relaunch within ~5 minutes
-  infinite: 0, // relaunch instantly (raw durations)
+// Launch period (a floor on each mission's effective duration) per effort
+// level. A mission shorter than the period is stretched to occupy the whole
+// period, so a slot runs one launch per period; a mission longer than the
+// period keeps its real duration. 'max' floors at 0, leaving raw durations.
+export const EFFORT_LAUNCH_PERIOD_SECONDS: Record<EffortLevel, number> = {
+  low: 86400, // 1 launch / slot / day
+  medium: 43200, // 2 launches / slot / day
+  high: 3600, // 1 launch / slot / hour
+  max: 0, // as often as the optimizer wants (raw durations)
 };
 
 export function isEffortLevel(x: unknown): x is EffortLevel {

@@ -273,22 +273,22 @@ const effortMeta: Record<EffortLevel, { short: string; label: string; hint: stri
   low: {
     short: 'Low',
     label: 'Low',
-    hint: 'Adds 4h of slack to every mission — strongly favors long, low-maintenance sends.',
+    hint: 'One launch per slot per day — strongly favors long, low-maintenance sends.',
   },
   medium: {
     short: 'Med',
     label: 'Medium',
-    hint: 'Adds 1h of slack to every mission.',
+    hint: 'Two launches per slot per day.',
   },
   high: {
     short: 'High',
     label: 'High',
-    hint: 'Adds 5 min of slack to every mission — assumes you relaunch promptly.',
+    hint: 'One launch per slot per hour — assumes you relaunch promptly.',
   },
-  infinite: {
-    short: '∞',
-    label: 'Infinite',
-    hint: 'No slack — assumes you relaunch the instant a mission lands.',
+  max: {
+    short: 'Max',
+    label: 'Max',
+    hint: 'As often as the optimizer wants — assumes you relaunch the instant a mission lands.',
   },
 };
 
