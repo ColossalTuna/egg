@@ -83,3 +83,32 @@ export function parseDurationDays(str: string): number {
   }
   return totalSeconds;
 }
+
+/**
+ * Tolerance, in seconds, for the formatDuration/parseDurationDays round-trip
+ * check in isDurationRoundTripSafe. This is a time budget for mission
+ * launches spanning days, so second-level precision isn't meaningful; 1s of
+ * tolerance comfortably absorbs float noise from the day-to-seconds
+ * conversion in parseDurationDays while still catching normalizations that
+ * would truncate away a real double-digit-second (or larger) remainder.
+ */
+export const DURATION_ROUNDTRIP_EPSILON_SECONDS = 1;
+
+/**
+ * True if normalizing `input` via parseDurationDays -> formatDuration ->
+ * parseDurationDays round-trips back to (within
+ * DURATION_ROUNDTRIP_EPSILON_SECONDS of) the original value. Used to decide
+ * whether normalizing a user-typed duration is safe, i.e. doesn't silently
+ * truncate a meaningful remainder.
+ * @param input - The raw duration string as typed by the user.
+ * @returns Whether it is safe to replace `input` with its normalized form.
+ */
+export function isDurationRoundTripSafe(input: string): boolean {
+  const seconds = parseDurationDays(input);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return false;
+  }
+  const normalized = formatDuration(seconds, true);
+  const reparsed = parseDurationDays(normalized);
+  return Number.isFinite(reparsed) && Math.abs(reparsed - seconds) <= DURATION_ROUNDTRIP_EPSILON_SECONDS;
+}

@@ -239,6 +239,7 @@ import {
   formatDuration,
   formatEIValue,
   fuelTankSizes,
+  isDurationRoundTripSafe,
   parseDurationDays,
   parseValueWithUnit,
   spaceshipList,
@@ -277,16 +278,6 @@ import {
   setPreviousCraftCount,
   setTankLevel,
 } from '@/store';
-
-// formatDuration/parseDurationDays round-trips can introduce floating-point
-// noise (e.g. from the `parseFloat(...) * 86400` day-to-seconds conversion in
-// parseDurationDays), which a strict equality check would misread as
-// precision loss and use to needlessly reject a valid normalization. This is
-// a time budget for mission launches spanning days, so second-level
-// precision isn't meaningful here; 1s of tolerance comfortably absorbs the
-// float noise while still catching normalizations that would truncate away
-// a real double-digit-second (or larger) remainder the user typed.
-const DURATION_ROUNDTRIP_EPSILON_SECONDS = 1;
 
 // Compact label + hint per effort level, shown alongside the notched track.
 const effortMeta: Record<EffortLevel, { short: string; label: string; hint: string }> = {
@@ -340,16 +331,12 @@ export default defineComponent({
     }
 
     function onWaitTimeBlur() {
-      const seconds = parseDurationDays(waitTimeDraft.value);
-      if (!Number.isFinite(seconds) || seconds <= 0) {
+      if (!isDurationRoundTripSafe(waitTimeDraft.value)) {
+        // Either invalid, or normalizing would lose precision (e.g. sub-minute
+        // durations) — keep the raw text as typed.
         return;
       }
-      const normalized = formatDuration(seconds, true);
-      const reparsed = parseDurationDays(normalized);
-      if (!Number.isFinite(reparsed) || Math.abs(reparsed - seconds) > DURATION_ROUNDTRIP_EPSILON_SECONDS) {
-        // Normalizing would lose precision (e.g. sub-minute durations) — keep the raw text as typed.
-        return;
-      }
+      const normalized = formatDuration(parseDurationDays(waitTimeDraft.value), true);
       waitTimeDraft.value = normalized;
       emit('update:waitTimeDays', normalized);
     }

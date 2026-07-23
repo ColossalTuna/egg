@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { formatDuration, parseDurationDays } from './time';
+import { formatDuration, isDurationRoundTripSafe, parseDurationDays } from './time';
 
 describe('parseDurationDays', () => {
   it('parses bare integer as days (backward compat)', () => {
@@ -39,31 +39,15 @@ describe('parseDurationDays', () => {
   });
 });
 
-// Regression tests for the epsilon-based round-trip comparison used by
-// onWaitTimeBlur in OptimizerSidebar.vue. That component normalizes user
-// input via parseDurationDays -> formatDuration -> parseDurationDays, and
-// only accepts the normalized form if the round-trip is (near-)lossless.
-// These tests exercise parseDurationDays/formatDuration directly to pin down
-// the exact numeric behavior the comparison relies on, without requiring
-// component-mounting test infrastructure (not present in this workspace).
+// Regression tests for isDurationRoundTripSafe, the epsilon-based round-trip
+// predicate used by onWaitTimeBlur in OptimizerSidebar.vue. That component
+// normalizes user input via parseDurationDays -> formatDuration ->
+// parseDurationDays, and only accepts the normalized form if the round-trip
+// is (near-)lossless. These tests exercise the real shared predicate (from
+// ./time, also used by the component) rather than a local reimplementation,
+// so a future change to the epsilon or comparison logic can't silently
+// desync between production code and tests.
 describe('formatDuration/parseDurationDays round-trip (onWaitTimeBlur precision)', () => {
-  // Kept in sync with DURATION_ROUNDTRIP_EPSILON_SECONDS in OptimizerSidebar.vue.
-  // This is a time budget for mission launches spanning days, so second-level
-  // precision isn't meaningful; 1s of tolerance absorbs float noise from the
-  // day-to-seconds conversion while still catching normalizations that would
-  // truncate away a real double-digit-second (or larger) remainder.
-  const DURATION_ROUNDTRIP_EPSILON_SECONDS = 1;
-
-  function roundTripAccepted(input: string): boolean {
-    const seconds = parseDurationDays(input);
-    if (!Number.isFinite(seconds) || seconds <= 0) {
-      return false;
-    }
-    const normalized = formatDuration(seconds, true);
-    const reparsed = parseDurationDays(normalized);
-    return Number.isFinite(reparsed) && Math.abs(reparsed - seconds) <= DURATION_ROUNDTRIP_EPSILON_SECONDS;
-  }
-
   it('accepts "295.6" days despite floating-point noise from the day-to-seconds conversion', () => {
     const seconds = parseDurationDays('295.6');
     // parseFloat('295.6') * 86400 introduces float noise (not exactly 25539840).
@@ -71,7 +55,7 @@ describe('formatDuration/parseDurationDays round-trip (onWaitTimeBlur precision)
     expect(seconds).toBeCloseTo(25539840, 5);
     // A strict !== comparison between seconds and the reparsed normalized
     // value would spuriously reject this; the epsilon-based comparison must not.
-    expect(roundTripAccepted('295.6')).toBe(true);
+    expect(isDurationRoundTripSafe('295.6')).toBe(true);
   });
 
   it('accepts "0.00069560" days: sub-second precision loss from minute-level formatting is immaterial here', () => {
@@ -82,7 +66,7 @@ describe('formatDuration/parseDurationDays round-trip (onWaitTimeBlur precision)
     // tolerance accepts it (unlike the tighter float-noise-only tolerance this
     // replaced).
     expect(formatDuration(seconds, true)).toBe('1m');
-    expect(roundTripAccepted('0.00069560')).toBe(true);
+    expect(isDurationRoundTripSafe('0.00069560')).toBe(true);
   });
 
   it('rejects "2d1m45s" worth of input: a genuine multi-second remainder beyond the 1s tolerance', () => {
@@ -93,7 +77,7 @@ describe('formatDuration/parseDurationDays round-trip (onWaitTimeBlur precision)
     // formatDuration drops the 45s remainder entirely (no seconds field in its output).
     expect(normalized).toBe('2d1m');
     expect(Math.abs(parseDurationDays(normalized) - seconds)).toBeCloseTo(45, 0);
-    expect(roundTripAccepted(input)).toBe(false);
+    expect(isDurationRoundTripSafe(input)).toBe(false);
   });
 
   it('rejects durations exceeding the >100yr cutoff instead of falling through on NaN', () => {
@@ -105,6 +89,6 @@ describe('formatDuration/parseDurationDays round-trip (onWaitTimeBlur precision)
     // always false, so an implementation without an explicit isFinite guard
     // would incorrectly accept this and overwrite the draft with '>100yr'.
     expect(parseDurationDays(normalized)).toBeNaN();
-    expect(roundTripAccepted(String(hundredOneYearsInDays))).toBe(false);
+    expect(isDurationRoundTripSafe(String(hundredOneYearsInDays))).toBe(false);
   });
 });
