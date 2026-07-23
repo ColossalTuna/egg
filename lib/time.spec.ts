@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { formatDuration, isDurationRoundTripSafe, parseDurationDays } from './time';
+import { formatDuration, isDurationNormalizable, parseDurationDays } from './time';
 
 describe('parseDurationDays', () => {
   it('parses bare integer as days (backward compat)', () => {
@@ -39,37 +39,34 @@ describe('parseDurationDays', () => {
   });
 });
 
-// Regression tests for isDurationRoundTripSafe, the epsilon-based round-trip
-// predicate used by onWaitTimeBlur in OptimizerSidebar.vue. That component
-// normalizes user input via parseDurationDays -> formatDuration ->
-// parseDurationDays, and only accepts the normalized form if the round-trip
-// is (near-)lossless. These tests exercise the real shared predicate (from
-// ./time, also used by the component) rather than a local reimplementation,
-// so a future change to the epsilon or comparison logic can't silently
-// desync between production code and tests.
+// Regression tests for isDurationNormalizable, the predicate used by
+// onWaitTimeBlur in OptimizerSidebar.vue to decide whether to replace the
+// user's typed text with its normalized form. It intentionally does not
+// compare the normalized value against the original: for a mission-launch
+// time budget spanning hours to days, no remainder formatDuration drops
+// (sub-minute or otherwise) is meaningful to preserve. The only real
+// rejection case is formatDuration's >100yr cutoff, which produces a
+// non-numeric string. These tests exercise the real shared predicate (from
+// ./time, also used by the component) rather than a local reimplementation.
 describe('formatDuration/parseDurationDays round-trip (onWaitTimeBlur precision)', () => {
   it('accepts "295.6" days despite floating-point noise from the day-to-seconds conversion', () => {
     const seconds = parseDurationDays('295.6');
     // parseFloat('295.6') * 86400 introduces float noise (not exactly 25539840).
     expect(seconds).not.toBe(25539840);
     expect(seconds).toBeCloseTo(25539840, 5);
-    // A strict !== comparison between seconds and the reparsed normalized
-    // value would spuriously reject this; the epsilon-based comparison must not.
-    expect(isDurationRoundTripSafe('295.6')).toBe(true);
+    expect(isDurationNormalizable('295.6')).toBe(true);
   });
 
-  it('accepts "0.00069560" days: sub-second precision loss from minute-level formatting is immaterial here', () => {
+  it('accepts "0.00069560" days despite formatDuration truncating it to whole minutes', () => {
     const seconds = parseDurationDays('0.00069560');
     expect(seconds).toBeCloseTo(60.09984, 5);
     // formatDuration truncates this to whole minutes ("1m" = 60s), losing ~0.1s.
-    // For this time-budget field, sub-second drift doesn't matter, so the 1s
-    // tolerance accepts it (unlike the tighter float-noise-only tolerance this
-    // replaced).
+    // Sub-minute precision was never meaningful for this time-budget field.
     expect(formatDuration(seconds, true)).toBe('1m');
-    expect(isDurationRoundTripSafe('0.00069560')).toBe(true);
+    expect(isDurationNormalizable('0.00069560')).toBe(true);
   });
 
-  it('rejects "2d1m45s" worth of input: a genuine multi-second remainder beyond the 1s tolerance', () => {
+  it('accepts input with a significant sub-minute remainder (e.g. "2d1m45s") since it is not meaningful here', () => {
     // 2 days, 1 minute, 45 seconds expressed as a bare decimal-day input.
     const input = ((2 * 86400 + 60 + 45) / 86400).toFixed(10);
     const seconds = parseDurationDays(input);
@@ -77,7 +74,7 @@ describe('formatDuration/parseDurationDays round-trip (onWaitTimeBlur precision)
     // formatDuration drops the 45s remainder entirely (no seconds field in its output).
     expect(normalized).toBe('2d1m');
     expect(Math.abs(parseDurationDays(normalized) - seconds)).toBeCloseTo(45, 0);
-    expect(isDurationRoundTripSafe(input)).toBe(false);
+    expect(isDurationNormalizable(input)).toBe(true);
   });
 
   it('rejects durations exceeding the >100yr cutoff instead of falling through on NaN', () => {
@@ -85,10 +82,10 @@ describe('formatDuration/parseDurationDays round-trip (onWaitTimeBlur precision)
     const seconds = parseDurationDays(String(hundredOneYearsInDays));
     const normalized = formatDuration(seconds, true);
     expect(normalized).toBe('>100yr');
-    // parseDurationDays('>100yr') is NaN; Math.abs(NaN - seconds) > EPSILON is
-    // always false, so an implementation without an explicit isFinite guard
-    // would incorrectly accept this and overwrite the draft with '>100yr'.
+    // parseDurationDays('>100yr') is NaN; without an explicit isFinite guard
+    // an implementation could incorrectly accept this and overwrite the
+    // draft with the literal text '>100yr'.
     expect(parseDurationDays(normalized)).toBeNaN();
-    expect(isDurationRoundTripSafe(String(hundredOneYearsInDays))).toBe(false);
+    expect(isDurationNormalizable(String(hundredOneYearsInDays))).toBe(false);
   });
 });

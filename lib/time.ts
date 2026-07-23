@@ -85,30 +85,22 @@ export function parseDurationDays(str: string): number {
 }
 
 /**
- * Tolerance, in seconds, for the formatDuration/parseDurationDays round-trip
- * check in isDurationRoundTripSafe. This is a time budget for mission
- * launches spanning days, so second-level precision isn't meaningful; 1s of
- * tolerance comfortably absorbs float noise from the day-to-seconds
- * conversion in parseDurationDays while still catching normalizations that
- * would truncate away a real double-digit-second (or larger) remainder.
- */
-export const DURATION_ROUNDTRIP_EPSILON_SECONDS = 1;
-
-/**
- * True if normalizing `input` via parseDurationDays -> formatDuration ->
- * parseDurationDays round-trips back to (within
- * DURATION_ROUNDTRIP_EPSILON_SECONDS of) the original value. Used to decide
- * whether normalizing a user-typed duration is safe, i.e. doesn't silently
- * truncate a meaningful remainder.
+ * True if `input` parses to a finite, positive duration whose normalized form
+ * (via formatDuration) is itself parseable back to a finite number.
+ *
+ * This deliberately does not compare the normalized value against the
+ * original: for a mission-launch time budget spanning hours to days,
+ * sub-minute (or even multi-minute) precision was never meaningful to
+ * preserve, so any remainder formatDuration drops is fine to lose. The only
+ * real failure mode is formatDuration's `>100yr` cutoff, which produces a
+ * non-numeric string that reparses to NaN.
  * @param input - The raw duration string as typed by the user.
  * @returns Whether it is safe to replace `input` with its normalized form.
  */
-export function isDurationRoundTripSafe(input: string): boolean {
+export function isDurationNormalizable(input: string): boolean {
   const seconds = parseDurationDays(input);
   if (!Number.isFinite(seconds) || seconds <= 0) {
     return false;
   }
-  const normalized = formatDuration(seconds, true);
-  const reparsed = parseDurationDays(normalized);
-  return Number.isFinite(reparsed) && Math.abs(reparsed - seconds) <= DURATION_ROUNDTRIP_EPSILON_SECONDS;
+  return Number.isFinite(parseDurationDays(formatDuration(seconds, true)));
 }

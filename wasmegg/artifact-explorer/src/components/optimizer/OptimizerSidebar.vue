@@ -239,7 +239,7 @@ import {
   formatDuration,
   formatEIValue,
   fuelTankSizes,
-  isDurationRoundTripSafe,
+  isDurationNormalizable,
   parseDurationDays,
   parseValueWithUnit,
   spaceshipList,
@@ -331,9 +331,9 @@ export default defineComponent({
     }
 
     function onWaitTimeBlur() {
-      if (!isDurationRoundTripSafe(waitTimeDraft.value)) {
-        // Either invalid, or normalizing would lose precision (e.g. sub-minute
-        // durations) — keep the raw text as typed.
+      if (!isDurationNormalizable(waitTimeDraft.value)) {
+        // Invalid, or exceeds formatDuration's >100yr cutoff — keep the raw
+        // text as typed rather than overwrite it with a non-numeric result.
         return;
       }
       const normalized = formatDuration(parseDurationDays(waitTimeDraft.value), true);
