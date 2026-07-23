@@ -278,13 +278,15 @@ import {
   setTankLevel,
 } from '@/store';
 
-// formatDuration/parseDurationDays round-trips can introduce floating-point noise
-// (measured up to ~5e-7s across the full valid input range) from the
-// `parseFloat(...) * 86400` day-to-seconds conversion in parseDurationDays.
-// This tolerance absorbs that noise without masking genuine precision loss from
-// formatDuration's minute-level output granularity (which differs by much more,
-// generally tens of milliseconds or more, in practice).
-const DURATION_ROUNDTRIP_EPSILON_SECONDS = 1e-6;
+// formatDuration/parseDurationDays round-trips can introduce floating-point
+// noise (e.g. from the `parseFloat(...) * 86400` day-to-seconds conversion in
+// parseDurationDays), which a strict equality check would misread as
+// precision loss and use to needlessly reject a valid normalization. This is
+// a time budget for mission launches spanning days, so second-level
+// precision isn't meaningful here; 1s of tolerance comfortably absorbs the
+// float noise while still catching normalizations that would truncate away
+// a real double-digit-second (or larger) remainder the user typed.
+const DURATION_ROUNDTRIP_EPSILON_SECONDS = 1;
 
 // Compact label + hint per effort level, shown alongside the notched track.
 const effortMeta: Record<EffortLevel, { short: string; label: string; hint: string }> = {

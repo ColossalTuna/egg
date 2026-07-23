@@ -47,7 +47,12 @@ describe('parseDurationDays', () => {
 // the exact numeric behavior the comparison relies on, without requiring
 // component-mounting test infrastructure (not present in this workspace).
 describe('formatDuration/parseDurationDays round-trip (onWaitTimeBlur precision)', () => {
-  const DURATION_ROUNDTRIP_EPSILON_SECONDS = 1e-6;
+  // Kept in sync with DURATION_ROUNDTRIP_EPSILON_SECONDS in OptimizerSidebar.vue.
+  // This is a time budget for mission launches spanning days, so second-level
+  // precision isn't meaningful; 1s of tolerance absorbs float noise from the
+  // day-to-seconds conversion while still catching normalizations that would
+  // truncate away a real double-digit-second (or larger) remainder.
+  const DURATION_ROUNDTRIP_EPSILON_SECONDS = 1;
 
   function roundTripAccepted(input: string): boolean {
     const seconds = parseDurationDays(input);
@@ -69,14 +74,26 @@ describe('formatDuration/parseDurationDays round-trip (onWaitTimeBlur precision)
     expect(roundTripAccepted('295.6')).toBe(true);
   });
 
-  it('rejects "0.00069560" days: genuine ~0.1s precision loss from minute-level formatting', () => {
+  it('accepts "0.00069560" days: sub-second precision loss from minute-level formatting is immaterial here', () => {
     const seconds = parseDurationDays('0.00069560');
     expect(seconds).toBeCloseTo(60.09984, 5);
-    // formatDuration truncates this to whole minutes ("1m" = 60s), a real loss
-    // of ~0.1s that must NOT be masked (this is why Math.round-based comparison
-    // was rejected: Math.round(60.09984) === Math.round(60) would wrongly pass).
+    // formatDuration truncates this to whole minutes ("1m" = 60s), losing ~0.1s.
+    // For this time-budget field, sub-second drift doesn't matter, so the 1s
+    // tolerance accepts it (unlike the tighter float-noise-only tolerance this
+    // replaced).
     expect(formatDuration(seconds, true)).toBe('1m');
-    expect(roundTripAccepted('0.00069560')).toBe(false);
+    expect(roundTripAccepted('0.00069560')).toBe(true);
+  });
+
+  it('rejects "2d1m45s" worth of input: a genuine multi-second remainder beyond the 1s tolerance', () => {
+    // 2 days, 1 minute, 45 seconds expressed as a bare decimal-day input.
+    const input = ((2 * 86400 + 60 + 45) / 86400).toFixed(10);
+    const seconds = parseDurationDays(input);
+    const normalized = formatDuration(seconds, true);
+    // formatDuration drops the 45s remainder entirely (no seconds field in its output).
+    expect(normalized).toBe('2d1m');
+    expect(Math.abs(parseDurationDays(normalized) - seconds)).toBeCloseTo(45, 0);
+    expect(roundTripAccepted(input)).toBe(false);
   });
 
   it('rejects durations exceeding the >100yr cutoff instead of falling through on NaN', () => {
