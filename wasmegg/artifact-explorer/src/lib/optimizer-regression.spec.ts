@@ -7,8 +7,20 @@
 // used elsewhere in pipeline.spec.ts, and tachyon-deflector-4, used in
 // optimizer-perf.spec.ts) through optimizeFull and snapshots the full
 // OptimizerSolution. The snapshot committed alongside the pristine (pre-Phase-1)
-// code is ground truth: any later diff here is a regression, full stop — never
-// "fix" a diff by updating the snapshot to match new output.
+// code is ground truth: a diff here is a regression, full stop — never "fix"
+// one by updating the snapshot to match new output.
+//
+// The single exception is a loot-data refresh on the base branch. Only the two
+// production-scale cases read loot.json; the other seventeen run on hand-built
+// DAGs and fixture launch options, so they cannot move for any reason but a
+// code change. A refresh therefore has an unmistakable signature: exactly the
+// two production-scale cases drift and the seventeen fixture cases stay put.
+// Before re-capturing on that signature, confirm the n=1 path is genuinely
+// untouched by diffing this branch's loot.json, phases.ts, lp.ts, artifacts.ts
+// and missions.ts against the base (they must be identical — the refreshed
+// loot.json arrives via the base, not the branch) and checking that
+// optimizer-core.ts's single-target body is unchanged. Anything short of that
+// signature is a real regression, and no other diff is ever re-captured.
 //
 // jointProbability (added to OptimizerSolution by Phase 1) is deliberately
 // EXCLUDED from the serialized shape below: it did not exist when this

@@ -162,9 +162,15 @@ function recursiveConsumption(
 // share of the total recursive demand for that node -- so the per-target
 // breakdowns sum back to the pooled totals. The root target itself is never
 // scaled: every craft of it rolls for its own legendary, so its full craft
-// count (alpha) must drive its probability. `owned` is the player's real,
-// target-independent stock and is likewise left whole. With a single target
-// every share is 1, so the n=1 breakdown is unchanged.
+// count (alpha) must drive its probability. With a single target every share
+// is 1, so the n=1 breakdown is unchanged.
+//
+// `owned` is scaled by the same share as the rest of the row. The player's
+// stock is a single pool the whole plan draws from, so leaving it whole while
+// scaling `consumed` would let every target claim all of it and make the
+// row's own coverage check (owned + dropped + crafted >= consumed, which
+// drives the green/amber colouring in OptimizerProbabilityBreakdown) read as
+// comfortably covered under every target at once.
 export function computeCraftChainTree(
   solution: OptimizerSolution,
   rootId: string,
@@ -195,10 +201,15 @@ export function computeCraftChainTree(
   }
   const rootCrafts = solution.perTarget.find(t => t.nodeId === rootId)?.expectedCrafts ?? 0;
   const rootConsumption = recursiveConsumption(dag, rootId, consumptionMemo);
+  // An even split is the fallback when nothing demands the node (every target
+  // crafting zero, say): proportional attribution has no signal to go on, but
+  // handing each target the whole pooled figure would reproduce exactly the
+  // "every tree uses everything" display this scaling exists to prevent.
+  const evenShare = solution.perTarget.length > 0 ? 1 / solution.perTarget.length : 1;
   const shareOf = (nodeId: string): number => {
     if (nodeId === rootId) return 1;
     const denom = totalDemand.get(nodeId) ?? 0;
-    if (denom <= 0) return 1;
+    if (denom <= 0) return evenShare;
     return (rootCrafts * (rootConsumption.get(nodeId) ?? 0)) / denom;
   };
 
@@ -213,7 +224,7 @@ export function computeCraftChainTree(
     const share = shareOf(nodeId);
     const dropped = Math.max(0, (solution.finalYieldVector.get(nodeId) ?? 0) - (solution.baseYield.get(nodeId) ?? 0));
     return {
-      owned: ownedCount,
+      owned: ownedCount * share,
       dropped: dropped * share,
       crafted: (solution.craftPrimal.get(nodeId) ?? 0) * share,
       consumed: (consumed.get(nodeId) ?? 0) * share,
