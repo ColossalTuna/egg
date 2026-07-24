@@ -1181,10 +1181,21 @@ function buildJointEvalContext(
   // loosely tied to instance size.
   const MAX_EVAL_CACHE = 200_000;
   const evalCache = new Map<string, number>();
+  const keyPairs: [number, number][] = [];
   const evalScoreAt: EvalFn = multipliers => {
-    let key = '';
+    // Canonical (option-sorted) key: the score depends on the allocation as a
+    // set, but callers hand it over in whatever order they hold it -- the
+    // scans emit a fixed option order while repairAlloc spreads a Map, whose
+    // iteration order follows insertion. Without the sort the same allocation
+    // keys differently depending on who asked, and re-solves the LP.
+    keyPairs.length = 0;
     for (const [idx, k] of multipliers) {
       if (k <= 0) continue;
+      keyPairs.push([idx, k]);
+    }
+    keyPairs.sort((a, b) => a[0] - b[0]);
+    let key = '';
+    for (const [idx, k] of keyPairs) {
       key += idx + ':' + k + ',';
     }
     const cached = evalCache.get(key);

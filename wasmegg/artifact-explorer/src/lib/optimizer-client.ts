@@ -52,16 +52,27 @@ export function createOptimizerClient(): OptimizerClient {
     else entry.reject(new Error(res.error));
   };
 
+  // Set once a worker-level failure has been seen. The worker does not recover
+  // from one, so every later request has to fail fast against this instead of
+  // being posted into the void.
+  let fatalError: Error | null = null;
+
   worker.onerror = e => {
     // A worker-level failure (bundle load, uncaught throw) kills every request
     // in flight; failing them individually keeps callers from hanging.
     const err = new Error(e.message || 'optimizer worker failed');
+    fatalError = err;
     for (const [, entry] of pending) entry.reject(err);
     pending.clear();
   };
 
   return {
     run(input: OptimizerRequestInput): Promise<OptimizerSolution[] | null> {
+      // postMessage to a dead worker is silently dropped, so without this the
+      // caller would wait on a promise nothing can ever settle -- a spinner
+      // that never stops. Surfacing the original failure lets the UI show the
+      // error instead.
+      if (fatalError) return Promise.reject(fatalError);
       const id = nextId++;
       latestId = id;
       const request: OptimizerRequest = { ...input, id, options: optionsToWire(input.options) };
