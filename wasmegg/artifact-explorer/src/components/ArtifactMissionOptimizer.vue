@@ -46,7 +46,7 @@
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, onUnmounted, ref, toRefs, watch, watchEffect } from 'vue';
+import { computed, defineComponent, onUnmounted, PropType, ref, toRefs, watch, watchEffect } from 'vue';
 
 import { getSavedPlayerID, parseDurationDays, requestFirstContact, savePlayerID } from 'lib';
 
@@ -81,10 +81,14 @@ import OptimizerSolutionCard from './optimizer/OptimizerSolutionCard.vue';
 export default defineComponent({
   components: { OptimizerSidebar, OptimizerInventoryPanel, OptimizerSolutionCard },
   props: {
-    artifactId: { type: String, required: true },
+    artifactIds: { type: Array as PropType<string[]>, required: true },
   },
   setup(props) {
-    const { artifactId } = toRefs(props);
+    const { artifactIds } = toRefs(props);
+    // The override modal (and other single-target-only presentation, e.g. the
+    // inventory/craft-chain trees below) only ever reflects the primary
+    // target; Phase 5 owns generalizing that presentation to all targets.
+    const primaryArtifactId = computed(() => artifactIds.value[0]);
 
     const waitTimeDays = ref('30');
     const maxWaitTimeSeconds = computed(() => parseDurationDays(waitTimeDays.value));
@@ -100,7 +104,7 @@ export default defineComponent({
 
     // let the override modal show the prior craft count for this artifact
     watch(
-      artifactId,
+      primaryArtifactId,
       v => {
         currentOptimizerArtifactId.value = v;
       },
@@ -125,7 +129,7 @@ export default defineComponent({
 
     const recipeDag = computed<ReturnType<typeof buildRecipeDag>>(() =>
       buildRecipeDag(
-        [artifactId.value],
+        artifactIds.value,
         effectiveCraftingLevel.value,
         playerInventory.value,
         effectivePreviousCrafts.value
@@ -133,7 +137,7 @@ export default defineComponent({
     );
 
     const playerBaseYield = computed<ReturnType<typeof computeBaseYield>>(() =>
-      computeBaseYield(playerInventory.value, [artifactId.value], recipeDag.value)
+      computeBaseYield(playerInventory.value, artifactIds.value, recipeDag.value)
     );
 
     function runCompute() {
@@ -147,9 +151,7 @@ export default defineComponent({
       lastComputedMaxWaitTimeSeconds.value = maxWaitTimeSeconds.value;
       computedResults.value = optimize(
         {
-          // Eventually, this will be expanded to allow multiple artifacts
-          // so array entry is a placeholder
-          desiredArtifactNodeIds: [artifactId.value],
+          desiredArtifactNodeIds: artifactIds.value,
           includeNotEnoughData: effectiveConfig.value.showNodata,
           fuelTankCapacity: effectiveFuelTankCapacity.value,
           timeBudgetSeconds: maxWaitTimeSeconds.value,
@@ -175,17 +177,17 @@ export default defineComponent({
     });
 
     const inventoryTree = computed(() =>
-      computeInventoryTree(artifactId.value, recipeDag.value, playerInventory.value)
+      computeInventoryTree(primaryArtifactId.value, recipeDag.value, playerInventory.value)
     );
 
     const solutionViews = computed(() =>
       computedResults.value.map(solution => ({
         solution,
-        pCraft: legendaryCraftProbabilityOf(solution, artifactId.value),
+        pCraft: legendaryCraftProbabilityOf(solution, primaryArtifactId.value),
         lambda: lambdaFromDropProbability(solution.dropProbability),
-        craftChainTree: computeCraftChainTree(solution, artifactId.value, playerInventory.value),
-        missionLegendarySources: computeMissionLegendaryRows(solution, artifactId.value),
-        dropDataIsSparse: legendaryDataIsSparse(artifactId.value),
+        craftChainTree: computeCraftChainTree(solution, primaryArtifactId.value, playerInventory.value),
+        missionLegendarySources: computeMissionLegendaryRows(solution, primaryArtifactId.value),
+        dropDataIsSparse: legendaryDataIsSparse(primaryArtifactId.value),
       }))
     );
 
