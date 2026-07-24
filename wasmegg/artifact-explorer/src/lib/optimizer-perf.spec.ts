@@ -52,20 +52,20 @@ describe('optimizer performance', () => {
   });
 });
 
-// Joint (n=2) path latency guard. The joint search has no equivalent of the
-// n=1 dual-cost filter (see optimizer-core.ts's coreSearchJoint comment), so
-// its pair/triple scans run over a bounded candidate pool instead of a
-// dual-filtered survivor set. That pool is intentionally more generous than
-// the n=1 path's, and every eval re-solves a heavier tangent-augmented LP, so
-// this budget is deliberately much looser than the n=1 guard above rather
-// than tightened to match it -- a second real target sharing the same option
-// pool as tachyon-deflector-4 is a realistic worst case, not a pathological
-// one, and should still comfortably finish well under it.
-const JOINT_LOOSE_CAP_MS = 6000;
+// Joint (n=2) path latency guard. The joint search now runs the same kind of
+// dual-cost filter as the n=1 path (in probability space -- see
+// coreSearchJoint), which is what brought this path down from ~3.3s to the
+// budget below. It stays looser than the n=1 guard because every eval
+// re-solves the heavier tangent-augmented LP and the search runs twice (the
+// 3S relaxation and the per-slot floor): a second real target sharing
+// tachyon-deflector-4's option pool is a realistic worst case, not a
+// pathological one.
+const JOINT_LOOSE_CAP_MS = 600;
+const JOINT_STRICT_CAP_MS = 250;
 const SECOND_TARGET = 'puzzle-cube-4';
 
 describe('optimizer performance (joint, n=2)', () => {
-  it(`solves a production-scale 2-target instance under ${JOINT_LOOSE_CAP_MS}ms`, () => {
+  it(`solves a production-scale 2-target instance under ${STRICT ? JOINT_STRICT_CAP_MS : JOINT_LOOSE_CAP_MS}ms`, () => {
     const targets = [TARGET, SECOND_TARGET];
     const dag = buildRecipeDag(targets, 30);
     const baseYield = computeBaseYield(null, targets, dag);
@@ -96,5 +96,8 @@ describe('optimizer performance (joint, n=2)', () => {
     console.log(`[perf-joint] ${options.length} options, median ${median.toFixed(1)}ms, max ${max.toFixed(1)}ms`);
 
     expect(median).toBeLessThan(JOINT_LOOSE_CAP_MS);
+    if (STRICT) {
+      expect(median).toBeLessThan(JOINT_STRICT_CAP_MS);
+    }
   }, 60_000);
 });
