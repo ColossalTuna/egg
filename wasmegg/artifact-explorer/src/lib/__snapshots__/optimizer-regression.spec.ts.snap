@@ -1,0 +1,4811 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > allocates complementary options together 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.9990234375,
+  "choiceHistory": [
+    {
+      "actualFuel": 10,
+      "actualFuelByEgg": [],
+      "actualTime": 10,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 10,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "B",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 0,
+    },
+    {
+      "actualFuel": 10,
+      "actualFuelByEgg": [],
+      "actualTime": 10,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 10,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "C",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 12,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "A",
+      10,
+    ],
+  ],
+  "craftProbability": 0.9990234375,
+  "dropProbability": 0,
+  "expectedCrafts": 10,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "B",
+      10,
+    ],
+    [
+      "C",
+      10,
+    ],
+  ],
+  "fuelByEgg": [],
+  "fuelUsed": 200,
+  "perTarget": [
+    {
+      "bestProbability": 0.9990234375,
+      "craftProbability": 0.9990234375,
+      "dropProbability": 0,
+      "expectedCrafts": 10,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+        {
+          "nodeId": "C",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.5,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "C",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 200,
+  "slots": [
+    {
+      "loadSeconds": 200,
+      "missionCount": 20,
+      "rawLoadSeconds": 200,
+    },
+    {
+      "loadSeconds": 0,
+      "missionCount": 0,
+      "rawLoadSeconds": 0,
+    },
+    {
+      "loadSeconds": 0,
+      "missionCount": 0,
+      "rawLoadSeconds": 0,
+    },
+  ],
+  "timeUnitsUsed": 200,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > falls back to triples when pairs are not enough 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.6513215599,
+  "choiceHistory": [
+    {
+      "actualFuel": 10,
+      "actualFuelByEgg": [],
+      "actualTime": 10,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 10,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "B",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 0,
+    },
+    {
+      "actualFuel": 10,
+      "actualFuelByEgg": [],
+      "actualTime": 10,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 10,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "C",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 12,
+    },
+    {
+      "actualFuel": 10,
+      "actualFuelByEgg": [],
+      "actualTime": 10,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 10,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "D",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 6,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "A",
+      10,
+    ],
+  ],
+  "craftProbability": 0.6513215599,
+  "dropProbability": 0,
+  "expectedCrafts": 10,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "B",
+      10,
+    ],
+    [
+      "C",
+      10,
+    ],
+    [
+      "D",
+      10,
+    ],
+  ],
+  "fuelByEgg": [],
+  "fuelUsed": 300,
+  "perTarget": [
+    {
+      "bestProbability": 0.6513215599,
+      "craftProbability": 0.6513215599,
+      "dropProbability": 0,
+      "expectedCrafts": 10,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+        {
+          "nodeId": "C",
+          "quantity": 1,
+        },
+        {
+          "nodeId": "D",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "C",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "D",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 300,
+  "slots": [
+    {
+      "loadSeconds": 300,
+      "missionCount": 30,
+      "rawLoadSeconds": 300,
+    },
+    {
+      "loadSeconds": 0,
+      "missionCount": 0,
+      "rawLoadSeconds": 0,
+    },
+    {
+      "loadSeconds": 0,
+      "missionCount": 0,
+      "rawLoadSeconds": 0,
+    },
+  ],
+  "timeUnitsUsed": 300,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > handles an empty option list 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0,
+  "choiceHistory": [],
+  "craftPrimal": [],
+  "craftProbability": 0,
+  "dropProbability": 0,
+  "expectedCrafts": 0,
+  "expectedDrops": [],
+  "finalYieldVector": [],
+  "fuelByEgg": [],
+  "fuelUsed": 0,
+  "perTarget": [
+    {
+      "bestProbability": 0,
+      "craftProbability": 0,
+      "dropProbability": 0,
+      "expectedCrafts": 0,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 0,
+  "slots": undefined,
+  "timeUnitsUsed": 0,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > matches the puzzle-cube-4 production-scale instance 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.05110700123518741,
+  "choiceHistory": [
+    {
+      "actualFuel": 10000000,
+      "actualFuelByEgg": [
+        [
+          51,
+          10000000,
+        ],
+      ],
+      "actualTime": 5400,
+      "legendarySupplyVector": [
+        [
+          "gold-meteorite-1",
+          0,
+        ],
+        [
+          "ornate-gusset-1",
+          0,
+        ],
+        [
+          "puzzle-cube-1",
+          0,
+        ],
+        [
+          "puzzle-cube-2",
+          0,
+        ],
+      ],
+      "numShipsLaunched": 14,
+      "ship": "bcr-short",
+      "supplyVector": [
+        [
+          "aurelian-brooch-1",
+          2.82429741841061,
+        ],
+        [
+          "aurelian-brooch-2",
+          0.01119211792929674,
+        ],
+        [
+          "beak-of-midas-1",
+          0.19773918553947828,
+        ],
+        [
+          "demeters-necklace-1",
+          1.928115937655597,
+        ],
+        [
+          "demeters-necklace-2",
+          0.5643134118925117,
+        ],
+        [
+          "gold-meteorite-1",
+          9.152822246028034,
+        ],
+        [
+          "lunar-stone-1",
+          1.296037841181707,
+        ],
+        [
+          "lunar-stone-2",
+          0.02192525310439519,
+        ],
+        [
+          "lunar-totem-1",
+          1.2990624198439882,
+        ],
+        [
+          "lunar-totem-2",
+          0.3042114157249121,
+        ],
+        [
+          "mercurys-lens-1",
+          0.40503462739713625,
+        ],
+        [
+          "neodymium-medallion-1",
+          0.874456297056294,
+        ],
+        [
+          "ornate-gusset-1",
+          3.1715590627216077,
+        ],
+        [
+          "puzzle-cube-1",
+          1.06701721562533,
+        ],
+        [
+          "puzzle-cube-2",
+          1.6548564358676463,
+        ],
+        [
+          "quantum-stone-1",
+          0.020430616956108455,
+        ],
+        [
+          "shell-stone-1",
+          0.9309347133998219,
+        ],
+        [
+          "shell-stone-2",
+          0.1190059900116179,
+        ],
+        [
+          "solar-titanium-1",
+          2.0041070054468366,
+        ],
+        [
+          "soul-stone-1",
+          0.006778822215851653,
+        ],
+        [
+          "tachyon-stone-1",
+          0.5249703517057199,
+        ],
+        [
+          "tachyon-stone-2",
+          0.05601943358932963,
+        ],
+        [
+          "tau-ceti-geode-1",
+          4.946445373206392,
+        ],
+        [
+          "tungsten-ankh-1",
+          2.978868687478311,
+        ],
+        [
+          "vial-martian-dust-1",
+          2.6397981200114673,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 10000,
+    },
+    {
+      "actualFuel": 0,
+      "actualFuelByEgg": [],
+      "actualTime": 2700,
+      "legendarySupplyVector": [
+        [
+          "gold-meteorite-1",
+          0,
+        ],
+        [
+          "ornate-gusset-1",
+          0,
+        ],
+        [
+          "puzzle-cube-1",
+          0,
+        ],
+        [
+          "puzzle-cube-2",
+          0,
+        ],
+      ],
+      "numShipsLaunched": 121,
+      "ship": "chicken-heavy-short",
+      "supplyVector": [
+        [
+          "aurelian-brooch-1",
+          2.199937561700009,
+        ],
+        [
+          "beak-of-midas-1",
+          0.00623900850872509,
+        ],
+        [
+          "demeters-necklace-1",
+          1.6900408500769633,
+        ],
+        [
+          "demeters-necklace-2",
+          0.06323625664310967,
+        ],
+        [
+          "gold-meteorite-1",
+          7.522356648051696,
+        ],
+        [
+          "lunar-stone-1",
+          1.0111750092512346,
+        ],
+        [
+          "lunar-stone-2",
+          0.0007425095134031405,
+        ],
+        [
+          "lunar-totem-1",
+          1.102436178534966,
+        ],
+        [
+          "lunar-totem-2",
+          0.021756975189816046,
+        ],
+        [
+          "mercurys-lens-1",
+          0.035189647295927405,
+        ],
+        [
+          "neodymium-medallion-1",
+          0.13958455628427024,
+        ],
+        [
+          "ornate-gusset-1",
+          0.5076643615924901,
+        ],
+        [
+          "puzzle-cube-1",
+          0.8779379450084919,
+        ],
+        [
+          "puzzle-cube-2",
+          0.42239630480979823,
+        ],
+        [
+          "shell-stone-1",
+          0.6864693311025905,
+        ],
+        [
+          "shell-stone-2",
+          0.01885925949140509,
+        ],
+        [
+          "solar-titanium-1",
+          0.23677856943970668,
+        ],
+        [
+          "tachyon-stone-1",
+          0.08316829773667189,
+        ],
+        [
+          "tachyon-stone-2",
+          0.005286764165237296,
+        ],
+        [
+          "tau-ceti-geode-1",
+          0.9610556170965227,
+        ],
+        [
+          "tungsten-ankh-1",
+          2.2047807487533433,
+        ],
+        [
+          "vial-martian-dust-1",
+          2.2029075997536216,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 10000,
+    },
+    {
+      "actualFuel": 0,
+      "actualFuelByEgg": [],
+      "actualTime": 1200,
+      "legendarySupplyVector": [
+        [
+          "puzzle-cube-1",
+          0,
+        ],
+      ],
+      "numShipsLaunched": 312,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "demeters-necklace-1",
+          0.36004728330580726,
+        ],
+        [
+          "lunar-totem-1",
+          3.229298882470804,
+        ],
+        [
+          "puzzle-cube-1",
+          2.4106538342233885,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 10000,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "gold-meteorite-2",
+      114.83230603374905,
+    ],
+    [
+      "gold-meteorite-3",
+      10.439300548522642,
+    ],
+    [
+      "puzzle-cube-2",
+      291.0975762141598,
+    ],
+    [
+      "puzzle-cube-3",
+      52.196502742613205,
+    ],
+    [
+      "puzzle-cube-4",
+      5.219650274261321,
+    ],
+  ],
+  "craftProbability": 0.05110700123518741,
+  "dropProbability": 0,
+  "expectedCrafts": 5.219650274261321,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "gold-meteorite-1",
+      1038.3446658586477,
+    ],
+    [
+      "ornate-gusset-1",
+      105.82921463079381,
+    ],
+    [
+      "puzzle-cube-1",
+      873.2927286424793,
+    ],
+    [
+      "puzzle-cube-2",
+      74.27794298413264,
+    ],
+  ],
+  "fuelByEgg": [
+    [
+      51,
+      140000000,
+    ],
+  ],
+  "fuelUsed": 140000000,
+  "perTarget": [
+    {
+      "bestProbability": 0.05110700123518741,
+      "craftProbability": 0.05110700123518741,
+      "dropProbability": 0,
+      "expectedCrafts": 5.219650274261321,
+      "nodeId": "puzzle-cube-4",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [],
+      "id": "gold-meteorite-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "gold-meteorite-1",
+          "quantity": 9,
+        },
+      ],
+      "id": "gold-meteorite-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "gold-meteorite-2",
+          "quantity": 11,
+        },
+      ],
+      "id": "gold-meteorite-3",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "ornate-gusset-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "puzzle-cube-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "puzzle-cube-1",
+          "quantity": 3,
+        },
+      ],
+      "id": "puzzle-cube-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "puzzle-cube-2",
+          "quantity": 7,
+        },
+        {
+          "nodeId": "ornate-gusset-1",
+          "quantity": 2,
+        },
+      ],
+      "id": "puzzle-cube-3",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "puzzle-cube-3",
+          "quantity": 10,
+        },
+        {
+          "nodeId": "gold-meteorite-3",
+          "quantity": 2,
+        },
+      ],
+      "id": "puzzle-cube-4",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.010000000000000002,
+    },
+  ],
+  "runningTimeSeconds": 259200,
+  "slots": [
+    {
+      "loadSeconds": 259200,
+      "missionCount": 82,
+      "rawLoadSeconds": 259200,
+    },
+    {
+      "loadSeconds": 258300,
+      "missionCount": 149,
+      "rawLoadSeconds": 258300,
+    },
+    {
+      "loadSeconds": 259200,
+      "missionCount": 216,
+      "rawLoadSeconds": 259200,
+    },
+  ],
+  "timeUnitsUsed": 259200,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > matches the tachyon-deflector-4 production-scale instance 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.03745114752018586,
+  "choiceHistory": [
+    {
+      "actualFuel": 165000000000000,
+      "actualFuelByEgg": [
+        [
+          50,
+          50000000000000,
+        ],
+        [
+          53,
+          40000000000000,
+        ],
+        [
+          54,
+          75000000000000,
+        ],
+      ],
+      "actualTime": 138240,
+      "legendarySupplyVector": [
+        [
+          "beak-of-midas-2",
+          0,
+        ],
+        [
+          "beak-of-midas-3",
+          0,
+        ],
+        [
+          "beak-of-midas-4",
+          0.005304204281309432,
+        ],
+        [
+          "book-of-basan-1",
+          0,
+        ],
+        [
+          "book-of-basan-2",
+          0,
+        ],
+        [
+          "book-of-basan-3",
+          0,
+        ],
+        [
+          "demeters-necklace-3",
+          0,
+        ],
+        [
+          "demeters-necklace-4",
+          0.017649739746057137,
+        ],
+        [
+          "gold-meteorite-2",
+          0,
+        ],
+        [
+          "gold-meteorite-3",
+          0,
+        ],
+        [
+          "mercurys-lens-2",
+          0,
+        ],
+        [
+          "mercurys-lens-3",
+          0,
+        ],
+        [
+          "quantum-metronome-1",
+          0,
+        ],
+        [
+          "quantum-metronome-2",
+          0,
+        ],
+        [
+          "quantum-metronome-3",
+          0,
+        ],
+        [
+          "quantum-metronome-4",
+          0.00023426902242449992,
+        ],
+        [
+          "ship-in-a-bottle-1",
+          0,
+        ],
+        [
+          "ship-in-a-bottle-2",
+          0,
+        ],
+        [
+          "ship-in-a-bottle-3",
+          0,
+        ],
+        [
+          "ship-in-a-bottle-4",
+          0.00003094119164097169,
+        ],
+        [
+          "solar-titanium-2",
+          0,
+        ],
+        [
+          "solar-titanium-3",
+          0,
+        ],
+        [
+          "tachyon-deflector-1",
+          0,
+        ],
+        [
+          "tachyon-deflector-2",
+          0,
+        ],
+        [
+          "tachyon-deflector-3",
+          0,
+        ],
+        [
+          "tau-ceti-geode-2",
+          0,
+        ],
+        [
+          "tau-ceti-geode-3",
+          0,
+        ],
+        [
+          "the-chalice-1",
+          0,
+        ],
+        [
+          "the-chalice-2",
+          0,
+        ],
+        [
+          "the-chalice-3",
+          0,
+        ],
+        [
+          "the-chalice-4",
+          0.0030101359296431027,
+        ],
+        [
+          "titanium-actuator-1",
+          0,
+        ],
+      ],
+      "numShipsLaunched": 15,
+      "ship": "atreggies-extended",
+      "supplyVector": [
+        [
+          "aurelian-brooch-3",
+          3.636562455265747,
+        ],
+        [
+          "aurelian-brooch-4",
+          2.5917712371250556,
+        ],
+        [
+          "beak-of-midas-2",
+          1.9137348038452713,
+        ],
+        [
+          "beak-of-midas-3",
+          4.427543078375547,
+        ],
+        [
+          "beak-of-midas-4",
+          1.6099674448249144,
+        ],
+        [
+          "book-of-basan-1",
+          11.520431127428148,
+        ],
+        [
+          "book-of-basan-2",
+          5.198646195941141,
+        ],
+        [
+          "book-of-basan-3",
+          0.6633128462289166,
+        ],
+        [
+          "carved-rainstick-1",
+          1.5180013829274777,
+        ],
+        [
+          "carved-rainstick-2",
+          2.5257957762060355,
+        ],
+        [
+          "carved-rainstick-3",
+          3.350758668078092,
+        ],
+        [
+          "carved-rainstick-4",
+          0.3966660768372571,
+        ],
+        [
+          "clarity-stone-1",
+          5.206474317426306,
+        ],
+        [
+          "clarity-stone-2",
+          1.3847641915512192,
+        ],
+        [
+          "clarity-stone-3",
+          0.22031896516465613,
+        ],
+        [
+          "demeters-necklace-3",
+          2.4845423274081515,
+        ],
+        [
+          "demeters-necklace-4",
+          3.56633479058121,
+        ],
+        [
+          "dilithium-monocle-1",
+          3.5252316275712965,
+        ],
+        [
+          "dilithium-monocle-2",
+          3.76784593139839,
+        ],
+        [
+          "dilithium-monocle-3",
+          1.6622138569958123,
+        ],
+        [
+          "dilithium-monocle-4",
+          0.01827740391934542,
+        ],
+        [
+          "dilithium-stone-1",
+          1.5850642057241666,
+        ],
+        [
+          "dilithium-stone-2",
+          1.55723481392823,
+        ],
+        [
+          "dilithium-stone-3",
+          0.9595172939781731,
+        ],
+        [
+          "gold-meteorite-2",
+          14.016160905699627,
+        ],
+        [
+          "gold-meteorite-3",
+          3.304209855339367,
+        ],
+        [
+          "interstellar-compass-1",
+          1.6979465131709002,
+        ],
+        [
+          "interstellar-compass-2",
+          2.4309212422943474,
+        ],
+        [
+          "interstellar-compass-3",
+          4.109162636560184,
+        ],
+        [
+          "interstellar-compass-4",
+          0.4194476342254811,
+        ],
+        [
+          "life-stone-1",
+          1.9378468324740568,
+        ],
+        [
+          "life-stone-2",
+          1.1285092423806915,
+        ],
+        [
+          "life-stone-3",
+          1.2580113899088614,
+        ],
+        [
+          "life-stone-4",
+          0.007938625741026452,
+        ],
+        [
+          "light-of-eggendil-1",
+          7.2566155747059184,
+        ],
+        [
+          "light-of-eggendil-2",
+          2.3198909861758374,
+        ],
+        [
+          "light-of-eggendil-3",
+          0.45117561616818036,
+        ],
+        [
+          "lunar-stone-3",
+          1.6618646635472927,
+        ],
+        [
+          "lunar-stone-4",
+          0.1716705715645798,
+        ],
+        [
+          "lunar-totem-3",
+          3.115464166159205,
+        ],
+        [
+          "lunar-totem-4",
+          1.5269831688438285,
+        ],
+        [
+          "mercurys-lens-2",
+          2.472400119774187,
+        ],
+        [
+          "mercurys-lens-3",
+          4.468416392533271,
+        ],
+        [
+          "mercurys-lens-4",
+          0.18778209206905722,
+        ],
+        [
+          "neodymium-medallion-2",
+          1.712135259623403,
+        ],
+        [
+          "neodymium-medallion-3",
+          3.3376838045246635,
+        ],
+        [
+          "neodymium-medallion-4",
+          2.582815972230112,
+        ],
+        [
+          "ornate-gusset-2",
+          1.789267230214111,
+        ],
+        [
+          "ornate-gusset-3",
+          4.477097606873681,
+        ],
+        [
+          "ornate-gusset-4",
+          0.42866368916425623,
+        ],
+        [
+          "phoenix-feather-1",
+          2.7846365249637013,
+        ],
+        [
+          "phoenix-feather-2",
+          3.2675136020531745,
+        ],
+        [
+          "phoenix-feather-3",
+          3.2576522022601733,
+        ],
+        [
+          "phoenix-feather-4",
+          0.07684023935523598,
+        ],
+        [
+          "prophecy-stone-1",
+          5.618292737827171,
+        ],
+        [
+          "prophecy-stone-2",
+          1.0606994108143848,
+        ],
+        [
+          "prophecy-stone-3",
+          0.09665144234592671,
+        ],
+        [
+          "puzzle-cube-3",
+          3.654296178246258,
+        ],
+        [
+          "puzzle-cube-4",
+          1.2751262890565531,
+        ],
+        [
+          "quantum-metronome-1",
+          3.272800125653546,
+        ],
+        [
+          "quantum-metronome-2",
+          3.925924479492114,
+        ],
+        [
+          "quantum-metronome-3",
+          2.4909073725457227,
+        ],
+        [
+          "quantum-metronome-4",
+          0.07078460613407438,
+        ],
+        [
+          "quantum-stone-2",
+          0.9147100283118117,
+        ],
+        [
+          "quantum-stone-3",
+          1.7489994793785033,
+        ],
+        [
+          "quantum-stone-4",
+          0.11176842454765859,
+        ],
+        [
+          "shell-stone-3",
+          1.4887928980184004,
+        ],
+        [
+          "shell-stone-4",
+          0.23766371316453797,
+        ],
+        [
+          "ship-in-a-bottle-1",
+          4.809392744587014,
+        ],
+        [
+          "ship-in-a-bottle-2",
+          3.57543592109389,
+        ],
+        [
+          "ship-in-a-bottle-3",
+          1.1577000466088312,
+        ],
+        [
+          "ship-in-a-bottle-4",
+          0.010732173329182752,
+        ],
+        [
+          "solar-titanium-2",
+          8.554125605829597,
+        ],
+        [
+          "solar-titanium-3",
+          2.4422854999670527,
+        ],
+        [
+          "soul-stone-2",
+          0.7494487035871474,
+        ],
+        [
+          "soul-stone-3",
+          0.8789420107748485,
+        ],
+        [
+          "soul-stone-4",
+          0.09631992957834487,
+        ],
+        [
+          "tachyon-deflector-1",
+          5.129925809306543,
+        ],
+        [
+          "tachyon-deflector-2",
+          1.7399116093765266,
+        ],
+        [
+          "tachyon-deflector-3",
+          0.3148001039254804,
+        ],
+        [
+          "tachyon-stone-3",
+          1.4898979405770065,
+        ],
+        [
+          "tachyon-stone-4",
+          0.09465352539996683,
+        ],
+        [
+          "tau-ceti-geode-2",
+          11.66950578875435,
+        ],
+        [
+          "tau-ceti-geode-3",
+          0.7756868340986914,
+        ],
+        [
+          "terra-stone-1",
+          1.758343719254077,
+        ],
+        [
+          "terra-stone-2",
+          0.7484320644332298,
+        ],
+        [
+          "terra-stone-3",
+          1.7927326436778996,
+        ],
+        [
+          "terra-stone-4",
+          0.017910529789888184,
+        ],
+        [
+          "the-chalice-1",
+          1.978503558290294,
+        ],
+        [
+          "the-chalice-2",
+          2.4379183717754414,
+        ],
+        [
+          "the-chalice-3",
+          4.608739116795312,
+        ],
+        [
+          "the-chalice-4",
+          0.6640377541473623,
+        ],
+        [
+          "titanium-actuator-1",
+          3.607155062696121,
+        ],
+        [
+          "titanium-actuator-2",
+          3.7778797178305337,
+        ],
+        [
+          "titanium-actuator-3",
+          1.7215546423929615,
+        ],
+        [
+          "titanium-actuator-4",
+          0.13621196594402624,
+        ],
+        [
+          "tungsten-ankh-2",
+          1.610723293935001,
+        ],
+        [
+          "tungsten-ankh-3",
+          4.500718996606445,
+        ],
+        [
+          "tungsten-ankh-4",
+          1.104856911456286,
+        ],
+        [
+          "vial-martian-dust-2",
+          1.5460164218732604,
+        ],
+        [
+          "vial-martian-dust-3",
+          3.895663994067244,
+        ],
+        [
+          "vial-martian-dust-4",
+          0.6886846233745135,
+        ],
+      ],
+      "target": "Gilded book of Basan",
+      "targetAfxId": 10,
+    },
+    {
+      "actualFuel": 165000000000000,
+      "actualFuelByEgg": [
+        [
+          50,
+          50000000000000,
+        ],
+        [
+          53,
+          40000000000000,
+        ],
+        [
+          54,
+          75000000000000,
+        ],
+      ],
+      "actualTime": 138240,
+      "legendarySupplyVector": [
+        [
+          "beak-of-midas-2",
+          0,
+        ],
+        [
+          "beak-of-midas-3",
+          0,
+        ],
+        [
+          "beak-of-midas-4",
+          0.0046495567042130394,
+        ],
+        [
+          "book-of-basan-1",
+          0,
+        ],
+        [
+          "book-of-basan-2",
+          0,
+        ],
+        [
+          "book-of-basan-3",
+          0,
+        ],
+        [
+          "demeters-necklace-3",
+          0,
+        ],
+        [
+          "demeters-necklace-4",
+          0.015067360447487367,
+        ],
+        [
+          "gold-meteorite-2",
+          0,
+        ],
+        [
+          "gold-meteorite-3",
+          0,
+        ],
+        [
+          "mercurys-lens-2",
+          0,
+        ],
+        [
+          "mercurys-lens-3",
+          0,
+        ],
+        [
+          "quantum-metronome-1",
+          0,
+        ],
+        [
+          "quantum-metronome-2",
+          0,
+        ],
+        [
+          "quantum-metronome-3",
+          0,
+        ],
+        [
+          "quantum-metronome-4",
+          0.00022723397426605075,
+        ],
+        [
+          "ship-in-a-bottle-1",
+          0,
+        ],
+        [
+          "ship-in-a-bottle-2",
+          0,
+        ],
+        [
+          "ship-in-a-bottle-3",
+          0,
+        ],
+        [
+          "ship-in-a-bottle-4",
+          0.00017479536482003906,
+        ],
+        [
+          "solar-titanium-2",
+          0,
+        ],
+        [
+          "solar-titanium-3",
+          0,
+        ],
+        [
+          "tachyon-deflector-1",
+          0,
+        ],
+        [
+          "tachyon-deflector-2",
+          0,
+        ],
+        [
+          "tachyon-deflector-3",
+          0,
+        ],
+        [
+          "tau-ceti-geode-2",
+          0,
+        ],
+        [
+          "tau-ceti-geode-3",
+          0,
+        ],
+        [
+          "the-chalice-1",
+          0,
+        ],
+        [
+          "the-chalice-2",
+          0,
+        ],
+        [
+          "the-chalice-3",
+          0,
+        ],
+        [
+          "the-chalice-4",
+          0.0027442872276746133,
+        ],
+        [
+          "titanium-actuator-1",
+          0,
+        ],
+      ],
+      "numShipsLaunched": 24,
+      "ship": "atreggies-extended",
+      "supplyVector": [
+        [
+          "aurelian-brooch-3",
+          3.478148087335065,
+        ],
+        [
+          "aurelian-brooch-4",
+          2.453672454124816,
+        ],
+        [
+          "beak-of-midas-2",
+          1.7982247951226338,
+        ],
+        [
+          "beak-of-midas-3",
+          4.2547289341575345,
+        ],
+        [
+          "beak-of-midas-4",
+          1.5114380400623957,
+        ],
+        [
+          "book-of-basan-1",
+          7.094087360757767,
+        ],
+        [
+          "book-of-basan-2",
+          1.109566016804644,
+        ],
+        [
+          "book-of-basan-3",
+          0.12777541168344853,
+        ],
+        [
+          "carved-rainstick-1",
+          1.428095610116201,
+        ],
+        [
+          "carved-rainstick-2",
+          2.411546771203187,
+        ],
+        [
+          "carved-rainstick-3",
+          3.2447613162273488,
+        ],
+        [
+          "carved-rainstick-4",
+          0.35518418131431934,
+        ],
+        [
+          "clarity-stone-1",
+          5.06616397672512,
+        ],
+        [
+          "clarity-stone-2",
+          1.308081112630762,
+        ],
+        [
+          "clarity-stone-3",
+          0.19438992521636542,
+        ],
+        [
+          "demeters-necklace-3",
+          2.3475716676790523,
+        ],
+        [
+          "demeters-necklace-4",
+          3.3994027754836376,
+        ],
+        [
+          "dilithium-monocle-1",
+          3.401377963106104,
+        ],
+        [
+          "dilithium-monocle-2",
+          3.6433646661629657,
+        ],
+        [
+          "dilithium-monocle-3",
+          1.566918088856276,
+        ],
+        [
+          "dilithium-monocle-4",
+          0.015923857735105556,
+        ],
+        [
+          "dilithium-stone-1",
+          1.4941682580181759,
+        ],
+        [
+          "dilithium-stone-2",
+          1.4691900003853922,
+        ],
+        [
+          "dilithium-stone-3",
+          0.8937112207883776,
+        ],
+        [
+          "gold-meteorite-2",
+          13.818342688629295,
+        ],
+        [
+          "gold-meteorite-3",
+          3.1847890265575933,
+        ],
+        [
+          "interstellar-compass-1",
+          1.6090437717779054,
+        ],
+        [
+          "interstellar-compass-2",
+          2.346645252245506,
+        ],
+        [
+          "interstellar-compass-3",
+          3.93273839262254,
+        ],
+        [
+          "interstellar-compass-4",
+          0.3689056174526924,
+        ],
+        [
+          "life-stone-1",
+          1.849527234697315,
+        ],
+        [
+          "life-stone-2",
+          1.0497510429632266,
+        ],
+        [
+          "life-stone-3",
+          1.1737858338395262,
+        ],
+        [
+          "life-stone-4",
+          0.006799539691499519,
+        ],
+        [
+          "light-of-eggendil-1",
+          7.1139091551283595,
+        ],
+        [
+          "light-of-eggendil-2",
+          2.1910249389462257,
+        ],
+        [
+          "light-of-eggendil-3",
+          0.40812969731830917,
+        ],
+        [
+          "lunar-stone-3",
+          1.5742420146422356,
+        ],
+        [
+          "lunar-stone-4",
+          0.15144270408008184,
+        ],
+        [
+          "lunar-totem-3",
+          2.9743354073142663,
+        ],
+        [
+          "lunar-totem-4",
+          1.4295289321077254,
+        ],
+        [
+          "mercurys-lens-2",
+          2.3216495150762406,
+        ],
+        [
+          "mercurys-lens-3",
+          4.294617236409468,
+        ],
+        [
+          "mercurys-lens-4",
+          0.16479706995233281,
+        ],
+        [
+          "neodymium-medallion-2",
+          1.6006710738030256,
+        ],
+        [
+          "neodymium-medallion-3",
+          3.209540050216111,
+        ],
+        [
+          "neodymium-medallion-4",
+          2.452676120545342,
+        ],
+        [
+          "ornate-gusset-2",
+          1.6789269586329572,
+        ],
+        [
+          "ornate-gusset-3",
+          4.306048853268698,
+        ],
+        [
+          "ornate-gusset-4",
+          0.3867871832737824,
+        ],
+        [
+          "phoenix-feather-1",
+          2.6789487203048825,
+        ],
+        [
+          "phoenix-feather-2",
+          3.1444462563571283,
+        ],
+        [
+          "phoenix-feather-3",
+          3.102897398139405,
+        ],
+        [
+          "phoenix-feather-4",
+          0.06678930889773692,
+        ],
+        [
+          "prophecy-stone-1",
+          5.47221360920207,
+        ],
+        [
+          "prophecy-stone-2",
+          0.988817378786961,
+        ],
+        [
+          "prophecy-stone-3",
+          0.08641882836702731,
+        ],
+        [
+          "puzzle-cube-3",
+          3.4926386230786464,
+        ],
+        [
+          "puzzle-cube-4",
+          1.1828926723466502,
+        ],
+        [
+          "quantum-metronome-1",
+          3.156437218383783,
+        ],
+        [
+          "quantum-metronome-2",
+          3.768500667837632,
+        ],
+        [
+          "quantum-metronome-3",
+          2.341541227592761,
+        ],
+        [
+          "quantum-metronome-4",
+          0.060688950665517556,
+        ],
+        [
+          "quantum-stone-2",
+          0.8480896305703475,
+        ],
+        [
+          "quantum-stone-3",
+          1.6586506963138326,
+        ],
+        [
+          "quantum-stone-4",
+          0.09702890701160367,
+        ],
+        [
+          "shell-stone-3",
+          1.3994116907492327,
+        ],
+        [
+          "shell-stone-4",
+          0.20739470035897634,
+        ],
+        [
+          "ship-in-a-bottle-1",
+          6.525390641315769,
+        ],
+        [
+          "ship-in-a-bottle-2",
+          16.370704605731504,
+        ],
+        [
+          "ship-in-a-bottle-3",
+          4.861566002203264,
+        ],
+        [
+          "ship-in-a-bottle-4",
+          0.04583134465581424,
+        ],
+        [
+          "solar-titanium-2",
+          8.42092401603372,
+        ],
+        [
+          "solar-titanium-3",
+          2.33603517360093,
+        ],
+        [
+          "soul-stone-2",
+          0.6933432940951669,
+        ],
+        [
+          "soul-stone-3",
+          0.8093374981897448,
+        ],
+        [
+          "soul-stone-4",
+          0.08437372259863284,
+        ],
+        [
+          "tachyon-deflector-1",
+          4.9954068130459675,
+        ],
+        [
+          "tachyon-deflector-2",
+          1.6460829095832719,
+        ],
+        [
+          "tachyon-deflector-3",
+          0.2784839752312862,
+        ],
+        [
+          "tachyon-stone-3",
+          1.4006702173759369,
+        ],
+        [
+          "tachyon-stone-4",
+          0.08294040060710853,
+        ],
+        [
+          "tau-ceti-geode-2",
+          11.486904633123132,
+        ],
+        [
+          "tau-ceti-geode-3",
+          0.7160666915217719,
+        ],
+        [
+          "terra-stone-1",
+          1.6669185170698202,
+        ],
+        [
+          "terra-stone-2",
+          0.684935637047323,
+        ],
+        [
+          "terra-stone-3",
+          1.6989235483683696,
+        ],
+        [
+          "terra-stone-4",
+          0.015714103297321508,
+        ],
+        [
+          "the-chalice-1",
+          1.87155145066464,
+        ],
+        [
+          "the-chalice-2",
+          2.314884934457705,
+        ],
+        [
+          "the-chalice-3",
+          4.408374059834349,
+        ],
+        [
+          "the-chalice-4",
+          0.6052813892988312,
+        ],
+        [
+          "titanium-actuator-1",
+          3.4944564948727748,
+        ],
+        [
+          "titanium-actuator-2",
+          3.6611763138381277,
+        ],
+        [
+          "titanium-actuator-3",
+          1.6075055725674892,
+        ],
+        [
+          "titanium-actuator-4",
+          0.11931531602615865,
+        ],
+        [
+          "tungsten-ankh-2",
+          1.5024885173836098,
+        ],
+        [
+          "tungsten-ankh-3",
+          4.316938604496986,
+        ],
+        [
+          "tungsten-ankh-4",
+          1.024510592283213,
+        ],
+        [
+          "vial-martian-dust-2",
+          1.4422015960571781,
+        ],
+        [
+          "vial-martian-dust-3",
+          3.7630820115282106,
+        ],
+        [
+          "vial-martian-dust-4",
+          0.6277251141417243,
+        ],
+      ],
+      "target": "Eggquisite ship in a bottle",
+      "targetAfxId": 25,
+    },
+    {
+      "actualFuel": 165000000000000,
+      "actualFuelByEgg": [
+        [
+          50,
+          50000000000000,
+        ],
+        [
+          53,
+          40000000000000,
+        ],
+        [
+          54,
+          75000000000000,
+        ],
+      ],
+      "actualTime": 138240,
+      "legendarySupplyVector": [
+        [
+          "beak-of-midas-2",
+          0,
+        ],
+        [
+          "beak-of-midas-3",
+          0,
+        ],
+        [
+          "beak-of-midas-4",
+          0.004225040665592206,
+        ],
+        [
+          "book-of-basan-1",
+          0,
+        ],
+        [
+          "book-of-basan-2",
+          0,
+        ],
+        [
+          "book-of-basan-3",
+          0,
+        ],
+        [
+          "demeters-necklace-3",
+          0,
+        ],
+        [
+          "demeters-necklace-4",
+          0.016900162662368823,
+        ],
+        [
+          "gold-meteorite-2",
+          0,
+        ],
+        [
+          "gold-meteorite-3",
+          0,
+        ],
+        [
+          "mercurys-lens-2",
+          0,
+        ],
+        [
+          "mercurys-lens-3",
+          0,
+        ],
+        [
+          "quantum-metronome-1",
+          0,
+        ],
+        [
+          "quantum-metronome-2",
+          0,
+        ],
+        [
+          "quantum-metronome-3",
+          0,
+        ],
+        [
+          "quantum-metronome-4",
+          0.0002366022772731635,
+        ],
+        [
+          "ship-in-a-bottle-1",
+          0,
+        ],
+        [
+          "ship-in-a-bottle-2",
+          0,
+        ],
+        [
+          "ship-in-a-bottle-3",
+          0,
+        ],
+        [
+          "ship-in-a-bottle-4",
+          0,
+        ],
+        [
+          "solar-titanium-2",
+          0,
+        ],
+        [
+          "solar-titanium-3",
+          0,
+        ],
+        [
+          "tachyon-deflector-1",
+          0,
+        ],
+        [
+          "tachyon-deflector-2",
+          0,
+        ],
+        [
+          "tachyon-deflector-3",
+          0,
+        ],
+        [
+          "tau-ceti-geode-2",
+          0,
+        ],
+        [
+          "tau-ceti-geode-3",
+          0,
+        ],
+        [
+          "the-chalice-1",
+          0,
+        ],
+        [
+          "the-chalice-2",
+          0,
+        ],
+        [
+          "the-chalice-3",
+          0,
+        ],
+        [
+          "the-chalice-4",
+          0.0025012240740305857,
+        ],
+        [
+          "titanium-actuator-1",
+          0,
+        ],
+      ],
+      "numShipsLaunched": 15,
+      "ship": "atreggies-extended",
+      "supplyVector": [
+        [
+          "aurelian-brooch-3",
+          3.5980784311436467,
+        ],
+        [
+          "aurelian-brooch-4",
+          2.5628758674229073,
+        ],
+        [
+          "beak-of-midas-2",
+          1.8948800380301172,
+        ],
+        [
+          "beak-of-midas-3",
+          4.450995840388076,
+        ],
+        [
+          "beak-of-midas-4",
+          1.583511441138634,
+        ],
+        [
+          "book-of-basan-1",
+          7.417109588935103,
+        ],
+        [
+          "book-of-basan-2",
+          1.1509348776326416,
+        ],
+        [
+          "book-of-basan-3",
+          0.13574210650414636,
+        ],
+        [
+          "carved-rainstick-1",
+          1.4847468905397503,
+        ],
+        [
+          "carved-rainstick-2",
+          2.5499303428235325,
+        ],
+        [
+          "carved-rainstick-3",
+          3.382635157523769,
+        ],
+        [
+          "carved-rainstick-4",
+          0.369099552546135,
+        ],
+        [
+          "clarity-stone-1",
+          5.3231794350676065,
+        ],
+        [
+          "clarity-stone-2",
+          1.3554944464979537,
+        ],
+        [
+          "clarity-stone-3",
+          0.20188934316465795,
+        ],
+        [
+          "demeters-necklace-3",
+          2.4537684172746537,
+        ],
+        [
+          "demeters-necklace-4",
+          3.5576194417299356,
+        ],
+        [
+          "dilithium-monocle-1",
+          3.539299665403928,
+        ],
+        [
+          "dilithium-monocle-2",
+          3.802435198057011,
+        ],
+        [
+          "dilithium-monocle-3",
+          1.6469208514478417,
+        ],
+        [
+          "dilithium-monocle-4",
+          0.014973544118858775,
+        ],
+        [
+          "dilithium-stone-1",
+          1.558769603000926,
+        ],
+        [
+          "dilithium-stone-2",
+          1.5334193590073728,
+        ],
+        [
+          "dilithium-stone-3",
+          0.9276837288627494,
+        ],
+        [
+          "gold-meteorite-2",
+          14.525047602124832,
+        ],
+        [
+          "gold-meteorite-3",
+          3.3175357309483244,
+        ],
+        [
+          "interstellar-compass-1",
+          1.679335363434265,
+        ],
+        [
+          "interstellar-compass-2",
+          2.448901170427892,
+        ],
+        [
+          "interstellar-compass-3",
+          4.098424646925738,
+        ],
+        [
+          "interstellar-compass-4",
+          0.39076556107929195,
+        ],
+        [
+          "life-stone-1",
+          1.9134702169587228,
+        ],
+        [
+          "life-stone-2",
+          1.0958403473533191,
+        ],
+        [
+          "life-stone-3",
+          1.2247547881418686,
+        ],
+        [
+          "life-stone-4",
+          0.006996667342220693,
+        ],
+        [
+          "light-of-eggendil-1",
+          7.4314747271981165,
+        ],
+        [
+          "light-of-eggendil-2",
+          2.2965969045146237,
+        ],
+        [
+          "light-of-eggendil-3",
+          0.4223012646072721,
+        ],
+        [
+          "lunar-stone-3",
+          1.639281977924451,
+        ],
+        [
+          "lunar-stone-4",
+          0.15842212479704534,
+        ],
+        [
+          "lunar-totem-3",
+          3.1222712515473154,
+        ],
+        [
+          "lunar-totem-4",
+          1.4868425107098842,
+        ],
+        [
+          "mercurys-lens-2",
+          2.445115533991521,
+        ],
+        [
+          "mercurys-lens-3",
+          4.470971832654996,
+        ],
+        [
+          "mercurys-lens-4",
+          0.16930582955161086,
+        ],
+        [
+          "neodymium-medallion-2",
+          1.6796733666875125,
+        ],
+        [
+          "neodymium-medallion-3",
+          3.352654268960727,
+        ],
+        [
+          "neodymium-medallion-4",
+          2.57088654452487,
+        ],
+        [
+          "ornate-gusset-2",
+          1.7687034235928716,
+        ],
+        [
+          "ornate-gusset-3",
+          4.488818404426458,
+        ],
+        [
+          "ornate-gusset-4",
+          0.39948604501307416,
+        ],
+        [
+          "phoenix-feather-1",
+          2.7990387404668486,
+        ],
+        [
+          "phoenix-feather-2",
+          3.3006693686112807,
+        ],
+        [
+          "phoenix-feather-3",
+          3.2071776687630558,
+        ],
+        [
+          "phoenix-feather-4",
+          0.0686822610598669,
+        ],
+        [
+          "prophecy-stone-1",
+          5.728310134409912,
+        ],
+        [
+          "prophecy-stone-2",
+          1.0204318215538295,
+        ],
+        [
+          "prophecy-stone-3",
+          0.0872724399884726,
+        ],
+        [
+          "puzzle-cube-3",
+          3.6603724307171386,
+        ],
+        [
+          "puzzle-cube-4",
+          1.2381059166451398,
+        ],
+        [
+          "quantum-metronome-1",
+          3.2935713002930855,
+        ],
+        [
+          "quantum-metronome-2",
+          3.915362084966959,
+        ],
+        [
+          "quantum-metronome-3",
+          2.4471773538363304,
+        ],
+        [
+          "quantum-metronome-4",
+          0.06364601258648099,
+        ],
+        [
+          "quantum-stone-2",
+          0.8905371713308626,
+        ],
+        [
+          "quantum-stone-3",
+          1.7264192166116246,
+        ],
+        [
+          "quantum-stone-4",
+          0.10153617727551188,
+        ],
+        [
+          "shell-stone-3",
+          1.47126056073518,
+        ],
+        [
+          "shell-stone-4",
+          0.22024291981599048,
+        ],
+        [
+          "ship-in-a-bottle-1",
+          4.875865929720029,
+        ],
+        [
+          "ship-in-a-bottle-2",
+          3.6145053892514696,
+        ],
+        [
+          "ship-in-a-bottle-3",
+          1.1109152924481522,
+        ],
+        [
+          "ship-in-a-bottle-4",
+          0.009734493693524443,
+        ],
+        [
+          "solar-titanium-2",
+          8.8059987568539,
+        ],
+        [
+          "solar-titanium-3",
+          2.4455887385460677,
+        ],
+        [
+          "soul-stone-2",
+          0.7215017443818497,
+        ],
+        [
+          "soul-stone-3",
+          0.8408844934288231,
+        ],
+        [
+          "soul-stone-4",
+          0.0886244530014621,
+        ],
+        [
+          "tachyon-deflector-1",
+          6.070437027346906,
+        ],
+        [
+          "tachyon-deflector-2",
+          7.983738242679006,
+        ],
+        [
+          "tachyon-deflector-3",
+          1.3652289401914781,
+        ],
+        [
+          "tachyon-stone-3",
+          1.4581122341838573,
+        ],
+        [
+          "tachyon-stone-4",
+          0.08598802762613257,
+        ],
+        [
+          "tau-ceti-geode-2",
+          12.057691454069634,
+        ],
+        [
+          "tau-ceti-geode-3",
+          0.7392807155026617,
+        ],
+        [
+          "terra-stone-1",
+          1.7411561584532103,
+        ],
+        [
+          "terra-stone-2",
+          0.7254901827701687,
+        ],
+        [
+          "terra-stone-3",
+          1.7741452759701541,
+        ],
+        [
+          "terra-stone-4",
+          0.01591995322795143,
+        ],
+        [
+          "the-chalice-1",
+          1.95119138002113,
+        ],
+        [
+          "the-chalice-2",
+          2.4336910240317597,
+        ],
+        [
+          "the-chalice-3",
+          4.601643890360433,
+        ],
+        [
+          "the-chalice-4",
+          0.6287874520160944,
+        ],
+        [
+          "titanium-actuator-1",
+          3.650739337999588,
+        ],
+        [
+          "titanium-actuator-2",
+          3.8119668897985868,
+        ],
+        [
+          "titanium-actuator-3",
+          1.6756849282991935,
+        ],
+        [
+          "titanium-actuator-4",
+          0.1266160186664672,
+        ],
+        [
+          "tungsten-ankh-2",
+          1.567253484657435,
+        ],
+        [
+          "tungsten-ankh-3",
+          4.523666539836262,
+        ],
+        [
+          "tungsten-ankh-4",
+          1.0733631310123686,
+        ],
+        [
+          "vial-martian-dust-2",
+          1.491777358207296,
+        ],
+        [
+          "vial-martian-dust-3",
+          3.9405095270085644,
+        ],
+        [
+          "vial-martian-dust-4",
+          0.6526166813700345,
+        ],
+      ],
+      "target": "Eggceptional tachyon deflector",
+      "targetAfxId": 26,
+    },
+    {
+      "actualFuel": 90000000000000,
+      "actualFuelByEgg": [
+        [
+          50,
+          40000000000000,
+        ],
+        [
+          53,
+          20000000000000,
+        ],
+        [
+          54,
+          30000000000000,
+        ],
+      ],
+      "actualTime": 103680,
+      "legendarySupplyVector": [
+        [
+          "beak-of-midas-2",
+          0,
+        ],
+        [
+          "beak-of-midas-3",
+          0,
+        ],
+        [
+          "beak-of-midas-4",
+          0,
+        ],
+        [
+          "book-of-basan-1",
+          0,
+        ],
+        [
+          "book-of-basan-2",
+          0,
+        ],
+        [
+          "demeters-necklace-3",
+          0,
+        ],
+        [
+          "demeters-necklace-4",
+          0,
+        ],
+        [
+          "gold-meteorite-2",
+          0,
+        ],
+        [
+          "gold-meteorite-3",
+          0,
+        ],
+        [
+          "mercurys-lens-2",
+          0,
+        ],
+        [
+          "mercurys-lens-3",
+          0,
+        ],
+        [
+          "quantum-metronome-1",
+          0,
+        ],
+        [
+          "quantum-metronome-2",
+          0,
+        ],
+        [
+          "quantum-metronome-3",
+          0,
+        ],
+        [
+          "ship-in-a-bottle-1",
+          0,
+        ],
+        [
+          "ship-in-a-bottle-2",
+          0,
+        ],
+        [
+          "ship-in-a-bottle-3",
+          0,
+        ],
+        [
+          "solar-titanium-2",
+          0,
+        ],
+        [
+          "solar-titanium-3",
+          0,
+        ],
+        [
+          "tachyon-deflector-1",
+          0,
+        ],
+        [
+          "tachyon-deflector-2",
+          0,
+        ],
+        [
+          "tau-ceti-geode-2",
+          0,
+        ],
+        [
+          "the-chalice-1",
+          0,
+        ],
+        [
+          "the-chalice-2",
+          0,
+        ],
+        [
+          "the-chalice-3",
+          0,
+        ],
+        [
+          "the-chalice-4",
+          0,
+        ],
+        [
+          "titanium-actuator-1",
+          0,
+        ],
+      ],
+      "numShipsLaunched": 3,
+      "ship": "atreggies-standard",
+      "supplyVector": [
+        [
+          "aurelian-brooch-3",
+          4.130457438493319,
+        ],
+        [
+          "aurelian-brooch-4",
+          1.4666691480254588,
+        ],
+        [
+          "beak-of-midas-2",
+          2.3863103435441246,
+        ],
+        [
+          "beak-of-midas-3",
+          4.859828041835709,
+        ],
+        [
+          "beak-of-midas-4",
+          0.658019131276287,
+        ],
+        [
+          "book-of-basan-1",
+          3.7023486060966984,
+        ],
+        [
+          "book-of-basan-2",
+          0.5787397178695053,
+        ],
+        [
+          "carved-rainstick-1",
+          1.585588268135631,
+        ],
+        [
+          "carved-rainstick-2",
+          2.861986823984814,
+        ],
+        [
+          "carved-rainstick-3",
+          2.5765809357204006,
+        ],
+        [
+          "carved-rainstick-4",
+          0.007927941340678157,
+        ],
+        [
+          "clarity-stone-1",
+          3.8054118435255146,
+        ],
+        [
+          "clarity-stone-2",
+          0.47567648044068933,
+        ],
+        [
+          "demeters-necklace-3",
+          2.941266237391596,
+        ],
+        [
+          "demeters-necklace-4",
+          2.3625265195220906,
+        ],
+        [
+          "dilithium-monocle-1",
+          4.0987456731306064,
+        ],
+        [
+          "dilithium-monocle-2",
+          4.019466259723824,
+        ],
+        [
+          "dilithium-monocle-3",
+          0.8403617821118844,
+        ],
+        [
+          "dilithium-stone-1",
+          0.8958573714966316,
+        ],
+        [
+          "dilithium-stone-2",
+          0.9909926675847693,
+        ],
+        [
+          "dilithium-stone-3",
+          0.2299102988796665,
+        ],
+        [
+          "gold-meteorite-2",
+          13.953176759593555,
+        ],
+        [
+          "gold-meteorite-3",
+          0.6342353072542525,
+        ],
+        [
+          "interstellar-compass-1",
+          1.9582015111475044,
+        ],
+        [
+          "interstellar-compass-2",
+          2.8778427066661703,
+        ],
+        [
+          "interstellar-compass-3",
+          2.8382029999627796,
+        ],
+        [
+          "interstellar-compass-4",
+          0.03963970670339078,
+        ],
+        [
+          "life-stone-1",
+          1.4349573826627462,
+        ],
+        [
+          "life-stone-2",
+          0.7927941340678155,
+        ],
+        [
+          "life-stone-3",
+          0.562883835188149,
+        ],
+        [
+          "light-of-eggendil-1",
+          3.3931588938102504,
+        ],
+        [
+          "light-of-eggendil-2",
+          1.1812632597610453,
+        ],
+        [
+          "lunar-stone-3",
+          0.9830647262440912,
+        ],
+        [
+          "lunar-stone-4",
+          0.007927941340678157,
+        ],
+        [
+          "lunar-totem-3",
+          3.765772136822124,
+        ],
+        [
+          "lunar-totem-4",
+          0.5391000111661145,
+        ],
+        [
+          "mercurys-lens-2",
+          2.8699147653254924,
+        ],
+        [
+          "mercurys-lens-3",
+          3.7737000781628023,
+        ],
+        [
+          "neodymium-medallion-2",
+          1.878922097740723,
+        ],
+        [
+          "neodymium-medallion-3",
+          4.542710388208583,
+        ],
+        [
+          "neodymium-medallion-4",
+          1.6807235642237688,
+        ],
+        [
+          "ornate-gusset-2",
+          2.100904455279711,
+        ],
+        [
+          "ornate-gusset-3",
+          4.162169203856032,
+        ],
+        [
+          "phoenix-feather-1",
+          3.1632485949305837,
+        ],
+        [
+          "phoenix-feather-2",
+          3.8212677262068713,
+        ],
+        [
+          "phoenix-feather-3",
+          2.1246882793017456,
+        ],
+        [
+          "prophecy-stone-1",
+          4.304872147988238,
+        ],
+        [
+          "prophecy-stone-2",
+          0.3409014776491607,
+        ],
+        [
+          "puzzle-cube-3",
+          4.074961849108572,
+        ],
+        [
+          "puzzle-cube-4",
+          0.4915323631220456,
+        ],
+        [
+          "quantum-metronome-1",
+          5.081810399374698,
+        ],
+        [
+          "quantum-metronome-2",
+          14.896601779134253,
+        ],
+        [
+          "quantum-metronome-3",
+          4.146313321174675,
+        ],
+        [
+          "quantum-stone-2",
+          0.6025235418915398,
+        ],
+        [
+          "quantum-stone-3",
+          0.9354970782000223,
+        ],
+        [
+          "shell-stone-3",
+          1.0227044329474821,
+        ],
+        [
+          "shell-stone-4",
+          0.015855882681356313,
+        ],
+        [
+          "ship-in-a-bottle-1",
+          5.597126586518778,
+        ],
+        [
+          "ship-in-a-bottle-2",
+          2.647932407786504,
+        ],
+        [
+          "ship-in-a-bottle-3",
+          0.31711765362712624,
+        ],
+        [
+          "solar-titanium-2",
+          8.689023709383257,
+        ],
+        [
+          "solar-titanium-3",
+          0.19027059217627573,
+        ],
+        [
+          "soul-stone-2",
+          0.459820597759333,
+        ],
+        [
+          "soul-stone-3",
+          0.26955000558305725,
+        ],
+        [
+          "tachyon-deflector-1",
+          5.882532474783192,
+        ],
+        [
+          "tachyon-deflector-2",
+          1.1099117876949418,
+        ],
+        [
+          "tachyon-stone-3",
+          0.9117132541779879,
+        ],
+        [
+          "tau-ceti-geode-2",
+          8.4194737038002,
+        ],
+        [
+          "terra-stone-1",
+          1.1495514943983325,
+        ],
+        [
+          "terra-stone-2",
+          0.39639706703390776,
+        ],
+        [
+          "terra-stone-3",
+          0.9989206089254475,
+        ],
+        [
+          "the-chalice-1",
+          1.9502735698068263,
+        ],
+        [
+          "the-chalice-2",
+          2.758923586555998,
+        ],
+        [
+          "the-chalice-3",
+          3.987754494361112,
+        ],
+        [
+          "the-chalice-4",
+          0.015855882681356313,
+        ],
+        [
+          "titanium-actuator-1",
+          4.582350094911973,
+        ],
+        [
+          "titanium-actuator-2",
+          3.520005955261101,
+        ],
+        [
+          "titanium-actuator-3",
+          0.7531544273644247,
+        ],
+        [
+          "tungsten-ankh-2",
+          1.6965794469051252,
+        ],
+        [
+          "tungsten-ankh-3",
+          4.518926564186549,
+        ],
+        [
+          "tungsten-ankh-4",
+          0.3012617709457699,
+        ],
+        [
+          "vial-martian-dust-2",
+          1.6014441508169874,
+        ],
+        [
+          "vial-martian-dust-3",
+          3.7182044887780545,
+        ],
+        [
+          "vial-martian-dust-4",
+          0.08720735474745972,
+        ],
+      ],
+      "target": "Reggference quantum metronome",
+      "targetAfxId": 24,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "book-of-basan-2",
+      62.63454482525716,
+    ],
+    [
+      "book-of-basan-3",
+      18.624406448578387,
+    ],
+    [
+      "gold-meteorite-3",
+      72.87435294756824,
+    ],
+    [
+      "quantum-metronome-3",
+      31.704453052599828,
+    ],
+    [
+      "quantum-metronome-4",
+      19.379072597120096,
+    ],
+    [
+      "ship-in-a-bottle-2",
+      24.596450096321764,
+    ],
+    [
+      "ship-in-a-bottle-3",
+      50.40287662024815,
+    ],
+    [
+      "ship-in-a-bottle-4",
+      16.83842030998855,
+    ],
+    [
+      "solar-titanium-3",
+      21.25486034009652,
+    ],
+    [
+      "tachyon-deflector-2",
+      39.83019396509221,
+    ],
+    [
+      "tachyon-deflector-3",
+      22.85206669390085,
+    ],
+    [
+      "tachyon-deflector-4",
+      4.561343146767174,
+    ],
+    [
+      "tau-ceti-geode-3",
+      37.60617654793758,
+    ],
+    [
+      "the-chalice-4",
+      21.906520262067296,
+    ],
+  ],
+  "craftProbability": 0.03745114752018586,
+  "dropProbability": 0,
+  "expectedCrafts": 4.561343146767174,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "beak-of-midas-2",
+      107.4455487417064,
+    ],
+    [
+      "beak-of-midas-3",
+      249.87106232674233,
+    ],
+    [
+      "beak-of-midas-4",
+      86.15075364477958,
+    ],
+    [
+      "book-of-basan-1",
+      465.4282532219252,
+    ],
+    [
+      "book-of-basan-2",
+      123.6095196605267,
+    ],
+    [
+      "book-of-basan-3",
+      15.052434171398712,
+    ],
+    [
+      "demeters-necklace-3",
+      139.2401799067141,
+    ],
+    [
+      "demeters-necklace-4",
+      195.53255965484075,
+    ],
+    [
+      "gold-meteorite-2",
+      801.6178824232506,
+    ],
+    [
+      "gold-meteorite-3",
+      177.6638263534604,
+    ],
+    [
+      "mercurys-lens-2",
+      138.0920674642919,
+    ],
+    [
+      "mercurys-lens-3",
+      248.4827372861396,
+    ],
+    [
+      "quantum-metronome-1",
+      189.49549582853436,
+    ],
+    [
+      "quantum-metronome-2",
+      252.753119832392,
+    ],
+    [
+      "quantum-metronome-3",
+      142.70720032148108,
+    ],
+    [
+      "quantum-metronome-4",
+      3.4729940967807518,
+    ],
+    [
+      "ship-in-a-bottle-1",
+      318.67963526574044,
+    ],
+    [
+      "ship-in-a-bottle-2",
+      508.689827416096,
+    ],
+    [
+      "ship-in-a-bottle-3",
+      151.65816709961445,
+    ],
+    [
+      "ship-in-a-bottle-4",
+      1.4069522770801497,
+    ],
+    [
+      "solar-titanium-2",
+      488.5711129532115,
+    ],
+    [
+      "solar-titanium-3",
+      129.95376952064794,
+    ],
+    [
+      "tachyon-deflector-1",
+      305.5428034872545,
+    ],
+    [
+      "tachyon-deflector-2",
+      188.69047297391634,
+    ],
+    [
+      "tachyon-deflector-3",
+      31.884051067305247,
+    ],
+    [
+      "tau-ceti-geode-2",
+      656.8520909487155,
+    ],
+    [
+      "tau-ceti-geode-3",
+      39.91011384054282,
+    ],
+    [
+      "the-chalice-1",
+      109.71347960004319,
+    ],
+    [
+      "the-chalice-2",
+      136.90815012376092,
+    ],
+    [
+      "the-chalice-3",
+      255.9199860264439,
+    ],
+    [
+      "the-chalice-4",
+      33.96669908366787,
+    ],
+    [
+      "titanium-actuator-1",
+      206.48242217211816,
+    ],
+  ],
+  "fuelByEgg": [
+    [
+      50,
+      2820000000000000,
+    ],
+    [
+      53,
+      2220000000000000,
+    ],
+    [
+      54,
+      4140000000000000,
+    ],
+  ],
+  "fuelUsed": 9180000000000000,
+  "perTarget": [
+    {
+      "bestProbability": 0.03745114752018586,
+      "craftProbability": 0.03745114752018586,
+      "dropProbability": 0,
+      "expectedCrafts": 4.561343146767174,
+      "nodeId": "tachyon-deflector-4",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [],
+      "id": "beak-of-midas-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "beak-of-midas-1",
+          "quantity": 4,
+        },
+      ],
+      "id": "beak-of-midas-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "beak-of-midas-2",
+          "quantity": 5,
+        },
+        {
+          "nodeId": "tau-ceti-geode-2",
+          "quantity": 1,
+        },
+      ],
+      "id": "beak-of-midas-3",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "beak-of-midas-3",
+          "quantity": 6,
+        },
+        {
+          "nodeId": "gold-meteorite-3",
+          "quantity": 3,
+        },
+      ],
+      "id": "beak-of-midas-4",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "book-of-basan-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "book-of-basan-1",
+          "quantity": 6,
+        },
+        {
+          "nodeId": "gold-meteorite-3",
+          "quantity": 4,
+        },
+      ],
+      "id": "book-of-basan-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "book-of-basan-2",
+          "quantity": 10,
+        },
+        {
+          "nodeId": "the-chalice-4",
+          "quantity": 3,
+        },
+      ],
+      "id": "book-of-basan-3",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "demeters-necklace-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "demeters-necklace-1",
+          "quantity": 3,
+        },
+      ],
+      "id": "demeters-necklace-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "demeters-necklace-2",
+          "quantity": 5,
+        },
+        {
+          "nodeId": "the-chalice-1",
+          "quantity": 2,
+        },
+      ],
+      "id": "demeters-necklace-3",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "demeters-necklace-3",
+          "quantity": 6,
+        },
+        {
+          "nodeId": "gold-meteorite-3",
+          "quantity": 1,
+        },
+      ],
+      "id": "demeters-necklace-4",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "gold-meteorite-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "gold-meteorite-1",
+          "quantity": 9,
+        },
+      ],
+      "id": "gold-meteorite-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "gold-meteorite-2",
+          "quantity": 11,
+        },
+      ],
+      "id": "gold-meteorite-3",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "mercurys-lens-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "mercurys-lens-1",
+          "quantity": 6,
+        },
+      ],
+      "id": "mercurys-lens-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "mercurys-lens-2",
+          "quantity": 8,
+        },
+        {
+          "nodeId": "tau-ceti-geode-2",
+          "quantity": 2,
+        },
+      ],
+      "id": "mercurys-lens-3",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "quantum-metronome-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "quantum-metronome-1",
+          "quantity": 5,
+        },
+        {
+          "nodeId": "titanium-actuator-1",
+          "quantity": 2,
+        },
+      ],
+      "id": "quantum-metronome-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "quantum-metronome-2",
+          "quantity": 7,
+        },
+        {
+          "nodeId": "mercurys-lens-3",
+          "quantity": 4,
+        },
+      ],
+      "id": "quantum-metronome-3",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "quantum-metronome-3",
+          "quantity": 9,
+        },
+        {
+          "nodeId": "tau-ceti-geode-3",
+          "quantity": 4,
+        },
+      ],
+      "id": "quantum-metronome-4",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "ship-in-a-bottle-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "ship-in-a-bottle-1",
+          "quantity": 6,
+        },
+        {
+          "nodeId": "demeters-necklace-4",
+          "quantity": 2,
+        },
+      ],
+      "id": "ship-in-a-bottle-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "ship-in-a-bottle-2",
+          "quantity": 9,
+        },
+        {
+          "nodeId": "solar-titanium-3",
+          "quantity": 3,
+        },
+      ],
+      "id": "ship-in-a-bottle-3",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "ship-in-a-bottle-3",
+          "quantity": 12,
+        },
+        {
+          "nodeId": "book-of-basan-3",
+          "quantity": 2,
+        },
+      ],
+      "id": "ship-in-a-bottle-4",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "solar-titanium-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "solar-titanium-1",
+          "quantity": 10,
+        },
+      ],
+      "id": "solar-titanium-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "solar-titanium-2",
+          "quantity": 12,
+        },
+      ],
+      "id": "solar-titanium-3",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "tachyon-deflector-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "tachyon-deflector-1",
+          "quantity": 6,
+        },
+        {
+          "nodeId": "ship-in-a-bottle-2",
+          "quantity": 2,
+        },
+      ],
+      "id": "tachyon-deflector-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "tachyon-deflector-2",
+          "quantity": 10,
+        },
+        {
+          "nodeId": "quantum-metronome-4",
+          "quantity": 1,
+        },
+      ],
+      "id": "tachyon-deflector-3",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "tachyon-deflector-3",
+          "quantity": 12,
+        },
+        {
+          "nodeId": "ship-in-a-bottle-4",
+          "quantity": 4,
+        },
+      ],
+      "id": "tachyon-deflector-4",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.008333333333333333,
+    },
+    {
+      "children": [],
+      "id": "tau-ceti-geode-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "tau-ceti-geode-1",
+          "quantity": 12,
+        },
+      ],
+      "id": "tau-ceti-geode-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "tau-ceti-geode-2",
+          "quantity": 14,
+        },
+      ],
+      "id": "tau-ceti-geode-3",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "the-chalice-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "the-chalice-1",
+          "quantity": 4,
+        },
+        {
+          "nodeId": "gold-meteorite-2",
+          "quantity": 1,
+        },
+      ],
+      "id": "the-chalice-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "the-chalice-2",
+          "quantity": 6,
+        },
+        {
+          "nodeId": "tau-ceti-geode-2",
+          "quantity": 4,
+        },
+      ],
+      "id": "the-chalice-3",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "the-chalice-3",
+          "quantity": 8,
+        },
+        {
+          "nodeId": "beak-of-midas-4",
+          "quantity": 2,
+        },
+      ],
+      "id": "the-chalice-4",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "titanium-actuator-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 2592000,
+  "slots": [
+    {
+      "loadSeconds": 2592000,
+      "missionCount": 19,
+      "rawLoadSeconds": 2592000,
+    },
+    {
+      "loadSeconds": 2592000,
+      "missionCount": 19,
+      "rawLoadSeconds": 2592000,
+    },
+    {
+      "loadSeconds": 2592000,
+      "missionCount": 19,
+      "rawLoadSeconds": 2592000,
+    },
+  ],
+  "timeUnitsUsed": 2592000,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > never exceeds either budget 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.9936373145588641,
+  "choiceHistory": [
+    {
+      "actualFuel": 0,
+      "actualFuelByEgg": [],
+      "actualTime": 3,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 48,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "B",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 10000,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "A",
+      48,
+    ],
+  ],
+  "craftProbability": 0.9936373145588641,
+  "dropProbability": 0,
+  "expectedCrafts": 48,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "B",
+      48,
+    ],
+  ],
+  "fuelByEgg": [],
+  "fuelUsed": 0,
+  "perTarget": [
+    {
+      "bestProbability": 0.9936373145588641,
+      "craftProbability": 0.9936373145588641,
+      "dropProbability": 0,
+      "expectedCrafts": 48,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 48,
+  "slots": [
+    {
+      "loadSeconds": 48,
+      "missionCount": 16,
+      "rawLoadSeconds": 48,
+    },
+    {
+      "loadSeconds": 48,
+      "missionCount": 16,
+      "rawLoadSeconds": 48,
+    },
+    {
+      "loadSeconds": 48,
+      "missionCount": 16,
+      "rawLoadSeconds": 48,
+    },
+  ],
+  "timeUnitsUsed": 48,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > pairs a zero-fuel option with a fueled one 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.6513215599,
+  "choiceHistory": [
+    {
+      "actualFuel": 0,
+      "actualFuelByEgg": [],
+      "actualTime": 10,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 50,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "B",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 0,
+    },
+    {
+      "actualFuel": 10,
+      "actualFuelByEgg": [],
+      "actualTime": 10,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 10,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "C",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 12,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "A",
+      10,
+    ],
+  ],
+  "craftProbability": 0.6513215599,
+  "dropProbability": 0,
+  "expectedCrafts": 10,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "B",
+      50,
+    ],
+    [
+      "C",
+      10,
+    ],
+  ],
+  "fuelByEgg": [],
+  "fuelUsed": 100,
+  "perTarget": [
+    {
+      "bestProbability": 0.6513215599,
+      "craftProbability": 0.6513215599,
+      "dropProbability": 0,
+      "expectedCrafts": 10,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+        {
+          "nodeId": "C",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "C",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 200,
+  "slots": [
+    {
+      "loadSeconds": 200,
+      "missionCount": 20,
+      "rawLoadSeconds": 200,
+    },
+    {
+      "loadSeconds": 200,
+      "missionCount": 20,
+      "rawLoadSeconds": 200,
+    },
+    {
+      "loadSeconds": 200,
+      "missionCount": 20,
+      "rawLoadSeconds": 200,
+    },
+  ],
+  "timeUnitsUsed": 200,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > prunes an option dominated on cost alone 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.6513215599,
+  "choiceHistory": [
+    {
+      "actualFuel": 10,
+      "actualFuelByEgg": [],
+      "actualTime": 10,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 10,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "B",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 12,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "A",
+      10,
+    ],
+  ],
+  "craftProbability": 0.6513215599,
+  "dropProbability": 0,
+  "expectedCrafts": 10,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "B",
+      10,
+    ],
+  ],
+  "fuelByEgg": [],
+  "fuelUsed": 100,
+  "perTarget": [
+    {
+      "bestProbability": 0.6513215599,
+      "craftProbability": 0.6513215599,
+      "dropProbability": 0,
+      "expectedCrafts": 10,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 100,
+  "slots": [
+    {
+      "loadSeconds": 100,
+      "missionCount": 10,
+      "rawLoadSeconds": 100,
+    },
+    {
+      "loadSeconds": 0,
+      "missionCount": 0,
+      "rawLoadSeconds": 0,
+    },
+    {
+      "loadSeconds": 0,
+      "missionCount": 0,
+      "rawLoadSeconds": 0,
+    },
+  ],
+  "timeUnitsUsed": 100,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > prunes an option dominated on yield 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.8784233454094307,
+  "choiceHistory": [
+    {
+      "actualFuel": 10,
+      "actualFuelByEgg": [],
+      "actualTime": 10,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 10,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "B",
+          2,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 12,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "A",
+      20,
+    ],
+  ],
+  "craftProbability": 0.8784233454094307,
+  "dropProbability": 0,
+  "expectedCrafts": 20,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "B",
+      20,
+    ],
+  ],
+  "fuelByEgg": [],
+  "fuelUsed": 100,
+  "perTarget": [
+    {
+      "bestProbability": 0.8784233454094307,
+      "craftProbability": 0.8784233454094307,
+      "dropProbability": 0,
+      "expectedCrafts": 20,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 100,
+  "slots": [
+    {
+      "loadSeconds": 100,
+      "missionCount": 10,
+      "rawLoadSeconds": 100,
+    },
+    {
+      "loadSeconds": 0,
+      "missionCount": 0,
+      "rawLoadSeconds": 0,
+    },
+    {
+      "loadSeconds": 0,
+      "missionCount": 0,
+      "rawLoadSeconds": 0,
+    },
+  ],
+  "timeUnitsUsed": 100,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > reaches the brute-force optimum on a tight-fuel mix 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.7228762386536056,
+  "choiceHistory": [
+    {
+      "actualFuel": 1,
+      "actualFuelByEgg": [],
+      "actualTime": 3,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 6,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "B",
+          2.43,
+        ],
+        [
+          "C",
+          2.03,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 12,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "A",
+      12.18,
+    ],
+  ],
+  "craftProbability": 0.7228762386536056,
+  "dropProbability": 0,
+  "expectedCrafts": 12.18,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "B",
+      14.580000000000002,
+    ],
+    [
+      "C",
+      12.18,
+    ],
+  ],
+  "fuelByEgg": [],
+  "fuelUsed": 6,
+  "perTarget": [
+    {
+      "bestProbability": 0.7228762386536056,
+      "craftProbability": 0.7228762386536056,
+      "dropProbability": 0,
+      "expectedCrafts": 12.18,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+        {
+          "nodeId": "C",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "C",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 6,
+  "slots": [
+    {
+      "loadSeconds": 6,
+      "missionCount": 2,
+      "rawLoadSeconds": 6,
+    },
+    {
+      "loadSeconds": 6,
+      "missionCount": 2,
+      "rawLoadSeconds": 6,
+    },
+    {
+      "loadSeconds": 6,
+      "missionCount": 2,
+      "rawLoadSeconds": 6,
+    },
+  ],
+  "timeUnitsUsed": 6,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > respects a tighter time budget exactly 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.794108867905351,
+  "choiceHistory": [
+    {
+      "actualFuel": 0,
+      "actualFuelByEgg": [],
+      "actualTime": 10,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 15,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "B",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 10000,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "A",
+      15,
+    ],
+  ],
+  "craftProbability": 0.794108867905351,
+  "dropProbability": 0,
+  "expectedCrafts": 15,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "B",
+      15,
+    ],
+  ],
+  "fuelByEgg": [],
+  "fuelUsed": 0,
+  "perTarget": [
+    {
+      "bestProbability": 0.794108867905351,
+      "craftProbability": 0.794108867905351,
+      "dropProbability": 0,
+      "expectedCrafts": 15,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 50,
+  "slots": [
+    {
+      "loadSeconds": 50,
+      "missionCount": 5,
+      "rawLoadSeconds": 50,
+    },
+    {
+      "loadSeconds": 50,
+      "missionCount": 5,
+      "rawLoadSeconds": 50,
+    },
+    {
+      "loadSeconds": 50,
+      "missionCount": 5,
+      "rawLoadSeconds": 50,
+    },
+  ],
+  "timeUnitsUsed": 50,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > respects the fuel budget 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.2709999999999999,
+  "choiceHistory": [
+    {
+      "actualFuel": 100,
+      "actualFuelByEgg": [],
+      "actualTime": 1,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 3,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "B",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 10000,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "A",
+      3,
+    ],
+  ],
+  "craftProbability": 0.2709999999999999,
+  "dropProbability": 0,
+  "expectedCrafts": 3,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "B",
+      3,
+    ],
+  ],
+  "fuelByEgg": [],
+  "fuelUsed": 300,
+  "perTarget": [
+    {
+      "bestProbability": 0.2709999999999999,
+      "craftProbability": 0.2709999999999999,
+      "dropProbability": 0,
+      "expectedCrafts": 3,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 3,
+  "slots": [
+    {
+      "loadSeconds": 3,
+      "missionCount": 3,
+      "rawLoadSeconds": 3,
+    },
+    {
+      "loadSeconds": 0,
+      "missionCount": 0,
+      "rawLoadSeconds": 0,
+    },
+    {
+      "loadSeconds": 0,
+      "missionCount": 0,
+      "rawLoadSeconds": 0,
+    },
+  ],
+  "timeUnitsUsed": 3,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > snapshots base_yield and keeps it out of the dropped column 1`] = `
+{
+  "baseYield": [
+    [
+      "puzzle-cube-1",
+      5,
+    ],
+  ],
+  "bestProbability": 0.8784233454094307,
+  "choiceHistory": [
+    {
+      "actualFuel": 0,
+      "actualFuelByEgg": [],
+      "actualTime": 10,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 15,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "puzzle-cube-1",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 10000,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "puzzle-cube-2",
+      20,
+    ],
+  ],
+  "craftProbability": 0.8784233454094307,
+  "dropProbability": 0,
+  "expectedCrafts": 20,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "puzzle-cube-1",
+      20,
+    ],
+  ],
+  "fuelByEgg": [],
+  "fuelUsed": 0,
+  "perTarget": [
+    {
+      "bestProbability": 0.8784233454094307,
+      "craftProbability": 0.8784233454094307,
+      "dropProbability": 0,
+      "expectedCrafts": 20,
+      "nodeId": "puzzle-cube-2",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [],
+      "id": "puzzle-cube-1",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [
+        {
+          "nodeId": "puzzle-cube-1",
+          "quantity": 1,
+        },
+      ],
+      "id": "puzzle-cube-2",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+  ],
+  "runningTimeSeconds": 50,
+  "slots": [
+    {
+      "loadSeconds": 50,
+      "missionCount": 5,
+      "rawLoadSeconds": 50,
+    },
+    {
+      "loadSeconds": 50,
+      "missionCount": 5,
+      "rawLoadSeconds": 50,
+    },
+    {
+      "loadSeconds": 50,
+      "missionCount": 5,
+      "rawLoadSeconds": 50,
+    },
+  ],
+  "timeUnitsUsed": 50,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > treats a NaN fuel budget as zero 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.9999704873345694,
+  "choiceHistory": [
+    {
+      "actualFuel": 0,
+      "actualFuelByEgg": [],
+      "actualTime": 3,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 99,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "B",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 10000,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "A",
+      99,
+    ],
+  ],
+  "craftProbability": 0.9999704873345694,
+  "dropProbability": 0,
+  "expectedCrafts": 99,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "B",
+      99,
+    ],
+  ],
+  "fuelByEgg": [],
+  "fuelUsed": 0,
+  "perTarget": [
+    {
+      "bestProbability": 0.9999704873345694,
+      "craftProbability": 0.9999704873345694,
+      "dropProbability": 0,
+      "expectedCrafts": 99,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 99,
+  "slots": [
+    {
+      "loadSeconds": 99,
+      "missionCount": 33,
+      "rawLoadSeconds": 99,
+    },
+    {
+      "loadSeconds": 99,
+      "missionCount": 33,
+      "rawLoadSeconds": 99,
+    },
+    {
+      "loadSeconds": 99,
+      "missionCount": 33,
+      "rawLoadSeconds": 99,
+    },
+  ],
+  "timeUnitsUsed": 99,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > treats a NaN or negative time budget as zero (-5) 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0,
+  "choiceHistory": [],
+  "craftPrimal": [],
+  "craftProbability": 0,
+  "dropProbability": 0,
+  "expectedCrafts": 0,
+  "expectedDrops": [],
+  "finalYieldVector": [],
+  "fuelByEgg": [],
+  "fuelUsed": 0,
+  "perTarget": [
+    {
+      "bestProbability": 0,
+      "craftProbability": 0,
+      "dropProbability": 0,
+      "expectedCrafts": 0,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 0,
+  "slots": undefined,
+  "timeUnitsUsed": 0,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > treats a NaN or negative time budget as zero (Infinity) 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0,
+  "choiceHistory": [],
+  "craftPrimal": [],
+  "craftProbability": 0,
+  "dropProbability": 0,
+  "expectedCrafts": 0,
+  "expectedDrops": [],
+  "finalYieldVector": [],
+  "fuelByEgg": [],
+  "fuelUsed": 0,
+  "perTarget": [
+    {
+      "bestProbability": 0,
+      "craftProbability": 0,
+      "dropProbability": 0,
+      "expectedCrafts": 0,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 0,
+  "slots": undefined,
+  "timeUnitsUsed": 0,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > treats a NaN or negative time budget as zero (NaN) 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0,
+  "choiceHistory": [],
+  "craftPrimal": [],
+  "craftProbability": 0,
+  "dropProbability": 0,
+  "expectedCrafts": 0,
+  "expectedDrops": [],
+  "finalYieldVector": [],
+  "fuelByEgg": [],
+  "fuelUsed": 0,
+  "perTarget": [
+    {
+      "bestProbability": 0,
+      "craftProbability": 0,
+      "dropProbability": 0,
+      "expectedCrafts": 0,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 0,
+  "slots": undefined,
+  "timeUnitsUsed": 0,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > uses the full time budget for a zero-fuel option 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.9576088417247838,
+  "choiceHistory": [
+    {
+      "actualFuel": 0,
+      "actualFuelByEgg": [],
+      "actualTime": 10,
+      "legendarySupplyVector": [],
+      "numShipsLaunched": 30,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "B",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 10000,
+    },
+  ],
+  "craftPrimal": [
+    [
+      "A",
+      30,
+    ],
+  ],
+  "craftProbability": 0.9576088417247838,
+  "dropProbability": 0,
+  "expectedCrafts": 30,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "B",
+      30,
+    ],
+  ],
+  "fuelByEgg": [],
+  "fuelUsed": 0,
+  "perTarget": [
+    {
+      "bestProbability": 0.9576088417247838,
+      "craftProbability": 0.9576088417247838,
+      "dropProbability": 0,
+      "expectedCrafts": 30,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0.1,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 100,
+  "slots": [
+    {
+      "loadSeconds": 100,
+      "missionCount": 10,
+      "rawLoadSeconds": 100,
+    },
+    {
+      "loadSeconds": 100,
+      "missionCount": 10,
+      "rawLoadSeconds": 100,
+    },
+    {
+      "loadSeconds": 100,
+      "missionCount": 10,
+      "rawLoadSeconds": 100,
+    },
+  ],
+  "timeUnitsUsed": 100,
+}
+`;
+
+exports[`optimizeFull regression snapshot (n=1, must match pristine main byte-for-byte) > values direct legendary drops when crafting is impossible 1`] = `
+{
+  "baseYield": [],
+  "bestProbability": 0.6321205588285577,
+  "choiceHistory": [
+    {
+      "actualFuel": 10,
+      "actualFuelByEgg": [],
+      "actualTime": 10,
+      "legendarySupplyVector": [
+        [
+          "A",
+          0.1,
+        ],
+      ],
+      "numShipsLaunched": 10,
+      "ship": "chicken-one-short",
+      "supplyVector": [
+        [
+          "B",
+          1,
+        ],
+      ],
+      "target": "",
+      "targetAfxId": 10000,
+    },
+  ],
+  "craftPrimal": [],
+  "craftProbability": 0,
+  "dropProbability": 0.6321205588285577,
+  "expectedCrafts": 0,
+  "expectedDrops": [],
+  "finalYieldVector": [
+    [
+      "B",
+      10,
+    ],
+  ],
+  "fuelByEgg": [],
+  "fuelUsed": 100,
+  "perTarget": [
+    {
+      "bestProbability": 0.6321205588285577,
+      "craftProbability": 0,
+      "dropProbability": 0.6321205588285577,
+      "expectedCrafts": 0,
+      "nodeId": "A",
+    },
+  ],
+  "recipeDag": [
+    {
+      "children": [
+        {
+          "nodeId": "B",
+          "quantity": 1,
+        },
+      ],
+      "id": "A",
+      "isLeaf": false,
+      "legendaryCraftProbability": 0,
+    },
+    {
+      "children": [],
+      "id": "B",
+      "isLeaf": true,
+      "legendaryCraftProbability": 0,
+    },
+  ],
+  "runningTimeSeconds": 100,
+  "slots": [
+    {
+      "loadSeconds": 100,
+      "missionCount": 10,
+      "rawLoadSeconds": 100,
+    },
+    {
+      "loadSeconds": 0,
+      "missionCount": 0,
+      "rawLoadSeconds": 0,
+    },
+    {
+      "loadSeconds": 0,
+      "missionCount": 0,
+      "rawLoadSeconds": 0,
+    },
+  ],
+  "timeUnitsUsed": 100,
+}
+`;
