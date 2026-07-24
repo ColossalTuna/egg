@@ -2,7 +2,7 @@
   <spoiler-alert class="my-4" />
   <mission-selector :key="route.path" v-model="selectedMissionId" class="my-4" />
   <artifact-selector :key="route.path" v-model="selectedArtifactId" class="my-4" />
-  <tank-artifact-selector :key="route.path" v-model="selectedTankArtifactIdsPrimary" class="my-4" />
+  <tank-artifact-multi-selector :key="route.path" v-model="selectedTankArtifactIds" class="my-4" />
   <router-view name="mission" />
   <div class="my-4 text-xs text-red-900">
     <p class="font-medium">Artifact notes:</p>
@@ -18,14 +18,14 @@
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, ref, PropType, toRefs, watch } from 'vue';
+import { defineComponent, ref, PropType, toRefs, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { parseTankIds, serializeTankIds } from '@/lib';
 import SpoilerAlert from '@/components/SpoilerAlert.vue';
 import ArtifactGrid from '@/components/ArtifactGrid.vue';
 import ArtifactSelector from '@/components/ArtifactSelector.vue';
-import TankArtifactSelector from '@/components/TankArtifactSelector.vue';
+import TankArtifactMultiSelector from '@/components/TankArtifactMultiSelector.vue';
 import MissionSelector from '@/components/MissionSelector.vue';
 
 export default defineComponent({
@@ -33,7 +33,7 @@ export default defineComponent({
     SpoilerAlert,
     ArtifactGrid,
     ArtifactSelector,
-    TankArtifactSelector,
+    TankArtifactMultiSelector,
     MissionSelector,
   },
   props: {
@@ -81,10 +81,6 @@ export default defineComponent({
       }
     });
 
-    // Array-shaped underneath so a future multi-select picker (Phase 4) has
-    // something correct to plug into; for now the only writer is the
-    // single-select TankArtifactSelector below, adapted through
-    // selectedTankArtifactIdsPrimary.
     const selectedTankArtifactIds = ref<string[]>(parseTankIds(tankPlannerArtifactId.value));
     watch(tankPlannerArtifactId, current => {
       selectedTankArtifactIds.value = parseTankIds(current);
@@ -102,22 +98,11 @@ export default defineComponent({
       { deep: true }
     );
 
-    // Temporary adapter for TankArtifactSelector.vue, which is still a
-    // single-select dropdown until Phase 4 replaces it with a real
-    // multi-select picker; selecting a new artifact through it collapses the
-    // list down to just that one target.
-    const selectedTankArtifactIdsPrimary = computed<string | null>({
-      get: () => selectedTankArtifactIds.value[0] ?? null,
-      set: value => {
-        selectedTankArtifactIds.value = value === null ? [] : [value];
-      },
-    });
-
     return {
       route,
       selectedMissionId,
       selectedArtifactId,
-      selectedTankArtifactIdsPrimary,
+      selectedTankArtifactIds,
     };
   },
 });
