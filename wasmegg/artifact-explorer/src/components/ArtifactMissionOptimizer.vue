@@ -5,6 +5,8 @@
       <optimizer-sidebar
         :player-id="playerId"
         :pending-compute="pendingCompute"
+        :auto-compute-active="autoComputeActive"
+        :multi-target="multiTarget"
         :wait-time-days="waitTimeDays"
         :time-budget-invalid="!timeBudgetValid"
         @submit-player-id="submitPlayerId"
@@ -187,11 +189,20 @@ export default defineComponent({
       pendingCompute.value = false;
     }
 
-    // Recompute on any relevant change while auto-compute is on; otherwise
-    // just flag that a manual recompute is due. Note that with auto-compute
-    // off this effect only tracks autoCompute itself.
+    // Auto-compute is only safe to keep real-time for a single target: every
+    // single-target plan solves in well under 100ms, but the multi-target
+    // joint search runs in seconds, so auto-running it on every input change
+    // would repeatedly freeze the UI. For n>=2 we therefore force the
+    // on-demand path (the "Compute" button) regardless of the user's
+    // auto-compute preference, which stays honored for n=1.
+    const multiTarget = computed(() => artifactIds.value.length > 1);
+    const autoComputeActive = computed(() => autoCompute.value && !multiTarget.value);
+
+    // Recompute on any relevant change while auto-compute is active; otherwise
+    // just flag that a manual recompute is due. Note that when auto-compute is
+    // inactive this effect only tracks autoComputeActive itself.
     watchEffect(() => {
-      if (autoCompute.value) {
+      if (autoComputeActive.value) {
         runCompute();
       } else {
         pendingCompute.value = true;
@@ -272,6 +283,8 @@ export default defineComponent({
       lastComputedMaxWaitTimeSeconds,
       timeBudgetValid,
       pendingCompute,
+      autoComputeActive,
+      multiTarget,
       playerId,
       runCompute,
       submitPlayerId,

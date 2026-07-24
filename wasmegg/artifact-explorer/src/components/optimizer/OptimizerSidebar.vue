@@ -201,17 +201,24 @@
     <!-- Compute -->
     <section>
       <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Compute</h3>
-      <label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none mb-2">
+      <label
+        class="flex items-center gap-2 text-sm mb-2 select-none"
+        :class="multiTarget ? 'text-gray-400 cursor-not-allowed' : 'text-gray-600 cursor-pointer'"
+      >
         <input
           type="checkbox"
           class="h-4 w-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
           :checked="autoCompute"
+          :disabled="multiTarget"
           @change="setAutoCompute(($event.target as HTMLInputElement).checked)"
         />
         Recompute automatically
       </label>
+      <p v-if="multiTarget" class="text-xs text-gray-500 mb-2">
+        Multi-artifact plans are computed on demand — the joint optimization is too heavy to run in real time.
+      </p>
       <button
-        v-if="!autoCompute"
+        v-if="!autoComputeActive"
         type="button"
         class="w-full flex items-center justify-center px-3 py-2 border shadow-sm text-sm font-medium rounded-md focus:outline-none"
         :class="
@@ -305,6 +312,11 @@ export default defineComponent({
   props: {
     playerId: { type: String, default: '' },
     pendingCompute: { type: Boolean, required: true },
+    // Whether real-time auto-compute is actually in effect (auto-compute on AND
+    // a single target); the manual Compute button shows whenever it is not.
+    autoComputeActive: { type: Boolean, required: true },
+    // True for n>=2 targets, whose joint search is too slow to auto-run.
+    multiTarget: { type: Boolean, required: true },
     waitTimeDays: { type: String, required: true },
     timeBudgetInvalid: { type: Boolean, default: false },
   },
