@@ -126,8 +126,45 @@ export interface CraftChainMetrics {
   consumed: number;
 }
 
+// Units of each descendant node consumed to craft one unit of `nodeId`, summed
+// over every recipe path. Memoized across the (acyclic) DAG, so there is no
+// self term. Used to attribute shared components to each target below.
+function recursiveConsumption(
+  dag: RecipeDAG,
+  nodeId: string,
+  memo: Map<string, Map<string, number>>
+): Map<string, number> {
+  const cached = memo.get(nodeId);
+  if (cached) return cached;
+  const out = new Map<string, number>();
+  memo.set(nodeId, out);
+  const node = dag.get(nodeId);
+  if (node && !node.isLeaf) {
+    for (const child of node.children) {
+      out.set(child.nodeId, (out.get(child.nodeId) ?? 0) + child.quantity);
+      for (const [x, m] of recursiveConsumption(dag, child.nodeId, memo)) {
+        out.set(x, (out.get(x) ?? 0) + child.quantity * m);
+      }
+    }
+  }
+  return out;
+}
+
 // Craft-chain breakdown tree for the probability display; consumed[B] is the
 // LP-implied number of B eaten by the chosen recipes.
+//
+// For a multi-target solution the LP crafts a shared recursive component ONCE
+// and splits it across the targets that consume it; craftPrimal/finalYieldVector
+// are therefore solution-wide pooled totals. Rendering those pooled numbers
+// under every target's tree would show each artifact "using" the whole pool
+// (identical crafted rates for shared components). We instead attribute each
+// node's pooled crafted/dropped/consumed to this target in proportion to its
+// share of the total recursive demand for that node -- so the per-target
+// breakdowns sum back to the pooled totals. The root target itself is never
+// scaled: every craft of it rolls for its own legendary, so its full craft
+// count (alpha) must drive its probability. `owned` is the player's real,
+// target-independent stock and is likewise left whole. With a single target
+// every share is 1, so the n=1 breakdown is unchanged.
 export function computeCraftChainTree(
   solution: OptimizerSolution,
   rootId: string,
@@ -146,6 +183,25 @@ export function computeCraftChainTree(
     }
   }
 
+  // Total recursive demand for each node across every target, and this target's
+  // slice of it (see the doc comment). demand_T(X) = crafts_T * (X consumed per
+  // craft of T).
+  const consumptionMemo = new Map<string, Map<string, number>>();
+  const totalDemand = new Map<string, number>();
+  for (const target of solution.perTarget) {
+    for (const [x, m] of recursiveConsumption(dag, target.nodeId, consumptionMemo)) {
+      totalDemand.set(x, (totalDemand.get(x) ?? 0) + target.expectedCrafts * m);
+    }
+  }
+  const rootCrafts = solution.perTarget.find(t => t.nodeId === rootId)?.expectedCrafts ?? 0;
+  const rootConsumption = recursiveConsumption(dag, rootId, consumptionMemo);
+  const shareOf = (nodeId: string): number => {
+    if (nodeId === rootId) return 1;
+    const denom = totalDemand.get(nodeId) ?? 0;
+    if (denom <= 0) return 1;
+    return (rootCrafts * (rootConsumption.get(nodeId) ?? 0)) / denom;
+  };
+
   const canonical = computeCanonicalOccurrence(rootId, dag);
   const metricsFor = (nodeId: string): CraftChainMetrics => {
     const props = getArtifactTierPropsFromId(nodeId);
@@ -154,11 +210,13 @@ export function computeCraftChainTree(
       const it = playerInventory.getItem({ name: props.afx_id, level: props.afx_level });
       ownedCount = it.haveRarity[0] + it.haveRarity[1] + it.haveRarity[2] + it.haveRarity[3];
     }
+    const share = shareOf(nodeId);
+    const dropped = Math.max(0, (solution.finalYieldVector.get(nodeId) ?? 0) - (solution.baseYield.get(nodeId) ?? 0));
     return {
       owned: ownedCount,
-      dropped: Math.max(0, (solution.finalYieldVector.get(nodeId) ?? 0) - (solution.baseYield.get(nodeId) ?? 0)),
-      crafted: solution.craftPrimal.get(nodeId) ?? 0,
-      consumed: consumed.get(nodeId) ?? 0,
+      dropped: dropped * share,
+      crafted: (solution.craftPrimal.get(nodeId) ?? 0) * share,
+      consumed: (consumed.get(nodeId) ?? 0) * share,
     };
   };
 

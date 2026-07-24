@@ -321,6 +321,50 @@ describe('computeCraftChainTree', () => {
     expect(lt1ViaLt2.metrics).toEqual(lt1ViaLt3.metrics);
   });
 
+  it('splits a shared component across targets in proportion to demand (multi-target)', () => {
+    // lt3 and lt2 are both selected targets and both craft from the shared leaf
+    // lt1. The LP crafts lt1's supply once (pooled); each target's breakdown
+    // must show only its demand-weighted slice, and the slices must sum back to
+    // the pooled totals -- not the full pool under each target.
+    const dag: RecipeDAG = new Map([
+      [lt3, makeNode(lt3, false, [[lt1, 3]])],
+      [lt2, makeNode(lt2, false, [[lt1, 2]])],
+      [lt1, makeNode(lt1, true)],
+    ]);
+    const prob = { bestProbability: 0, craftProbability: 0, dropProbability: 0 };
+    // demand for lt1: lt3 wants 2*3=6, lt2 wants 5*2=10, total 16.
+    const solution = makeSolution({
+      recipeDag: dag,
+      craftPrimal: new Map([
+        [lt3, 2],
+        [lt2, 5],
+      ]),
+      finalYieldVector: new Map([[lt1, 16]]),
+      perTarget: [
+        { nodeId: lt3, expectedCrafts: 2, ...prob },
+        { nodeId: lt2, expectedCrafts: 5, ...prob },
+      ],
+    });
+
+    const lt3Tree = computeCraftChainTree(solution, lt3, null)!;
+    expect(lt3Tree.metrics.crafted).toBe(2); // root target: full, never scaled
+    const lt1ViaLt3 = lt3Tree.children.find(c => c.nodeId === lt1)!;
+    // lt3's share of lt1 is 6/16 = 0.375
+    expect(lt1ViaLt3.metrics.consumed).toBeCloseTo(6, 9);
+    expect(lt1ViaLt3.metrics.dropped).toBeCloseTo(6, 9);
+
+    const lt2Tree = computeCraftChainTree(solution, lt2, null)!;
+    expect(lt2Tree.metrics.crafted).toBe(5);
+    const lt1ViaLt2 = lt2Tree.children.find(c => c.nodeId === lt1)!;
+    // lt2's share of lt1 is 10/16 = 0.625
+    expect(lt1ViaLt2.metrics.consumed).toBeCloseTo(10, 9);
+    expect(lt1ViaLt2.metrics.dropped).toBeCloseTo(10, 9);
+
+    // The per-target slices reconstitute the pooled totals.
+    expect(lt1ViaLt3.metrics.consumed + lt1ViaLt2.metrics.consumed).toBeCloseTo(16, 9);
+    expect(lt1ViaLt3.metrics.dropped + lt1ViaLt2.metrics.dropped).toBeCloseTo(16, 9);
+  });
+
   it('reports owned as 0 without a player inventory', () => {
     const solution = makeSolution({ recipeDag: totemDag() });
     const tree = computeCraftChainTree(solution, lt4, null)!;
