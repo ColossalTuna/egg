@@ -72,6 +72,12 @@ export function createOptimizerClient(): OptimizerClient {
     },
     terminate() {
       worker.terminate();
+      // Settle whatever was in flight rather than dropping it: a cleared entry
+      // is a promise nobody will ever resolve, which strands its awaiting frame.
+      // null (rather than reject) is the "no result is coming, leave state
+      // alone" signal callers already handle for superseded requests -- a
+      // rejection here would surface teardown as a solve error instead.
+      for (const [, entry] of pending) entry.resolve(null);
       pending.clear();
     },
   };
