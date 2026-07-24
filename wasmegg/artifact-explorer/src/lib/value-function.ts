@@ -520,12 +520,16 @@ export function refineJointCraftSplit(
   const MAX_ITERS = 100;
 
   for (let iter = 0; iter < MAX_ITERS; iter++) {
-    // Linearize g at the current scores: the FW subproblem is the weighted-sum
-    // craft LP with weight_T = g'(score_T) at the fixed inventory.
+    // Linearize g at the current scores: since score_T = Q_T*craft_T + lambda_T,
+    // d/d(craft_T) g(score_T) = g'(score_T)*Q_T by the chain rule, so the FW
+    // subproblem is the weighted-sum craft LP with weight_T = g'(score_T)*Q_T
+    // (dropping the Q_T factor would linearize against the wrong gradient and
+    // risk the line search stalling on a non-optimal split whenever targets
+    // have different Q values).
     const weights = new Map<string, number>();
     for (const t of craftTargets) {
       const s = Q(t) * (currentCraft.get(t) ?? 0) + lam(t);
-      weights.set(t, gPrime(s));
+      weights.set(t, gPrime(s) * Q(t));
     }
     const lp = compileInnerLp(recipeDag, [...craftTargets], weights);
     const nonLeafNodes = lp.nonLeafNodes;
