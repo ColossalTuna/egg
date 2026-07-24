@@ -1,5 +1,5 @@
 <template>
-  <div class="-mx-4 sm:mx-0 mt-2 mb-4 space-y-4">
+  <div v-if="artifactIds.length > 0" class="-mx-4 sm:mx-0 mt-2 mb-4 space-y-4">
     <!-- Header spans both columns -->
     <div class="bg-gray-100 px-4 py-4 border-b border-gray-200 sm:px-6 sm:rounded-lg sm:shadow-sm">
       <div class="-ml-4 -mt-2 flex items-center justify-between flex-wrap sm:flex-nowrap">
@@ -109,11 +109,13 @@
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, toRefs } from 'vue';
+import { computed, defineComponent, toRefs, watchEffect } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { iconURL } from 'lib';
 import { getArtifactTierPropsFromId as id2artifact } from 'lib/artifacts/data';
 import { cmpArtifactTiers, parseTankIds, serializeTankIds } from '@/lib';
+import { artifactIdToArtifact } from '@/lib/filter';
 import BaseInfo from 'ui/components/BaseInfo.vue';
 import ArtifactName from '@/components/ArtifactName.vue';
 import ArtifactMissionOptimizer from '@/components/ArtifactMissionOptimizer.vue';
@@ -160,8 +162,14 @@ export default defineComponent({
   },
   setup(props) {
     const { tankPlannerArtifactId: rawParam } = toRefs(props);
+    const router = useRouter();
 
-    const artifactIds = computed(() => parseTankIds(rawParam.value));
+    // Drop any id that doesn't resolve to a real artifact before it ever
+    // reaches id2artifact()/getArtifactTierPropsFromId(), which throws for
+    // unrecognized ids. The route param comes straight from the URL, so a
+    // hand-edited link or a stale bookmark referencing a renamed/removed
+    // artifact must not be able to crash this view.
+    const artifactIds = computed(() => parseTankIds(rawParam.value).filter(id => artifactIdToArtifact.has(id)));
     const serializedArtifactIds = computed(() => serializeTankIds(artifactIds.value));
     const artifacts = computed(() => artifactIds.value.map(id => id2artifact(id)));
     // Keep this deep-linkable-single-artifact-compatible: with one id this is
@@ -172,6 +180,16 @@ export default defineComponent({
         map.set(artifact.id, recursiveIngredientsOf(artifact));
       }
       return map;
+    });
+
+    // If every id in the URL was unknown, there's nothing left to plan for.
+    // Elsewhere in the app (Main.vue), zero selected artifacts simply means
+    // the tank route is never navigated to; bounce back home to match that
+    // instead of rendering an empty planner.
+    watchEffect(() => {
+      if (rawParam.value && artifactIds.value.length === 0) {
+        router.replace({ name: 'home' });
+      }
     });
 
     return {

@@ -227,9 +227,19 @@ export default defineComponent({
         // per-target computation; the n=1 render path additionally gets the
         // primary target's values duplicated onto flat props below so it can
         // keep reading them exactly as it did before this existed.
-        const targets: TargetView[] = artifactIds.value.map(nodeId => {
+        //
+        // Iterate solution.perTarget (the solution's own actual target list)
+        // rather than the live artifactIds: between the user changing their
+        // selection and the next completed optimize() run, computedResults
+        // is stale while artifactIds is live, so looking up live ids in the
+        // stale solution would either miss (falling back to the wrong
+        // target's data) or under/over-count targets vs what this solution
+        // actually describes. Deriving purely from `solution` keeps this
+        // view internally consistent no matter how out of sync the live
+        // selection currently is.
+        const targets: TargetView[] = solution.perTarget.map(perTarget => {
+          const nodeId = perTarget.nodeId;
           const display = artifactDisplay(nodeId);
-          const perTarget = solution.perTarget.find(t => t.nodeId === nodeId) ?? solution.perTarget[0];
           return {
             nodeId,
             name: display.name,

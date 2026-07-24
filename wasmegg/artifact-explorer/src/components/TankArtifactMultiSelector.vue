@@ -111,13 +111,19 @@ function remove(id: string) {
 }
 
 const warningDismissed = ref(false);
-// Reset dismissal whenever the selection count changes, so the warning
-// reappears if the user dismisses it at 3 and then adds a 4th (or removes
-// down to 3 after adding a 4th, etc), rather than staying hidden forever.
+// Only re-arm the dismissal when the selection count crosses UP from at-or-
+// below the threshold to at-or-above it (e.g. 2 -> 3). Any other length
+// change while already at/above the threshold (3 -> 4, 4 -> 3, etc) leaves a
+// prior dismissal in place, since the user already acknowledged the warning
+// in that regime; dropping back to <=2 hides the warning outright (see the
+// v-if above) without touching the dismissal, so re-entering >=3 later
+// re-arms it correctly.
 watch(
   () => props.modelValue.length,
-  () => {
-    warningDismissed.value = false;
+  (newLength, oldLength) => {
+    if (oldLength <= 2 && newLength >= 3) {
+      warningDismissed.value = false;
+    }
   }
 );
 </script>

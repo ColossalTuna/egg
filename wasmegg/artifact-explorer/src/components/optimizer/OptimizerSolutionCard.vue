@@ -34,7 +34,7 @@
     <template v-else>
       <div class="text-lg font-semibold text-green-700">
         <span v-tippy="jointTooltip" class="cursor-help border-b border-dotted border-green-400/60">
-          Joint chance of getting all {{ targets.length }} artifacts
+          Joint chance of getting all {{ solution.perTarget.length }} artifacts
         </span>
         : {{ (solution.jointProbability * 100).toFixed(2) }}%
       </div>
