@@ -1,6 +1,8 @@
 <template>
   <details class="mt-3">
-    <summary class="cursor-pointer text-gray-500 hover:text-gray-700 select-none">Probability breakdown</summary>
+    <summary class="cursor-pointer text-gray-500 hover:text-gray-700 select-none">
+      Probability breakdown<template v-if="heading"> — {{ heading }}</template>
+    </summary>
 
     <!-- Formula decomposition -->
     <div class="mt-2 text-xs bg-gray-50 rounded p-2 space-y-0.5">
@@ -88,6 +90,9 @@ import OptimizerRecipeTreeRow from './OptimizerRecipeTreeRow.vue';
 export default defineComponent({
   components: { MissionName, OptimizerRecipeTreeRow },
   props: {
+    // Set only when the parent renders one breakdown per target (n>=2), to
+    // label which artifact each instance describes.
+    heading: { type: String, default: '' },
     bestProbability: { type: Number, required: true },
     craftProbability: { type: Number, required: true },
     dropProbability: { type: Number, required: true },
