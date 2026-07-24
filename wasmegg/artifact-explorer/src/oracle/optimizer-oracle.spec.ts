@@ -12,8 +12,8 @@ import { describe, expect, test } from 'vitest';
 import { optimizeFull } from '../lib/optimizer-core';
 import type { OptimizerSolution } from '../lib/types';
 import { makeNode, makeOpt } from '../lib/spec-helpers';
-import { bruteForceBest, packableInto3Bins } from './enumerate';
-import { evaluateAllocation, OracleInstance, targetQ } from './evaluate';
+import { bruteForceBest, bruteForceBestJoint, packableInto3Bins } from './enumerate';
+import { evaluateAllocation, evaluateAllocationJoint, OracleInstance, targetQ } from './evaluate';
 import { FAMILIES, Family, generateInstance } from './generate';
 
 const GAP_TOL = Number(process.env.ORACLE_GAP_TOL ?? 1e-3);
@@ -112,6 +112,31 @@ function solverPricesAllocation(inst: OracleInstance, allocation: number[]): num
   return claimedProbability(solution, inst);
 }
 
+// Same second-opinion trick as solverPricesAllocation, but reads back
+// jointProbability (the AND metric optimizeFullJoint reports) instead of the
+// union-style claimedProbability, for the n>=2 optimality check below.
+function solverPricesAllocationJoint(inst: OracleInstance, allocation: number[]): number {
+  const yields = new Map<string, number>();
+  const legendary = new Map<string, number>();
+  inst.options.forEach((opt, i) => {
+    for (const [item, qty] of opt.yieldVector) {
+      yields.set(item, (yields.get(item) ?? 0) + allocation[i] * qty);
+    }
+    for (const [item, qty] of opt.legendaryYieldVector) {
+      legendary.set(item, (legendary.get(item) ?? 0) + allocation[i] * qty);
+    }
+  });
+  const solution = optimizeFull({
+    options: [makeOpt(1, 1, [...yields], [...legendary])],
+    recipeDag: inst.dag,
+    desiredArtifactNodeIds: inst.targets,
+    fuelCapacity: 1,
+    timeCapacity: 1,
+    baseYield: inst.baseYield,
+  });
+  return solution.jointProbability;
+}
+
 function checkInstance(inst: OracleInstance, gapTol = GAP_TOL): InstanceOutcome {
   const failures: InstanceFailure[] = [];
   const fail = (kind: InstanceFailure['kind'], detail: string) =>
@@ -180,6 +205,40 @@ function checkInstance(inst: OracleInstance, gapTol = GAP_TOL): InstanceOutcome 
       'feasibility',
       `reported usage fuel=${solution.fuelUsed}, time=${solution.timeUnitsUsed} but plan uses fuel=${fuelUsed}, makespan=${makespan}`
     );
+  }
+
+  // n>=2 targets route through optimizeFullJoint, which maximizes the AND
+  // (product) probability, not the union score optimizeFullSingle maximizes
+  // below -- so it is checked against the independent joint evaluator/brute
+  // force (evaluateAllocationJoint/bruteForceBestJoint) instead. n=1
+  // instances (the only ones that exercise optimizeFullSingle) fall through
+  // to the unchanged union-style checks that follow.
+  if (inst.targets.length >= 2) {
+    const planEvalJoint = evaluateAllocationJoint(inst, allocation);
+    const claimedJoint = solution.jointProbability;
+    if (Math.abs(claimedJoint - planEvalJoint.jointProbability) > HONESTY_TOL) {
+      fail(
+        'honesty',
+        `claimed jointProbability=${claimedJoint} vs independent ${planEvalJoint.jointProbability} for allocation [${allocation}]`
+      );
+    }
+
+    const oracleJoint = bruteForceBestJoint(inst);
+    const gapJoint = Math.max(0, oracleJoint.bestJointProbability - planEvalJoint.jointProbability);
+    if (gapJoint > gapTol) {
+      const solverView = solverPricesAllocationJoint(inst, oracleJoint.bestAllocation);
+      const confirmed = solverView - planEvalJoint.jointProbability > GAP_TOL / 2;
+      fail(
+        'optimality',
+        `plan [${allocation}] jointP=${planEvalJoint.jointProbability.toFixed(6)} but oracle found ` +
+          `[${oracleJoint.bestAllocation}] jointP=${oracleJoint.bestJointProbability.toFixed(6)} ` +
+          `(gap ${gapJoint.toExponential(3)}, solver's own pricing of that allocation: ${solverView.toFixed(6)} — ` +
+          `${confirmed ? 'CONFIRMED by solver value function' : 'NOT confirmed; possible oracle model divergence'}, ` +
+          `${oracleJoint.evaluatedCount} allocations checked)`
+      );
+    }
+
+    return { family: inst.label, seed: inst.seed, gap: gapJoint, failures };
   }
 
   const planEval = evaluateAllocation(inst, allocation);

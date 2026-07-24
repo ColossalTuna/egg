@@ -5,7 +5,14 @@
 // maximal allocations is exact. The packing check is re-derived here,
 // independent of the production solver's packer.
 
-import { evaluateAllocation, evaluateAllocationFloat, OracleInstance } from './evaluate';
+import {
+  evaluateAllocation,
+  evaluateAllocationFloat,
+  evaluateAllocationJoint,
+  evaluateAllocationJointFloat,
+  OracleInstance,
+  OracleJointTargetResult,
+} from './evaluate';
 
 export interface BruteForceResult {
   bestScore: number;
@@ -249,6 +256,120 @@ export function bruteForceBest(inst: OracleInstance): BruteForceResult {
       best.bestScore = exact.score;
       best.bestProbability = exact.probability;
       best.bestAllocation = candidate;
+    }
+  }
+  return best;
+}
+
+export interface BruteForceJointResult {
+  bestJointProbability: number;
+  bestAllocation: number[];
+  bestPerTarget: OracleJointTargetResult[];
+  feasibleCount: number;
+  evaluatedCount: number;
+}
+
+// Same probability-space slop concept as RANKING_SLOP above, just applied to
+// evaluateAllocationJointFloat's jointProbability instead of the union
+// evaluator's score, so a float-precision near-tie among candidate
+// allocations cannot cost the true joint-objective optimum.
+const RANKING_SLOP_JOINT = 1e-6;
+const MAX_FINALISTS_JOINT = 8;
+
+// Ranks feasible/maximal allocations by the JOINT (AND, product-of-targets)
+// probability instead of bruteForceBest's union-style score, for the
+// 2-target instances this oracle's random-multi family generates. The
+// enumeration itself (maximal-allocation walk, 3-slot packing) is identical
+// to bruteForceBest's -- duplicated rather than shared so the two ranking
+// objectives can never accidentally cross-contaminate each other's tuning.
+export function bruteForceBestJoint(inst: OracleInstance): BruteForceJointResult {
+  if (inst.targets.length < 2) {
+    throw new Error('bruteForceBestJoint requires 2+ targets; use bruteForceBest for single-target instances');
+  }
+  const n = inst.options.length;
+  for (const opt of inst.options) {
+    if (opt.actualFuel <= 0 && opt.actualTime <= 0) {
+      throw new Error('option with zero fuel and time cost admits unbounded launches; instance is ill-posed');
+    }
+  }
+
+  const { durations, durIdxByOption } = durationModel(inst);
+  const durCounts = new Array<number>(durations.length).fill(0);
+  const S = inst.timeCapacity;
+
+  const allocation = new Array<number>(n).fill(0);
+  let feasibleCount = 0;
+  let evaluatedCount = 0;
+  let bestFloat = -Infinity;
+  let finalists: number[][] = [];
+
+  const isMaximal = (fuelLeft: number): boolean => {
+    for (let i = 0; i < n; i++) {
+      const opt = inst.options[i];
+      if (opt.actualTime <= 0) continue;
+      if (opt.actualFuel > fuelLeft + EPS) continue;
+      const dj = durIdxByOption[i];
+      durCounts[dj] += 1;
+      const canAdd = packableInto3Bins(durCounts, durations, S);
+      durCounts[dj] -= 1;
+      if (canAdd) return false;
+    }
+    return true;
+  };
+
+  const walk = (i: number, fuelLeft: number) => {
+    if (i === n) {
+      feasibleCount++;
+      if (!isMaximal(fuelLeft)) {
+        return;
+      }
+      const jointProbability = evaluateAllocationJointFloat(inst, allocation);
+      evaluatedCount++;
+      if (jointProbability > bestFloat + RANKING_SLOP_JOINT) {
+        bestFloat = jointProbability;
+        finalists = [allocation.slice()];
+      } else if (jointProbability > bestFloat - RANKING_SLOP_JOINT) {
+        bestFloat = Math.max(bestFloat, jointProbability);
+        if (finalists.length < MAX_FINALISTS_JOINT) {
+          finalists.push(allocation.slice());
+        }
+      }
+      return;
+    }
+    const opt = inst.options[i];
+    const dj = durIdxByOption[i];
+    const base = durCounts[dj];
+    const maxK = Math.min(
+      opt.actualFuel > 0 ? Math.floor(fuelLeft / opt.actualFuel) : Infinity,
+      maxByPacking(opt.actualTime, S)
+    );
+    for (let k = 0; k <= maxK; k++) {
+      durCounts[dj] = base + k;
+      if (k > 0 && !packableInto3Bins(durCounts, durations, S)) {
+        break;
+      }
+      allocation[i] = k;
+      walk(i + 1, fuelLeft - k * opt.actualFuel);
+    }
+    durCounts[dj] = base;
+    allocation[i] = 0;
+  };
+
+  walk(0, inst.fuelCapacity);
+
+  const best: BruteForceJointResult = {
+    bestJointProbability: 0,
+    bestAllocation: new Array<number>(n).fill(0),
+    bestPerTarget: [],
+    feasibleCount,
+    evaluatedCount,
+  };
+  for (const candidate of finalists) {
+    const exact = evaluateAllocationJoint(inst, candidate);
+    if (exact.jointProbability > best.bestJointProbability) {
+      best.bestJointProbability = exact.jointProbability;
+      best.bestAllocation = candidate;
+      best.bestPerTarget = exact.perTarget;
     }
   }
   return best;
