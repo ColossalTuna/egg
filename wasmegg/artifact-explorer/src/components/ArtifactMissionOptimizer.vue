@@ -221,6 +221,15 @@ export default defineComponent({
         // null means a newer request superseded this one; that request owns
         // the results and the spinner, so leave both alone.
         if (solutions === null) return;
+        // The inputs can also have gone invalid while the solve was in flight
+        // (clearing the time budget, say). Nothing supersedes the request in
+        // that case -- the watchEffect just empties the results -- so this
+        // handler has to drop them rather than restore a stale plan.
+        if (!computeInputs.value) {
+          computedResults.value = [];
+          computing.value = false;
+          return;
+        }
         lastComputedMaxWaitTimeSeconds.value = budget;
         // The same presentation fill-in the synchronous optimize() applies;
         // it needs artifact metadata the worker has no reason to carry.
