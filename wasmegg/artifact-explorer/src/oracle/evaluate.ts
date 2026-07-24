@@ -358,49 +358,107 @@ function optimizeJointFloat(
   lambdas: number[]
 ): JointOptimum {
   const n = idxs.length;
-  // Seed strictly inside the polytope by averaging the n per-target max-craft
-  // vertices. A weighted-sum craft LP is linear, so its optimum is a one-target
-  // corner; for n >= 3 a corner seed leaves >= 2 targets at zero crafts, where
-  // g(0) = -Infinity pins the Frank-Wolfe line search -- stepping toward
-  // another one-target corner only ever trades between two targets and never
-  // lifts a third off zero, so the search stalls at a degenerate point. The
-  // centroid of the per-target max-craft vertices gives every craftable target
-  // a positive craft count, keeping every line-search segment in g's finite
-  // interior. (For n=2 the two corners already span both targets, so the old
-  // corner seed happened to escape; the centroid is a strict improvement.)
-  const crafts = new Array<number>(n).fill(0);
+  // Maximize via AWAY-STEP Frank-Wolfe over the craft polytope. Two problems
+  // force this over plain FW:
+  //
+  //  * Seeding. A weighted-sum craft LP is linear, so its optimum is a
+  //    one-target corner; for n >= 3 a corner seed leaves >= 2 targets at zero
+  //    crafts, where g(0) = -Infinity pins the line search. We seed at the
+  //    centroid of the n per-target max-craft vertices (each craftable target
+  //    positive), tracked as the initial active set with equal weights.
+  //  * The tail. Plain FW converges at O(1/k), and when the optimum lies in the
+  //    interior of a polytope face (a dependency chain where one target is
+  //    another's ingredient, so optimal x_child = x_parent is approached but is
+  //    not a vertex) the degenerate vertices the tableau simplex returns make it
+  //    zig-zag -- ~5e4 iterations to reach the 1e-6 honesty tolerance, far too
+  //    coarse for ground truth. Away steps (retreating from the worst active
+  //    vertex) restore effectively linear convergence.
+  //
+  // The active set carries each visited vertex's target-craft vector and its
+  // convex weight; the current point is their weighted sum. Only target crafts
+  // are tracked (scores, gradient and line search need nothing else).
+  interface ActiveVertex {
+    crafts: number[];
+    weight: number;
+  }
+  const active: ActiveVertex[] = [];
   for (let i = 0; i < n; i++) {
     const weights = new Array<number>(n).fill(0);
     weights[i] = 1;
     const vertex = solveWeightedFloat(template, b, idxs, Qs, weights);
-    for (let j = 0; j < n; j++) {
-      crafts[j] += vertex.primal[idxs[j]] / n;
-    }
+    active.push({ crafts: idxs.map(idx => vertex.primal[idx]), weight: 1 / n });
   }
-
-  for (let iter = 0; iter < 100; iter++) {
-    const scores = crafts.map((craft, i) => Qs[i] * craft + lambdas[i]);
-    const c = new Array<number>(template.craftables.length).fill(0);
-    for (let i = 0; i < n; i++) {
-      c[idxs[i]] = jointGPrime(scores[i]) * Qs[i];
+  const crafts = new Array<number>(n).fill(0);
+  const recomputeCrafts = () => {
+    crafts.fill(0);
+    for (const av of active) {
+      for (let i = 0; i < n; i++) crafts[i] += av.weight * av.crafts[i];
     }
+  };
+  recomputeCrafts();
+
+  const VERTEX_TOL = 1e-9; // treat two vertices closer than this as identical
+  const sameVertex = (a: number[], v: number[]) => a.every((ai, i) => Math.abs(ai - v[i]) < VERTEX_TOL);
+  const dot = (grad: number[], v: number[]) => grad.reduce((s, g, i) => s + g * v[i], 0);
+
+  const GAP_TOL = 1e-12;
+  for (let iter = 0; iter < 2000; iter++) {
+    const scores = crafts.map((craft, i) => Qs[i] * craft + lambdas[i]);
+    const grad = scores.map((s, i) => jointGPrime(s) * Qs[i]); // d/d(craft_i) sum g
+    const c = new Array<number>(template.craftables.length).fill(0);
+    for (let i = 0; i < n; i++) c[idxs[i]] = grad[i];
     const { primal } = simplexMaximizeFloatFull(template.A, b, c);
-    const vertexCrafts = idxs.map(idx => primal[idx]);
-    const phi = (t: number) => {
+    const fwVertex = idxs.map(idx => primal[idx]);
+
+    // FW duality gap <grad, fwVertex - x>: an upper bound on the objective's
+    // distance to the optimum, so a tiny gap certifies convergence.
+    const gDotX = dot(grad, crafts);
+    const gap = dot(grad, fwVertex) - gDotX;
+    if (gap < GAP_TOL) break;
+
+    // Away vertex: the active vertex the gradient likes least; retreating from
+    // it is the move plain FW cannot make.
+    let awayIdx = 0;
+    let awayDotVal = Infinity;
+    for (let k = 0; k < active.length; k++) {
+      const v = dot(grad, active[k].crafts);
+      if (v < awayDotVal) {
+        awayDotVal = v;
+        awayIdx = k;
+      }
+    }
+
+    const fwDot = dot(grad, fwVertex) - gDotX; // == gap
+    const awayDot = gDotX - awayDotVal;
+    const away = active[awayIdx];
+    const useFw = fwDot >= awayDot;
+    const dir = useFw ? fwVertex.map((v, i) => v - crafts[i]) : crafts.map((cx, i) => cx - away.crafts[i]);
+    const gammaMax = useFw ? 1 : away.weight / (1 - away.weight);
+
+    const phi = (u: number) => {
+      const gamma = u * gammaMax;
       let total = 0;
       for (let i = 0; i < n; i++) {
-        total += logHitProbability(Qs[i] * (crafts[i] + t * (vertexCrafts[i] - crafts[i])) + lambdas[i]);
+        total += logHitProbability(Qs[i] * (crafts[i] + gamma * dir[i]) + lambdas[i]);
       }
       return total;
     };
-    const t = goldenSectionArgmax(phi, 100);
-    let move = 0;
-    for (let i = 0; i < n; i++) {
-      const nc = crafts[i] + t * (vertexCrafts[i] - crafts[i]);
-      move = Math.max(move, Math.abs(Qs[i] * (nc - crafts[i])));
-      crafts[i] = nc;
+    const gamma = goldenSectionArgmax(phi, 100) * gammaMax;
+
+    // Reweight the active set for the chosen step, then fold in / drop vertices.
+    if (useFw) {
+      for (const av of active) av.weight *= 1 - gamma;
+      const hit = active.find(av => sameVertex(av.crafts, fwVertex));
+      if (hit) hit.weight += gamma;
+      else active.push({ crafts: fwVertex, weight: gamma });
+    } else {
+      for (const av of active) av.weight *= 1 + gamma;
+      away.weight -= gamma;
     }
-    if (move < 1e-13 || t < 1e-13) break;
+    for (let k = active.length - 1; k >= 0; k--) {
+      if (active[k].weight <= VERTEX_TOL) active.splice(k, 1);
+    }
+    recomputeCrafts();
   }
 
   const scores = crafts.map((craft, i) => Qs[i] * craft + lambdas[i]);

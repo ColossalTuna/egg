@@ -551,6 +551,46 @@ describe('oracle calibration', () => {
     expect(theirs.perTarget).toHaveLength(3);
     expect(Math.min(...crafts)).toBeGreaterThan(0); // every target gets a share
   });
+
+  test('three-target joint plan where targets consume each other (n=3 dependency chain)', () => {
+    // The "structure of how items are consumed" case: t0 is an ingredient of
+    // t1's recipe and t1 of t2's, so crafting up the chain consumes the lower
+    // targets -- even though each craft already counted as its own legendary
+    // roll. The joint split must trade the shared 'a' between crafting each
+    // target for its own rolls and crafting it to feed the target above, over
+    // the dependency-coupled polytope; a naive "split the shared ingredient"
+    // shortcut would mishandle exactly this (the case the oracle docstring
+    // flags at ~9% of random-multi instances). checkInstance holds
+    // production's inner joint solve to the oracle's independent one over that
+    // same polytope, and to bruteForceBestJoint's enumeration.
+    const inst: OracleInstance = {
+      label: 'probe-chain',
+      seed: 0,
+      options: [makeOpt(2, 1, [['a', 3]]), makeOpt(3, 1, [['a', 5]])],
+      dag: new Map(
+        [
+          makeNode('a', true),
+          makeNode('t0', false, [['a', 1]], 0.4),
+          makeNode(
+            't1',
+            false,
+            [
+              ['t0', 1],
+              ['a', 1],
+            ],
+            0.5
+          ),
+          makeNode('t2', false, [['t1', 1]], 0.6),
+        ].map(n => [n.id, n])
+      ),
+      targets: ['t0', 't1', 't2'],
+      fuelCapacity: 6,
+      timeCapacity: 3,
+      baseYield: new Map([['a', 2]]),
+    };
+    assertNoFailures([checkInstance(inst)]);
+    expect(runOptimizer(inst).perTarget).toHaveLength(3);
+  });
 });
 
 // Smoke fuzz: a deterministic handful of instances per family.
