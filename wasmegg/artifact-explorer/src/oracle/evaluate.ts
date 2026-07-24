@@ -6,7 +6,7 @@
 
 import type { LaunchOption, RecipeDAG } from '../lib/types';
 import { Frac } from './rational';
-import { simplexMaximize, simplexMaximizeFloat, simplexMaximizeFloatFull, simplexMaximizeFull } from './simplex';
+import { simplexMaximize, simplexMaximizeFloat, simplexMaximizeFloatFull } from './simplex';
 
 export interface OracleInstance {
   label: string;
@@ -309,83 +309,47 @@ function solveWeightedFloat(
   return { w, s0: Q0 * primal[idx0], s1: Q1 * primal[idx1], primal };
 }
 
-function sameVertex(a: { s0: number; s1: number }, b: { s0: number; s1: number }): boolean {
-  const EPS = 1e-9;
-  const scale0 = Math.max(1, Math.abs(a.s0), Math.abs(b.s0));
-  const scale1 = Math.max(1, Math.abs(a.s1), Math.abs(b.s1));
-  return Math.abs(a.s0 - b.s0) < EPS * scale0 && Math.abs(a.s1 - b.s1) < EPS * scale1;
+// Marginal slope g'(s) of g(s) = log(1 - e^-s); grows like 1/s as s -> 0, so it
+// is capped to keep the linearized objective finite when a target's score is
+// driven to zero.
+function jointGPrime(s: number): number {
+  const CAP = 1e12;
+  return s <= 0 ? CAP : Math.min(1 / Math.expm1(s), CAP);
 }
 
-function traceParetoFrontier(
-  template: LpTemplate,
-  b: number[],
-  idx0: number,
-  idx1: number,
-  Q0: number,
-  Q1: number,
-  maxDepth: number,
-  budget: number
-): FrontierVertexFloat[] {
-  const solve = (w: number) => solveWeightedFloat(template, b, idx0, idx1, Q0, Q1, w);
-  const v0 = solve(0);
-  const v1 = solve(1);
-  const found = [v0, v1];
-  let remaining = budget;
-
-  const recurse = (lo: FrontierVertexFloat, hi: FrontierVertexFloat, depth: number) => {
-    if (depth >= maxDepth || remaining <= 0 || sameVertex(lo, hi)) {
-      return;
-    }
-    remaining--;
-    const mid = solve((lo.w + hi.w) / 2);
-    if (sameVertex(mid, lo) || sameVertex(mid, hi)) {
-      return; // no further vertex between lo and hi: they bound a single edge
-    }
-    found.push(mid);
-    recurse(lo, mid, depth + 1);
-    recurse(mid, hi, depth + 1);
-  };
-  recurse(v0, v1, 0);
-
-  found.sort((x, y) => x.s0 - y.s0);
-  const dedup: FrontierVertexFloat[] = [];
-  for (const v of found) {
-    if (dedup.length === 0 || !sameVertex(dedup[dedup.length - 1], v)) {
-      dedup.push(v);
-    }
-  }
-  return dedup;
-}
-
-// Maximizes g(s0)+g(s1) along the straight segment between two adjacent
-// frontier vertices (concave in the segment parameter t, since g is concave
-// increasing and s0(t), s1(t) are linear in t).
-function bestOnSegment(
-  v0: { s0: number; s1: number },
-  v1: { s0: number; s1: number },
-  lambda0: number,
-  lambda1: number
-): { t: number; s0: number; s1: number; logProb: number } {
-  const at = (t: number) => ({ s0: v0.s0 + t * (v1.s0 - v0.s0), s1: v0.s1 + t * (v1.s1 - v0.s1) });
-  const phi = (t: number) => {
-    const p = at(t);
-    return logHitProbability(p.s0 + lambda0) + logHitProbability(p.s1 + lambda1);
-  };
-  const t = goldenSectionArgmax(phi);
-  const p = at(t);
-  return { t, s0: p.s0, s1: p.s1, logProb: phi(t) };
-}
-
-interface JointSplitFloat {
-  loW: number;
-  hiW: number;
-  t: number;
+interface JointOptimum {
   s0: number;
   s1: number;
+  craft0: number;
+  craft1: number;
   logProb: number;
 }
 
-function bestJointSplitFloat(
+// Maximize the exact joint objective g(s0) + g(s1), s_i = Q_i*craft_i + lambda_i,
+// over the craft-conservation polytope at a FIXED inventory (RHS b), via
+// Frank-Wolfe (conditional gradient) with an exact 1-D line search. Each step
+// linearizes the concave g at the current scores -- weight_i = g'(s_i) -- and
+// maximizes the resulting weighted-sum craft LP with the oracle's own float
+// simplex; the segment from the current point to that LP vertex is an ascent
+// direction, and a golden-section line search along it (crafts, hence scores,
+// are linear in the segment parameter) lands on the segment's optimum. Because
+// the objective is concave the true objective is non-decreasing each step and
+// converges to the polytope's global optimum, whatever the frontier's vertex
+// arrangement.
+//
+// This replaces an earlier weight-bisection frontier trace that could silently
+// miss vertices whose weight-band sat off-center (a probe at the interval
+// midpoint reveals only the vertex active at that one weight), which made the
+// traced frontier -- and the joint optimum read off it -- an UNDER-estimate on
+// lopsided instances. Frank-Wolfe needs no vertex enumeration and so has no
+// such blind spot. It is still disparate from production: the simplex, the
+// polytope build, and the objective are all independent re-derivations here, so
+// an agreeing answer is genuine corroboration rather than shared code. Float
+// precision (~1e-12) is far tighter than the honesty tolerance (1e-6), so the
+// exact BigInt path the union evaluator uses is unnecessary for this objective
+// (whose optimum generally lies in the interior of a frontier edge, where the
+// old code's rational endpoints were interpolated at a float parameter anyway).
+function optimizeJointFloat(
   template: LpTemplate,
   b: number[],
   idx0: number,
@@ -393,40 +357,38 @@ function bestJointSplitFloat(
   Q0: number,
   Q1: number,
   lambda0: number,
-  lambda1: number,
-  maxDepth: number,
-  budget: number
-): JointSplitFloat {
-  const vertices = traceParetoFrontier(template, b, idx0, idx1, Q0, Q1, maxDepth, budget);
-  let best: JointSplitFloat | null = null;
-  for (let i = 0; i + 1 < vertices.length; i++) {
-    const seg = bestOnSegment(vertices[i], vertices[i + 1], lambda0, lambda1);
-    if (best === null || seg.logProb > best.logProb) {
-      best = { loW: vertices[i].w, hiW: vertices[i + 1].w, t: seg.t, s0: seg.s0, s1: seg.s1, logProb: seg.logProb };
-    }
-  }
-  if (best === null) {
-    // Degenerate: a single vertex found (e.g. neither target can be crafted
-    // at all), so there is no edge to search -- just score that lone point.
-    const v = vertices[0];
-    best = {
-      loW: v.w,
-      hiW: v.w,
-      t: 0,
-      s0: v.s0,
-      s1: v.s1,
-      logProb: logHitProbability(v.s0 + lambda0) + logHitProbability(v.s1 + lambda1),
-    };
-  }
-  return best;
-}
+  lambda1: number
+): JointOptimum {
+  // Seed at the balanced Q-weighted craft vertex.
+  const seed = solveWeightedFloat(template, b, idx0, idx1, Q0, Q1, 0.5);
+  let craft0 = Q0 !== 0 ? seed.s0 / Q0 : 0;
+  let craft1 = Q1 !== 0 ? seed.s1 / Q1 : 0;
 
-// Budgets for the frontier trace: modest for ranking many brute-force
-// candidates, generous for the handful of finalists that get exact treatment.
-const RANK_MAX_DEPTH = 14;
-const RANK_BUDGET = 40;
-const FINAL_MAX_DEPTH = 24;
-const FINAL_BUDGET = 200;
+  for (let iter = 0; iter < 100; iter++) {
+    const s0 = Q0 * craft0 + lambda0;
+    const s1 = Q1 * craft1 + lambda1;
+    const c = new Array<number>(template.craftables.length).fill(0);
+    c[idx0] = jointGPrime(s0) * Q0;
+    c[idx1] = jointGPrime(s1) * Q1;
+    const { primal } = simplexMaximizeFloatFull(template.A, b, c);
+    const vc0 = primal[idx0];
+    const vc1 = primal[idx1];
+    const phi = (t: number) =>
+      logHitProbability(Q0 * (craft0 + t * (vc0 - craft0)) + lambda0) +
+      logHitProbability(Q1 * (craft1 + t * (vc1 - craft1)) + lambda1);
+    const t = goldenSectionArgmax(phi, 100);
+    const nc0 = craft0 + t * (vc0 - craft0);
+    const nc1 = craft1 + t * (vc1 - craft1);
+    const move = Math.max(Math.abs(Q0 * (nc0 - craft0)), Math.abs(Q1 * (nc1 - craft1)));
+    craft0 = nc0;
+    craft1 = nc1;
+    if (move < 1e-13 || t < 1e-13) break;
+  }
+
+  const s0 = Q0 * craft0 + lambda0;
+  const s1 = Q1 * craft1 + lambda1;
+  return { s0, s1, craft0, craft1, logProb: logHitProbability(s0) + logHitProbability(s1) };
+}
 
 function jointContext(inst: OracleInstance): {
   template: LpTemplate;
@@ -464,7 +426,7 @@ export function evaluateAllocationJointFloat(inst: OracleInstance, allocation: n
   const b = template.items.map(item => inv.get(item) ?? 0);
   const lambda0 = directDropsFor(inst, allocation, t0);
   const lambda1 = directDropsFor(inst, allocation, t1);
-  const { logProb } = bestJointSplitFloat(template, b, idx0, idx1, Q0, Q1, lambda0, lambda1, RANK_MAX_DEPTH, RANK_BUDGET);
+  const { logProb } = optimizeJointFloat(template, b, idx0, idx1, Q0, Q1, lambda0, lambda1);
   return Math.exp(logProb);
 }
 
@@ -490,42 +452,19 @@ export function evaluateAllocationJoint(inst: OracleInstance, allocation: number
   const lambda0 = directDropsFor(inst, allocation, t0);
   const lambda1 = directDropsFor(inst, allocation, t1);
 
-  // Locate the winning edge cheaply in float, then resolve its two endpoint
-  // weights EXACTLY and interpolate at the float-found segment position --
-  // the same "float ranks, exact reports" split the rest of this file uses.
-  const split = bestJointSplitFloat(template, b, idx0, idx1, Q0, Q1, lambda0, lambda1, FINAL_MAX_DEPTH, FINAL_BUDGET);
-
-  if (!template.AFrac || !template.cFrac) {
-    template.AFrac = template.A.map(row => row.map(x => Frac.fromNumber(x)));
-    template.cFrac = template.c.map(x => Frac.fromNumber(x));
-  }
-  const invFrac = inventoryFor(inst, allocation);
-  const bFrac = template.items.map(item => invFrac.get(item) ?? Frac.ZERO);
-  const Q0Frac = Frac.fromNumber(Q0);
-  const Q1Frac = Frac.fromNumber(Q1);
-
-  const solveExactAt = (w: number): Frac[] => {
-    const c = new Array<Frac>(template.craftables.length).fill(Frac.ZERO);
-    c[idx0] = Frac.fromNumber(w).mul(Q0Frac);
-    c[idx1] = Frac.fromNumber(1 - w).mul(Q1Frac);
-    return simplexMaximizeFull(template.AFrac!, bFrac, c).primal;
-  };
-  const loPrimal = solveExactAt(split.loW);
-  const hiPrimal = split.hiW === split.loW ? loPrimal : solveExactAt(split.hiW);
-  const tFrac = Frac.fromNumber(split.t);
-  const oneMinusT = Frac.ONE.sub(tFrac);
-  const craft0 = loPrimal[idx0].mul(oneMinusT).add(hiPrimal[idx0].mul(tFrac));
-  const craft1 = loPrimal[idx1].mul(oneMinusT).add(hiPrimal[idx1].mul(tFrac));
-  const s0 = craft0.mul(Q0Frac).toNumber() + lambda0;
-  const s1 = craft1.mul(Q1Frac).toNumber() + lambda1;
-  const p0 = s0 > 0 ? 1 - Math.exp(-s0) : 0;
-  const p1 = s1 > 0 ? 1 - Math.exp(-s1) : 0;
+  // Frank-Wolfe converges to the true optimum in float to ~1e-12, which is far
+  // inside the honesty tolerance (1e-6); the joint optimum generally lands in
+  // the interior of a frontier edge, so there is no single vertex a BigInt
+  // solve could report exactly anyway (see optimizeJointFloat).
+  const opt = optimizeJointFloat(template, b, idx0, idx1, Q0, Q1, lambda0, lambda1);
+  const p0 = opt.s0 > 0 ? 1 - Math.exp(-opt.s0) : 0;
+  const p1 = opt.s1 > 0 ? 1 - Math.exp(-opt.s1) : 0;
 
   return {
     jointProbability: p0 * p1,
     perTarget: [
-      { nodeId: t0, score: s0, bestProbability: p0, expectedCrafts: craft0.toNumber() },
-      { nodeId: t1, score: s1, bestProbability: p1, expectedCrafts: craft1.toNumber() },
+      { nodeId: t0, score: opt.s0, bestProbability: p0, expectedCrafts: opt.craft0 },
+      { nodeId: t1, score: opt.s1, bestProbability: p1, expectedCrafts: opt.craft1 },
     ],
   };
 }

@@ -11,7 +11,13 @@
 import type { LaunchOption, LaunchSolution, OptimizerSolution, RecipeDAG, SlotSummary } from './types';
 import { ei } from 'lib';
 import { compileInnerLp, alphaToProb, InnerLp } from './value-function';
-import { compileJointInnerLp, JointInnerLp, JOINT_TANGENTS, EPIGRAPH_SHIFT } from './value-function';
+import {
+  compileJointInnerLp,
+  JointInnerLp,
+  JOINT_TANGENTS,
+  EPIGRAPH_SHIFT,
+  refineJointCraftSplit,
+} from './value-function';
 import { solveLp } from './lp';
 
 const NUM_SLOTS = 3;
@@ -1426,15 +1432,29 @@ function assembleFullJointSolution(
   const makespan = busiest?.loadSeconds ?? 0;
   const running = busiest?.rawLoadSeconds ?? 0;
 
-  // Recover the per-target craft split at the final chosen inventory using
-  // the JOINT (tangent-balanced) inner LP, not the weighted-sum
-  // compileInnerLp, which would winner-take-all a shared ingredient and
-  // misreport the other targets' craft counts. The reported probabilities are
-  // then computed EXACTLY via alphaToProb per target (never via the tangent
-  // approximation used during search), so the displayed numbers are always
-  // exact even though the search that picked this allocation was ranked
-  // using the tangent relaxation.
-  const finalSolve = ctx.jointInnerLp.solve(finalYieldVector, totalLegendary);
+  // Recover the per-target craft split at the final chosen inventory. The
+  // search ranked candidates with the fixed-grid tangent envelope
+  // (ctx.jointInnerLp); its recovered split is only tangent-optimal, and the
+  // grid's coarseness below s=0.05 biases it whenever a target lands on a tiny
+  // craft count -- so that split would systematically under-report the joint
+  // probability. We therefore take the tangent-LP split only as a seed and
+  // refine it to the split that maximizes the EXACT concave objective
+  // sum_T g(Q_T*craft_T + lambda_T) at this fixed inventory, via Frank-Wolfe
+  // with an exact line search (see refineJointCraftSplit). That refinement is
+  // monotone non-decreasing in the true objective and converges to the
+  // polytope optimum, so the per-target probabilities alphaToProb then computes
+  // are exact (to convergence tolerance) for this inventory -- not merely an
+  // exact conversion of an approximate split. This runs once per returned
+  // solution, never in the hot search loop.
+  const seedSolve = ctx.jointInnerLp.solve(finalYieldVector, totalLegendary);
+  const finalSolve = refineJointCraftSplit(
+    recipeDag,
+    desiredArtifactNodeIds,
+    ctx.QByTarget,
+    finalYieldVector,
+    totalLegendary,
+    seedSolve
+  );
   const perTarget = desiredArtifactNodeIds.map(t => {
     const craftCount =
       finalSolve.craftByTarget.get(t) ?? (recipeDag.get(t)?.isLeaf ? (finalYieldVector.get(t) ?? 0) : 0);

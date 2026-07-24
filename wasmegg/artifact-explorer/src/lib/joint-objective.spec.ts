@@ -140,6 +140,41 @@ describe('tangent approximation accuracy', () => {
       expect(tangentLogHitProbability(s)).toBeCloseTo(exactLogHitProbability(s), 6);
     }
   });
+
+  it('degrades sharply below the first breakpoint (s < 0.05), where the split bug originated', () => {
+    // The fixed grid starts at s = 0.05; for smaller scores the nearest tangent
+    // is a poor local approximation of g, and the over-estimate balloons well
+    // past the <1e-2 bound the tested [0.15, 27] range enjoys. This is a
+    // documentation/defense test: it asserts the KNOWN, large error in this
+    // region rather than pretending the grid is accurate here. It is precisely
+    // this coarseness that made the SEARCH-time split biased for targets landing
+    // on a tiny craft count -- which is why the FINAL reported split is refined
+    // independently of this grid (see refineJointCraftSplit); that refinement is
+    // not exercised here.
+    // Measured errors are ~2.93, ~0.81, ~0.11 in log-space at these points; the
+    // thresholds sit safely below the observed values.
+    const cases: { s: number; minLogErr: number }[] = [
+      { s: 0.001, minLogErr: 2.5 }, // enormous in log-space this close to 0
+      { s: 0.01, minLogErr: 0.5 },
+      { s: 0.03, minLogErr: 0.08 },
+    ];
+    let maxProbErr = 0;
+    for (const { s, minLogErr } of cases) {
+      const exact = exactLogHitProbability(s);
+      const approx = tangentLogHitProbability(s);
+      // Still a valid upper envelope: the tangent lies on or above g everywhere.
+      expect(approx).toBeGreaterThanOrEqual(exact - 1e-12);
+      // ...but the gap is large here, unlike the well-sampled mid-range.
+      const logErr = approx - exact;
+      expect(logErr).toBeGreaterThan(minLogErr);
+      maxProbErr = Math.max(maxProbErr, Math.exp(Math.min(approx, 0)) - Math.exp(exact));
+    }
+    // The worst-case probability-space over-estimate in this region (~1.8e-2 at
+    // s = 0.001) exceeds the 1e-2 the [0.15, 27] band stays under. Assert it
+    // blows past the mid-range bound to document that the grid is unusable here
+    // for final reporting.
+    expect(maxProbErr).toBeGreaterThan(1e-2);
+  });
 });
 
 describe('joint path algebraic equivalence at n=1', () => {

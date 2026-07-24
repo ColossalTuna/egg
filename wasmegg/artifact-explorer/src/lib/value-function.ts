@@ -433,3 +433,143 @@ export function compileJointInnerLp(
     },
   };
 }
+
+// argmax over t in [0, 1] of a concave (hence unimodal) function. Golden-section
+// search; robust to phi returning -Infinity on part of the interval (comparisons
+// against a finite value simply steer away from it).
+function goldenSectionArgmax01(phi: (t: number) => number, iters = 100): number {
+  const GOLDEN = (Math.sqrt(5) - 1) / 2;
+  let a = 0;
+  let b = 1;
+  let c = b - GOLDEN * (b - a);
+  let d = a + GOLDEN * (b - a);
+  let fc = phi(c);
+  let fd = phi(d);
+  for (let i = 0; i < iters; i++) {
+    if (fc >= fd) {
+      b = d;
+      d = c;
+      fd = fc;
+      c = b - GOLDEN * (b - a);
+      fc = phi(c);
+    } else {
+      a = c;
+      c = d;
+      fc = fd;
+      d = a + GOLDEN * (b - a);
+      fd = phi(d);
+    }
+  }
+  return (a + b) / 2;
+}
+
+// Recover the per-target craft split that maximizes the EXACT concave joint
+// objective sum_T g(Q_T*craft_T + lambda_T), g(s) = log(1 - e^-s), at a FIXED
+// inventory, subject to the recipe's craft-conservation polytope.
+//
+// The hot search loop ranks candidate inventories with compileJointInnerLp's
+// fixed-grid tangent envelope of g -- fast, but the grid starts at s=0.05 and
+// its nearest-tangent approximation of g is poor for s < 0.05, so the split it
+// recovers is biased whenever a target lands on a tiny craft count. That is
+// tolerable for ranking, but the FINAL reported split must be exact. This runs
+// ONCE per returned solution (never in the search loop) and is free to be
+// slower.
+//
+// Method: Frank-Wolfe (conditional gradient) with an exact 1-D line search.
+// From the current feasible split we linearize g at each target's current score
+// -- weight_T = g'(score_T) -- and maximize the resulting weighted-sum craft LP
+// (the ordinary compileInnerLp, whose polytope is identical to the joint LP's
+// conservation rows). Its optimum is a vertex of the polytope; the segment from
+// the current point to that vertex is an ascent direction for the true concave
+// objective, and an exact golden-section line search along it lands on the
+// best point of the segment. Because g is concave, each iterate's TRUE objective
+// is non-decreasing, and the iteration converges to the polytope's global
+// optimum (for n=2 the effective problem is 1-D and it converges in a handful of
+// iterations). Seeding from the tangent-LP split guarantees the result never
+// scores below the previous behavior.
+export function refineJointCraftSplit(
+  recipeDag: RecipeDAG,
+  targets: readonly string[],
+  QByTarget: ReadonlyMap<string, number>,
+  inventory: Map<string, number>,
+  lambda: ReadonlyMap<string, number>,
+  seed: JointAlphaResult
+): JointAlphaResult {
+  // Only non-leaf targets with a positive craft weight participate in the
+  // split: a leaf (uncraftable) target, or one with Q=0, has a score that does
+  // not depend on the craft allocation, so it contributes a constant to the
+  // objective and its seed value is reported unchanged.
+  const craftTargets = targets.filter(t => !(recipeDag.get(t)?.isLeaf ?? true) && (QByTarget.get(t) ?? 0) > 0);
+  if (craftTargets.length === 0) {
+    return { craftByTarget: new Map(seed.craftByTarget), primalByNode: new Map(seed.primalByNode) };
+  }
+
+  const Q = (t: string) => QByTarget.get(t) ?? 0;
+  const lam = (t: string) => lambda.get(t) ?? 0;
+  const G_PRIME_CAP = 1e12; // guards g'(s) -> Infinity as s -> 0
+  const gPrime = (s: number) => (s <= 0 ? G_PRIME_CAP : Math.min(1 / Math.expm1(s), G_PRIME_CAP));
+  const g = (s: number) => (s > 0 ? Math.log(-Math.expm1(-s)) : -Infinity);
+
+  let currentPrimal = new Map(seed.primalByNode);
+  let currentCraft = new Map<string, number>();
+  for (const t of craftTargets) {
+    currentCraft.set(t, seed.craftByTarget.get(t) ?? currentPrimal.get(t) ?? 0);
+  }
+
+  const TIGHT = 1e-11; // convergence when no target's score moves more than this
+  const MAX_ITERS = 100;
+
+  for (let iter = 0; iter < MAX_ITERS; iter++) {
+    // Linearize g at the current scores: the FW subproblem is the weighted-sum
+    // craft LP with weight_T = g'(score_T) at the fixed inventory.
+    const weights = new Map<string, number>();
+    for (const t of craftTargets) {
+      const s = Q(t) * (currentCraft.get(t) ?? 0) + lam(t);
+      weights.set(t, gPrime(s));
+    }
+    const lp = compileInnerLp(recipeDag, [...craftTargets], weights);
+    const nonLeafNodes = lp.nonLeafNodes;
+    const vertex = lp.solve(inventory);
+
+    // True-objective scores at the two segment endpoints (linear in t).
+    const s0 = craftTargets.map(t => Q(t) * (currentCraft.get(t) ?? 0) + lam(t));
+    const s1 = craftTargets.map(t => Q(t) * (vertex.craftByTarget.get(t) ?? 0) + lam(t));
+    const phi = (t: number) => {
+      let sum = 0;
+      for (let i = 0; i < craftTargets.length; i++) {
+        const gv = g(s0[i] + t * (s1[i] - s0[i]));
+        if (gv === -Infinity) return -Infinity;
+        sum += gv;
+      }
+      return sum;
+    };
+    const tStar = goldenSectionArgmax01(phi);
+
+    // Interpolate craft counts and the full per-node primal along the segment
+    // (a convex combination of two feasible points stays feasible).
+    let maxMove = 0;
+    const newCraft = new Map<string, number>();
+    for (let i = 0; i < craftTargets.length; i++) {
+      const t = craftTargets[i];
+      const c0 = currentCraft.get(t) ?? 0;
+      const cNew = c0 + tStar * ((vertex.craftByTarget.get(t) ?? 0) - c0);
+      newCraft.set(t, cNew);
+      maxMove = Math.max(maxMove, Math.abs(Q(t) * (cNew - c0)));
+    }
+    const newPrimal = new Map<string, number>();
+    for (const node of nonLeafNodes) {
+      const p0 = currentPrimal.get(node) ?? 0;
+      const pNew = p0 + tStar * ((vertex.primalByNode.get(node) ?? 0) - p0);
+      if (pNew > 1e-9) newPrimal.set(node, pNew);
+    }
+    currentCraft = newCraft;
+    currentPrimal = newPrimal;
+    if (maxMove < TIGHT || tStar < 1e-12) break;
+  }
+
+  // Report the refined craftable targets over the seed's other entries (leaf /
+  // Q=0 targets keep their seed craft counts).
+  const craftByTarget = new Map(seed.craftByTarget);
+  for (const t of craftTargets) craftByTarget.set(t, currentCraft.get(t) ?? 0);
+  return { craftByTarget, primalByNode: currentPrimal };
+}
