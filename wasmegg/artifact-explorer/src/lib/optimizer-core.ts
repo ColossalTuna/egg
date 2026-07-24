@@ -19,6 +19,12 @@ const TRIPLE_TOP_K = 20;
 const DEFAULT_EPSILON = 1e-3;
 const ZERO_TOL = 1e-9;
 
+// Joint-path-only candidate pool bounds (see coreSearchJoint) -- deliberately
+// separate from TRIPLE_TOP_K so tuning them can never perturb the n=1 path's
+// ranked-candidate construction, which TRIPLE_TOP_K still governs unchanged.
+const JOINT_PAIR_TOP_K = 30;
+const JOINT_TRIPLE_TOP_K = 10;
+
 interface OptimizeArgs {
   options: LaunchOption[];
   recipeDag: RecipeDAG;
@@ -1074,6 +1080,17 @@ function solveJointLp(
 // relaxation (tangent-augmented), its own dominance check (dominatesJoint),
 // and gap arithmetic done in probability space rather than relative
 // score-space, since F <= 0 makes a relative gap meaningless.
+//
+// Every heuristic this file reuses for the joint path -- ternary search
+// (needs concavity in inventory), dominatesJoint/repairAlloc/packAndFill's
+// greedy adds (need monotonicity: more inventory never scores worse) --
+// carries over unchanged because F has both properties for the same reason
+// each score_T does: g is concave and non-decreasing, each score_T is concave
+// and non-decreasing in inventory (see the file-top comment), a non-decreasing
+// concave function of a concave non-decreasing argument is itself concave and
+// non-decreasing (composition rule), and a sum of such functions keeps both
+// properties. None of that machinery cares which concave, non-decreasing
+// function it's climbing.
 
 // exp(min(v, 0)): converts a (possibly very negative, always <= 0 at the
 // optimum) joint log-probability bound into an actual probability in (0, 1],
@@ -1176,6 +1193,32 @@ interface JointCoreResult {
   support: Set<number>;
 }
 
+// A small, bounded stand-in for the dual-cost-filtered survivor set the n=1
+// path gets for free: the LP relaxation's chosen support (its complementary
+// providers) plus the topK best-scoring standalone options, deduplicated and
+// capped at topK + support.size candidates total.
+function boundedCandidatePool(
+  survivors: number[],
+  scoreAlone: Float64Array,
+  lpSupport: Set<number>,
+  topK: number
+): number[] {
+  const bySingle = survivors
+    .filter(i => isFinite(scoreAlone[i]) && scoreAlone[i] > -Infinity)
+    .sort((x, y) => scoreAlone[y] - scoreAlone[x])
+    .slice(0, topK);
+  const pool = [...lpSupport];
+  const seen = new Set(pool);
+  for (const i of bySingle) {
+    if (!seen.has(i)) {
+      seen.add(i);
+      pool.push(i);
+    }
+  }
+  pool.length = Math.min(pool.length, topK + lpSupport.size);
+  return pool;
+}
+
 function coreSearchJoint(ctx: JointEvalContext, R: number, S: number, epsilon: number): JointCoreResult {
   const { options, evalScoreAt, baseF, jointInnerLp, baseYield, targets, recipeDag, QByTarget } = ctx;
 
@@ -1245,36 +1288,44 @@ function coreSearchJoint(ctx: JointEvalContext, R: number, S: number, epsilon: n
   // No dual-cost filter here (judgment call, see optimizer-regression report):
   // the single-target dual filter's loss budget is a fraction of a
   // nonnegative score, which doesn't translate to this path's F <= 0 without
-  // risking wrongly aggressive pruning, so every dominance survivor proceeds
-  // to the pair/triple scans instead.
-  const survivorsAfter = allSurvivors;
-
-  for (let a = 0; a < survivorsAfter.length; a++) {
-    for (let b = a + 1; b < survivorsAfter.length; b++) {
-      pairwiseScan(survivorsAfter[a], survivorsAfter[b], options, R, S, evalScoreAt, tryUpdateAllocations);
+  // risking wrongly aggressive pruning. But leaving every dominance survivor
+  // to reach the pair/triple scans unfiltered is combinatorially infeasible at
+  // production scale -- each probe re-solves the pricier tangent-augmented LP,
+  // and hundreds of survivors squared (or cubed) is millions of LP solves,
+  // measured in minutes on a real 2-target instance. jointPairPool /
+  // jointTriplePool substitute a bound already trusted elsewhere in this
+  // file for that missing filter: the LP relaxation's own support (its
+  // complementary providers) unioned with the best standalone options.
+  // repairAlloc afterwards still scans every option regardless, so a good
+  // budget-filler outside these pools is never permanently lost, only left
+  // for repair to find.
+  const jointPairPool = boundedCandidatePool(allSurvivors, scoreAlone, lpSupport, JOINT_PAIR_TOP_K);
+  for (let a = 0; a < jointPairPool.length; a++) {
+    for (let b = a + 1; b < jointPairPool.length; b++) {
+      pairwiseScan(jointPairPool[a], jointPairPool[b], options, R, S, evalScoreAt, tryUpdateAllocations);
     }
   }
 
   // Gap check in probability space (F <= 0 makes a relative gap meaningless).
   const gapProb = toProb(scoreLP) - toProb(bestF);
   if (gapProb > epsilon) {
-    const bySingle = survivorsAfter
-      .filter(i => isFinite(scoreAlone[i]) && scoreAlone[i] > -Infinity)
-      .sort((x, y) => scoreAlone[y] - scoreAlone[x])
-      .slice(0, TRIPLE_TOP_K);
-    const ranked = [...lpSupport];
-    const seen = new Set(ranked);
-    for (const i of bySingle) {
-      if (!seen.has(i)) {
-        seen.add(i);
-        ranked.push(i);
-      }
-    }
-    ranked.length = Math.min(ranked.length, TRIPLE_TOP_K + lpSupport.size);
-    for (let a = 0; a < ranked.length; a++) {
-      for (let b = a + 1; b < ranked.length; b++) {
-        for (let c = b + 1; c < ranked.length; c++) {
-          tripleScan(ranked[a], ranked[b], ranked[c], options, R, S, evalScoreAt, tryUpdateAllocations);
+    // Triple scan's nested ternary search costs an order of magnitude more
+    // probes per candidate tuple than the pairwise scan, so it gets its own
+    // (smaller) pool rather than reusing jointPairPool.
+    const jointTriplePool = boundedCandidatePool(allSurvivors, scoreAlone, lpSupport, JOINT_TRIPLE_TOP_K);
+    for (let a = 0; a < jointTriplePool.length; a++) {
+      for (let b = a + 1; b < jointTriplePool.length; b++) {
+        for (let c = b + 1; c < jointTriplePool.length; c++) {
+          tripleScan(
+            jointTriplePool[a],
+            jointTriplePool[b],
+            jointTriplePool[c],
+            options,
+            R,
+            S,
+            evalScoreAt,
+            tryUpdateAllocations
+          );
         }
       }
     }
