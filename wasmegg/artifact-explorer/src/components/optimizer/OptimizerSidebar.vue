@@ -201,7 +201,7 @@
     <!-- Compute -->
     <section>
       <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Compute</h3>
-      <label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none mb-2">
+      <label class="flex items-center gap-2 text-sm mb-2 select-none text-gray-600 cursor-pointer">
         <input
           type="checkbox"
           class="h-4 w-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
@@ -213,16 +213,20 @@
       <button
         v-if="!autoCompute"
         type="button"
+        :disabled="computing"
         class="w-full flex items-center justify-center px-3 py-2 border shadow-sm text-sm font-medium rounded-md focus:outline-none"
         :class="
-          pendingCompute
-            ? 'border-transparent text-white bg-indigo-600 hover:bg-indigo-700'
-            : 'border-gray-300 text-gray-600 bg-gray-100 hover:bg-gray-200'
+          computing
+            ? 'border-gray-300 text-gray-400 bg-gray-100 cursor-not-allowed'
+            : pendingCompute
+              ? 'border-transparent text-white bg-indigo-600 hover:bg-indigo-700'
+              : 'border-gray-300 text-gray-600 bg-gray-100 hover:bg-gray-200'
         "
         @click="$emit('runCompute')"
       >
-        {{ pendingCompute ? 'Recompute — results out of date' : 'Compute' }}
+        {{ computing ? 'Computing…' : pendingCompute ? 'Recompute — results out of date' : 'Compute' }}
       </button>
+      <p v-else-if="computing" class="text-xs text-gray-500">Computing…</p>
       <div class="mt-3">
         <loot-data-credit />
       </div>
@@ -305,6 +309,9 @@ export default defineComponent({
   props: {
     playerId: { type: String, default: '' },
     pendingCompute: { type: Boolean, required: true },
+    // A solve is in flight in the optimizer worker. The search is off the main
+    // thread, so this can render (and animate) while it runs.
+    computing: { type: Boolean, required: true },
     waitTimeDays: { type: String, required: true },
     timeBudgetInvalid: { type: Boolean, default: false },
   },

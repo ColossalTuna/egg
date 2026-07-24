@@ -3,6 +3,7 @@ export * from './missions';
 export * from './loot';
 export * from './optimizer-views';
 export * from './optimizer-tree';
+export * from './tank-ids';
 
 import type { DAGNode, LaunchSolution, OptimizerConfig, OptimizerSolution, DropRow, RecipeDAG } from './types';
 import { enumerateLaunchOptions, generateRecipeDag } from './phases';
@@ -108,6 +109,20 @@ function computeFuelByEgg(solution: OptimizerSolution): Map<ei.Egg, number> {
   return totals;
 }
 
+// Presentation-only fields, easier to compute here than inside the search.
+// Exported because the app runs the search in a worker (optimizer.worker.ts)
+// and applies this finishing step on the main thread afterwards, so both the
+// synchronous optimize() below and the worker path produce identical
+// solutions.
+export function finalizeSolutions(solutions: OptimizerSolution[], dag: RecipeDAG): OptimizerSolution[] {
+  for (const solution of solutions) {
+    solution.choiceHistory.sort((a: LaunchSolution, b: LaunchSolution) => a.ship.shipType - b.ship.shipType);
+    solution.expectedDrops = computeExpectedDrops(solution, dag);
+    solution.fuelByEgg = computeFuelByEgg(solution);
+  }
+  return solutions;
+}
+
 // Run the optimizer and fill in the presentation-only fields. Returns an
 // array though today it's always one solution. May extend this to return
 // top N solutions.
@@ -133,14 +148,7 @@ export function optimize(
     }),
   ];
 
-  // Properties for presentation layer, easier to compute here
-  for (const solution of solutions) {
-    solution.choiceHistory.sort((a: LaunchSolution, b: LaunchSolution) => a.ship.shipType - b.ship.shipType);
-    solution.expectedDrops = computeExpectedDrops(solution, dag);
-    solution.fuelByEgg = computeFuelByEgg(solution);
-  }
-
-  return solutions;
+  return finalizeSolutions(solutions, dag);
 }
 
 export type {

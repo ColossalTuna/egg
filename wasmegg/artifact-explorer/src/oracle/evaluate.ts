@@ -6,7 +6,7 @@
 
 import type { LaunchOption, RecipeDAG } from '../lib/types';
 import { Frac } from './rational';
-import { simplexMaximize, simplexMaximizeFloat } from './simplex';
+import { simplexMaximize, simplexMaximizeFloat, simplexMaximizeFloatFull } from './simplex';
 
 export interface OracleInstance {
   label: string;
@@ -172,4 +172,373 @@ export function evaluateAllocation(inst: OracleInstance, allocation: number[]): 
     probability: 1 - Math.exp(-score),
     expectedCrafts: inst.targets.length === 1 ? lpScore / targetQ(inst, inst.targets[0]) : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Joint (product) probability evaluator -- independent of value-function.ts's
+// tangent-line epigraph LP (compileJointInnerLp/JOINT_TANGENTS/EPIGRAPH_SHIFT).
+// The production algorithm approximates maximize sum_T g(score_T),
+// g(s) = log(1 - e^-s), with a concave-envelope LP relaxation over tangent
+// lines; this file instead solves the TRUE objective directly, with no LP
+// relaxation and no tangent lines, so it can catch bugs in that
+// approximation instead of repeating its logic.
+//
+// For exactly two targets, the achievable (score_0, score_1) pairs are the
+// linear image (allocation -> (Q_0*craft_t0, Q_1*craft_t1)) of the SAME
+// bounded craft-conservation polytope the union evaluator above already
+// solves -- a linear image of a (bounded, since the recipe DAG is acyclic)
+// polytope is itself a polytope, so its upper-right (Pareto) boundary is a
+// concave, piecewise-linear function of score_0. Maximizing
+// g(score_0) + g(score_1) over that boundary is therefore a 1-D concave
+// problem, solved here with NO notion of "splitting a shared ingredient"
+// (which would mishandle a case the generator genuinely produces: one
+// target itself consumed as an ingredient by the other's recipe, ~9% of
+// random-multi instances -- see the oracle PR notes). Instead:
+//
+//   1. trace the polytope's Pareto frontier by solving the ordinary LP
+//      "maximize w*Q_0*craft_t0 + (1-w)*Q_1*craft_t1" for a sweep of
+//      weights w, recursively bisecting whenever two neighboring weights
+//      land on different vertices, until no further distinct vertex turns
+//      up between them (a polytope has finitely many vertices, so this
+//      terminates well inside the depth/budget caps on any instance this
+//      generator produces -- the caps exist only to bound pathological float
+//      near-ties);
+//   2. golden-section search the true joint objective along each frontier
+//      EDGE -- the straight segment between two adjacent vertices' PRIMAL
+//      solutions, valid because a convex combination of two feasible
+//      allocations is itself feasible and score_0/score_1 are linear in the
+//      allocation -- which recovers the exact optimum even when it falls
+//      strictly inside an edge rather than exactly at a vertex.
+//
+// The frontier trace runs on the float simplex (cheap: used to rank many
+// candidate allocations); the winning edge's two weights are then re-solved
+// with the exact BigInt-rational simplex for the numbers actually asserted,
+// mirroring the float-ranks/exact-reports split used everywhere else in this
+// file.
+
+export interface OracleJointTargetResult {
+  nodeId: string;
+  score: number; // Q_T * craftCount_T + direct-drop lambda_T
+  bestProbability: number; // 1 - exp(-score)
+  expectedCrafts: number;
+}
+
+export interface OracleJointEvaluation {
+  jointProbability: number; // product over targets of bestProbability
+  perTarget: OracleJointTargetResult[];
+}
+
+function directDropsFor(inst: OracleInstance, allocation: number[], target: string): number {
+  let drops = 0;
+  inst.options.forEach((opt, i) => {
+    drops += allocation[i] * (opt.legendaryYieldVector.get(target) ?? 0);
+  });
+  return drops;
+}
+
+// g(s) = log(1 - e^-s). Deliberately re-derived here rather than imported
+// from value-function.ts, to keep this evaluator independent of production
+// code (the formula itself is elementary math, not part of the tangent-plane
+// machinery this file must avoid reusing).
+function logHitProbability(s: number): number {
+  return s > 0 ? Math.log(-Math.expm1(-s)) : -Infinity;
+}
+
+function inventoryFloat(inst: OracleInstance, allocation: number[]): Map<string, number> {
+  const inv = new Map<string, number>();
+  for (const [item, qty] of inst.baseYield) {
+    inv.set(item, (inv.get(item) ?? 0) + qty);
+  }
+  inst.options.forEach((opt, i) => {
+    if (!allocation[i]) return;
+    for (const [item, qty] of opt.yieldVector) {
+      inv.set(item, (inv.get(item) ?? 0) + allocation[i] * qty);
+    }
+  });
+  return inv;
+}
+
+const GOLDEN = (Math.sqrt(5) - 1) / 2;
+
+// argmax of a unimodal (here: concave) f over [0, 1].
+function goldenSectionArgmax(f: (x: number) => number, iters = 80): number {
+  let a = 0;
+  let b = 1;
+  let c = b - GOLDEN * (b - a);
+  let d = a + GOLDEN * (b - a);
+  let fc = f(c);
+  let fd = f(d);
+  for (let i = 0; i < iters; i++) {
+    if (fc >= fd) {
+      b = d;
+      d = c;
+      fd = fc;
+      c = b - GOLDEN * (b - a);
+      fc = f(c);
+    } else {
+      a = c;
+      c = d;
+      fc = fd;
+      d = a + GOLDEN * (b - a);
+      fd = f(d);
+    }
+  }
+  return (a + b) / 2;
+}
+
+interface FrontierVertexFloat {
+  scores: number[]; // Q_i * primal[idx_i] for each target
+  primal: number[];
+}
+
+// Maximize the weighted-sum craft objective sum_i weights_i * Q_i * craft_i over
+// the conservation polytope (RHS b), for an arbitrary number of targets.
+function solveWeightedFloat(
+  template: LpTemplate,
+  b: number[],
+  idxs: number[],
+  Qs: number[],
+  weights: number[]
+): FrontierVertexFloat {
+  const c = new Array<number>(template.craftables.length).fill(0);
+  for (let i = 0; i < idxs.length; i++) {
+    c[idxs[i]] = weights[i] * Qs[i];
+  }
+  const { primal } = simplexMaximizeFloatFull(template.A, b, c);
+  const scores = idxs.map((idx, i) => Qs[i] * primal[idx]);
+  return { scores, primal };
+}
+
+// Marginal slope g'(s) of g(s) = log(1 - e^-s); grows like 1/s as s -> 0, so it
+// is capped to keep the linearized objective finite when a target's score is
+// driven to zero.
+function jointGPrime(s: number): number {
+  const CAP = 1e12;
+  return s <= 0 ? CAP : Math.min(1 / Math.expm1(s), CAP);
+}
+
+interface JointOptimum {
+  scores: number[]; // s_i = Q_i * craft_i + lambda_i, per target
+  crafts: number[]; // expected legendary crafts per target
+  logProb: number; // sum_i logHitProbability(s_i)
+}
+
+// Maximize the exact joint objective sum_i g(s_i), s_i = Q_i*craft_i + lambda_i,
+// over the craft-conservation polytope at a FIXED inventory (RHS b), via
+// Frank-Wolfe (conditional gradient) with an exact 1-D line search, for an
+// arbitrary number of targets. Each step linearizes the concave g at the
+// current scores -- weight_i = g'(s_i) -- and maximizes the resulting
+// weighted-sum craft LP with the oracle's own float simplex; the segment from
+// the current point to that LP vertex is an ascent direction, and a
+// golden-section line search along it (crafts, hence scores, are linear in the
+// segment parameter, so sum_i g(s_i) stays concave in it) lands on the
+// segment's optimum. Because the objective is concave the true objective is
+// non-decreasing each step and converges to the polytope's global optimum,
+// whatever the frontier's vertex arrangement. The dimension of the frontier
+// is the target count; Frank-Wolfe needs no vertex enumeration and so scales to
+// n >= 3 without the blind spots a weight-band trace would have.
+//
+// This replaces an earlier weight-bisection frontier trace that could silently
+// miss vertices whose weight-band sat off-center (a probe at the interval
+// midpoint reveals only the vertex active at that one weight), which made the
+// traced frontier -- and the joint optimum read off it -- an UNDER-estimate on
+// lopsided instances. Frank-Wolfe needs no vertex enumeration and so has no
+// such blind spot. It is still disparate from production: the simplex, the
+// polytope build, and the objective are all independent re-derivations here, so
+// an agreeing answer is genuine corroboration rather than shared code. Float
+// precision (~1e-12) is far tighter than the honesty tolerance (1e-6), so the
+// exact BigInt path the union evaluator uses is unnecessary for this objective
+// (whose optimum generally lies in the interior of a frontier edge, where the
+// old code's rational endpoints were interpolated at a float parameter anyway).
+function optimizeJointFloat(
+  template: LpTemplate,
+  b: number[],
+  idxs: number[],
+  Qs: number[],
+  lambdas: number[]
+): JointOptimum {
+  const n = idxs.length;
+  // Maximize via AWAY-STEP Frank-Wolfe over the craft polytope. Two problems
+  // force this over plain FW:
+  //
+  //  * Seeding. A weighted-sum craft LP is linear, so its optimum is a
+  //    one-target corner; for n >= 3 a corner seed leaves >= 2 targets at zero
+  //    crafts, where g(0) = -Infinity pins the line search. We seed at the
+  //    centroid of the n per-target max-craft vertices (each craftable target
+  //    positive), tracked as the initial active set with equal weights.
+  //  * The tail. Plain FW converges at O(1/k), and when the optimum lies in the
+  //    interior of a polytope face (a dependency chain where one target is
+  //    another's ingredient, so optimal x_child = x_parent is approached but is
+  //    not a vertex) the degenerate vertices the tableau simplex returns make it
+  //    zig-zag -- ~5e4 iterations to reach the 1e-6 honesty tolerance, far too
+  //    coarse for ground truth. Away steps (retreating from the worst active
+  //    vertex) restore effectively linear convergence.
+  //
+  // The active set carries each visited vertex's target-craft vector and its
+  // convex weight; the current point is their weighted sum. Only target crafts
+  // are tracked (scores, gradient and line search need nothing else).
+  interface ActiveVertex {
+    crafts: number[];
+    weight: number;
+  }
+  const active: ActiveVertex[] = [];
+  for (let i = 0; i < n; i++) {
+    const weights = new Array<number>(n).fill(0);
+    weights[i] = 1;
+    const vertex = solveWeightedFloat(template, b, idxs, Qs, weights);
+    active.push({ crafts: idxs.map(idx => vertex.primal[idx]), weight: 1 / n });
+  }
+  const crafts = new Array<number>(n).fill(0);
+  const recomputeCrafts = () => {
+    crafts.fill(0);
+    for (const av of active) {
+      for (let i = 0; i < n; i++) crafts[i] += av.weight * av.crafts[i];
+    }
+  };
+  recomputeCrafts();
+
+  const VERTEX_TOL = 1e-9; // treat two vertices closer than this as identical
+  const sameVertex = (a: number[], v: number[]) => a.every((ai, i) => Math.abs(ai - v[i]) < VERTEX_TOL);
+  const dot = (grad: number[], v: number[]) => grad.reduce((s, g, i) => s + g * v[i], 0);
+
+  const GAP_TOL = 1e-12;
+  for (let iter = 0; iter < 2000; iter++) {
+    const scores = crafts.map((craft, i) => Qs[i] * craft + lambdas[i]);
+    const grad = scores.map((s, i) => jointGPrime(s) * Qs[i]); // d/d(craft_i) sum g
+    const c = new Array<number>(template.craftables.length).fill(0);
+    for (let i = 0; i < n; i++) c[idxs[i]] = grad[i];
+    const { primal } = simplexMaximizeFloatFull(template.A, b, c);
+    const fwVertex = idxs.map(idx => primal[idx]);
+
+    // FW duality gap <grad, fwVertex - x>: an upper bound on the objective's
+    // distance to the optimum, so a tiny gap certifies convergence.
+    const gDotX = dot(grad, crafts);
+    const gap = dot(grad, fwVertex) - gDotX;
+    if (gap < GAP_TOL) break;
+
+    // Away vertex: the active vertex the gradient likes least; retreating from
+    // it is the move plain FW cannot make.
+    let awayIdx = 0;
+    let awayDotVal = Infinity;
+    for (let k = 0; k < active.length; k++) {
+      const v = dot(grad, active[k].crafts);
+      if (v < awayDotVal) {
+        awayDotVal = v;
+        awayIdx = k;
+      }
+    }
+
+    const fwDot = dot(grad, fwVertex) - gDotX; // == gap
+    const awayDot = gDotX - awayDotVal;
+    const away = active[awayIdx];
+    const useFw = fwDot >= awayDot;
+    const dir = useFw ? fwVertex.map((v, i) => v - crafts[i]) : crafts.map((cx, i) => cx - away.crafts[i]);
+    const gammaMax = useFw ? 1 : away.weight / (1 - away.weight);
+
+    const phi = (u: number) => {
+      const gamma = u * gammaMax;
+      let total = 0;
+      for (let i = 0; i < n; i++) {
+        total += logHitProbability(Qs[i] * (crafts[i] + gamma * dir[i]) + lambdas[i]);
+      }
+      return total;
+    };
+    const gamma = goldenSectionArgmax(phi, 100) * gammaMax;
+
+    // Reweight the active set for the chosen step, then fold in / drop vertices.
+    if (useFw) {
+      for (const av of active) av.weight *= 1 - gamma;
+      const hit = active.find(av => sameVertex(av.crafts, fwVertex));
+      if (hit) hit.weight += gamma;
+      else active.push({ crafts: fwVertex, weight: gamma });
+    } else {
+      for (const av of active) av.weight *= 1 + gamma;
+      away.weight -= gamma;
+    }
+    for (let k = active.length - 1; k >= 0; k--) {
+      if (active[k].weight <= VERTEX_TOL) active.splice(k, 1);
+    }
+    recomputeCrafts();
+  }
+
+  const scores = crafts.map((craft, i) => Qs[i] * craft + lambdas[i]);
+  let logProb = 0;
+  for (const s of scores) {
+    logProb += logHitProbability(s);
+  }
+  return { scores, crafts, logProb };
+}
+
+function jointContext(inst: OracleInstance): {
+  template: LpTemplate;
+  idxs: number[];
+  Qs: number[];
+  targets: string[];
+} {
+  // n=1 never reaches here: both entry points short-circuit to the union
+  // evaluator, whose single-target arithmetic is exact.
+  if (inst.targets.length < 2) {
+    throw new Error(
+      `jointContext requires 2+ targets (got ${inst.targets.length}); n=1 short-circuits to the union evaluator`
+    );
+  }
+  const template = lpTemplate(inst);
+  const idxs = inst.targets.map(t => template.craftables.indexOf(t));
+  const missing = idxs.findIndex(idx => idx === -1);
+  if (missing !== -1) {
+    throw new Error(`target ${inst.targets[missing]} is not craftable`);
+  }
+  const Qs = inst.targets.map(t => targetQ(inst, t));
+  return { template, idxs, Qs, targets: inst.targets };
+}
+
+// Cheap ranking path (float simplex): plays the same role for the joint
+// objective that evaluateAllocationFloat plays for the union objective.
+export function evaluateAllocationJointFloat(inst: OracleInstance, allocation: number[]): number {
+  if (inst.targets.length === 1) {
+    return 1 - Math.exp(-evaluateAllocationFloat(inst, allocation));
+  }
+  const { template, idxs, Qs, targets } = jointContext(inst);
+  const inv = inventoryFloat(inst, allocation);
+  const b = template.items.map(item => inv.get(item) ?? 0);
+  const lambdas = targets.map(t => directDropsFor(inst, allocation, t));
+  const { logProb } = optimizeJointFloat(template, b, idxs, Qs, lambdas);
+  return Math.exp(logProb);
+}
+
+export function evaluateAllocationJoint(inst: OracleInstance, allocation: number[]): OracleJointEvaluation {
+  if (inst.targets.length === 1) {
+    const single = evaluateAllocation(inst, allocation);
+    return {
+      jointProbability: single.probability,
+      perTarget: [
+        {
+          nodeId: inst.targets[0],
+          score: single.score,
+          bestProbability: single.probability,
+          expectedCrafts: single.expectedCrafts ?? 0,
+        },
+      ],
+    };
+  }
+
+  const { template, idxs, Qs, targets } = jointContext(inst);
+  const inv = inventoryFloat(inst, allocation);
+  const b = template.items.map(item => inv.get(item) ?? 0);
+  const lambdas = targets.map(t => directDropsFor(inst, allocation, t));
+
+  // Frank-Wolfe converges to the true optimum in float to ~1e-12, which is far
+  // inside the honesty tolerance (1e-6); the joint optimum generally lands in
+  // the interior of a frontier edge, so there is no single vertex a BigInt
+  // solve could report exactly anyway (see optimizeJointFloat).
+  const opt = optimizeJointFloat(template, b, idxs, Qs, lambdas);
+  let jointProbability = 1;
+  const perTarget: OracleJointTargetResult[] = targets.map((nodeId, i) => {
+    const score = opt.scores[i];
+    const bestProbability = score > 0 ? 1 - Math.exp(-score) : 0;
+    jointProbability *= bestProbability;
+    return { nodeId, score, bestProbability, expectedCrafts: opt.crafts[i] };
+  });
+
+  return { jointProbability, perTarget };
 }

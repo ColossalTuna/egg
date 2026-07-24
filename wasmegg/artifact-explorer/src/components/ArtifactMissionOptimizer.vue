@@ -5,6 +5,7 @@
       <optimizer-sidebar
         :player-id="playerId"
         :pending-compute="pendingCompute"
+        :computing="computing"
         :wait-time-days="waitTimeDays"
         :time-budget-invalid="!timeBudgetValid"
         @submit-player-id="submitPlayerId"
@@ -28,8 +29,17 @@
           :mission-legendary-sources="view.missionLegendarySources"
           :has-inventory="!!playerInventory"
           :drop-data-is-sparse="view.dropDataIsSparse"
+          :targets="view.targets"
         />
-        <p v-if="solutionViews.length === 0" class="text-sm text-gray-400">
+        <p v-if="computing" class="flex items-center gap-2 text-sm text-gray-500">
+          <svg class="animate-spin h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          Computing the best ship set…
+        </p>
+        <p v-else-if="computeError" class="text-sm text-red-600">Could not compute a plan: {{ computeError }}</p>
+        <p v-else-if="solutionViews.length === 0" class="text-sm text-gray-400">
           {{
             timeBudgetValid
               ? 'No ship set found for the current settings.'
@@ -38,7 +48,20 @@
         </p>
       </div>
 
-      <optimizer-inventory-panel :tree="inventoryTree" :has-inventory="!!playerInventory" />
+      <optimizer-inventory-panel
+        v-if="artifactIds.length <= 1"
+        :tree="inventoryTree"
+        :has-inventory="!!playerInventory"
+      />
+      <template v-else>
+        <div v-for="target in inventoryTrees" :key="'inventory-' + target.nodeId">
+          <div class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1">
+            <img :src="target.iconUrl" class="h-4 w-4 flex-shrink-0" />
+            <span>{{ target.name }}</span>
+          </div>
+          <optimizer-inventory-panel :tree="target.tree" :has-inventory="!!playerInventory" />
+        </div>
+      </template>
 
       <slot />
     </div>
@@ -46,9 +69,16 @@
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, onUnmounted, ref, toRefs, watch, watchEffect } from 'vue';
+import { computed, defineComponent, onUnmounted, PropType, ref, toRefs, watch, watchEffect } from 'vue';
 
-import { getSavedPlayerID, parseDurationDays, requestFirstContact, savePlayerID } from 'lib';
+import {
+  getArtifactTierPropsFromId,
+  getSavedPlayerID,
+  iconURL,
+  parseDurationDays,
+  requestFirstContact,
+  savePlayerID,
+} from 'lib';
 
 import {
   autoCompute,
@@ -68,12 +98,15 @@ import {
   computeCraftChainTree,
   computeInventoryTree,
   computeMissionLegendaryRows,
+  finalizeSolutions,
   lambdaFromDropProbability,
   legendaryCraftProbabilityOf,
   legendaryDataIsSparse,
-  optimize,
   type OptimizerSolution,
+  type TargetView,
 } from '@/lib';
+import { enumerateLaunchOptions } from '@/lib/phases';
+import { createOptimizerClient, type OptimizerClient, type OptimizerRequestInput } from '@/lib/optimizer-client';
 import OptimizerSidebar from './optimizer/OptimizerSidebar.vue';
 import OptimizerInventoryPanel from './optimizer/OptimizerInventoryPanel.vue';
 import OptimizerSolutionCard from './optimizer/OptimizerSolutionCard.vue';
@@ -81,10 +114,15 @@ import OptimizerSolutionCard from './optimizer/OptimizerSolutionCard.vue';
 export default defineComponent({
   components: { OptimizerSidebar, OptimizerInventoryPanel, OptimizerSolutionCard },
   props: {
-    artifactId: { type: String, required: true },
+    artifactIds: { type: Array as PropType<string[]>, required: true },
   },
   setup(props) {
-    const { artifactId } = toRefs(props);
+    const { artifactIds } = toRefs(props);
+    // The craft-chain and inventory trees are built per target (see
+    // solutionViews / inventoryTrees below); this is only the override modal's
+    // notion of "the artifact currently being planned", which stays
+    // single-valued because the modal edits one artifact's craft count.
+    const primaryArtifactId = computed(() => artifactIds.value[0]);
 
     const waitTimeDays = ref('30');
     const maxWaitTimeSeconds = computed(() => parseDurationDays(waitTimeDays.value));
@@ -100,7 +138,7 @@ export default defineComponent({
 
     // let the override modal show the prior craft count for this artifact
     watch(
-      artifactId,
+      primaryArtifactId,
       v => {
         currentOptimizerArtifactId.value = v;
       },
@@ -118,6 +156,8 @@ export default defineComponent({
     };
 
     const pendingCompute = ref(false);
+    const computing = ref(false);
+    const computeError = ref('');
     const computedResults = ref<OptimizerSolution[]>([]);
     // budget the displayed plan was computed against; the live input can
     // change before a manual recompute
@@ -125,7 +165,7 @@ export default defineComponent({
 
     const recipeDag = computed<ReturnType<typeof buildRecipeDag>>(() =>
       buildRecipeDag(
-        [artifactId.value],
+        artifactIds.value,
         effectiveCraftingLevel.value,
         playerInventory.value,
         effectivePreviousCrafts.value
@@ -133,60 +173,173 @@ export default defineComponent({
     );
 
     const playerBaseYield = computed<ReturnType<typeof computeBaseYield>>(() =>
-      computeBaseYield(playerInventory.value, [artifactId.value], recipeDag.value)
+      computeBaseYield(playerInventory.value, artifactIds.value, recipeDag.value)
     );
 
-    function runCompute() {
-      if (!timeBudgetValid.value) {
-        computedResults.value = [];
-        pendingCompute.value = false;
-        return;
-      }
+    // Everything the search needs, assembled reactively so the auto-compute
+    // effect below can track its inputs without running the solve itself.
+    // Launch-option enumeration happens here rather than in the worker: it is
+    // cheap, and it is the only step that needs the loot dataset, which the
+    // main bundle already loads for the mission views (see
+    // optimizer-worker-protocol.ts).
+    const computeInputs = computed<OptimizerRequestInput | null>(() => {
+      if (!timeBudgetValid.value) return null;
       const launchPeriodSeconds = EFFORT_LAUNCH_PERIOD_SECONDS[missionFilters.value.effort];
       const maxGemCost = missionFilters.value.maxGemCostEnabled ? missionFilters.value.maxGemCost : undefined;
-      lastComputedMaxWaitTimeSeconds.value = maxWaitTimeSeconds.value;
-      computedResults.value = optimize(
-        {
-          // Eventually, this will be expanded to allow multiple artifacts
-          // so array entry is a placeholder
-          desiredArtifactNodeIds: [artifactId.value],
-          includeNotEnoughData: effectiveConfig.value.showNodata,
-          fuelTankCapacity: effectiveFuelTankCapacity.value,
-          timeBudgetSeconds: maxWaitTimeSeconds.value,
-        },
-        effectiveConfig.value,
-        recipeDag.value,
-        playerBaseYield.value,
-        launchPeriodSeconds,
-        maxGemCost
-      );
+      return {
+        options: enumerateLaunchOptions(effectiveConfig.value, recipeDag.value, launchPeriodSeconds, maxGemCost),
+        recipeDag: recipeDag.value,
+        desiredArtifactNodeIds: [...artifactIds.value],
+        fuelCapacity: effectiveFuelTankCapacity.value,
+        timeCapacity: maxWaitTimeSeconds.value,
+        baseYield: playerBaseYield.value,
+      };
+    });
+
+    // The solve runs in a worker (see optimizer.worker.ts), so a multi-second
+    // multi-target search never blocks paint and auto-compute can stay on for
+    // any number of targets. Created lazily so a page that never opens the
+    // planner doesn't pay for the worker bundle.
+    let client: OptimizerClient | null = null;
+    const optimizerClient = () => (client ??= createOptimizerClient());
+
+    async function runCompute() {
+      const input = computeInputs.value;
+      if (!input) {
+        computedResults.value = [];
+        pendingCompute.value = false;
+        computing.value = false;
+        computeError.value = '';
+        return;
+      }
+      const budget = maxWaitTimeSeconds.value;
       pendingCompute.value = false;
+      computing.value = true;
+      computeError.value = '';
+      try {
+        const solutions = await optimizerClient().run(input);
+        // null means a newer request superseded this one; that request owns
+        // the results and the spinner, so leave both alone.
+        if (solutions === null) return;
+        // The inputs can also have gone invalid while the solve was in flight
+        // (clearing the time budget, say). Nothing supersedes the request in
+        // that case -- the watchEffect just empties the results -- so this
+        // handler has to drop them rather than restore a stale plan.
+        if (!computeInputs.value) {
+          computedResults.value = [];
+          computing.value = false;
+          return;
+        }
+        lastComputedMaxWaitTimeSeconds.value = budget;
+        // The same presentation fill-in the synchronous optimize() applies;
+        // it needs artifact metadata the worker has no reason to carry.
+        computedResults.value = finalizeSolutions(solutions, input.recipeDag);
+        computing.value = false;
+      } catch (err) {
+        computeError.value = err instanceof Error ? err.message : String(err);
+        computedResults.value = [];
+        computing.value = false;
+      }
     }
 
-    // Recompute on any relevant change while auto-compute is on; otherwise
-    // just flag that a manual recompute is due. Note that with auto-compute
-    // off this effect only tracks autoCompute itself.
+    // Auto-compute coalesces bursts of input changes (dragging the effort
+    // slider, typing a time budget) into one solve. It's a plain debounce
+    // rather than the old immediate call because the search now runs
+    // asynchronously: without it every intermediate value would start a solve
+    // that the next keystroke immediately supersedes.
+    const AUTO_COMPUTE_DEBOUNCE_MS = 250;
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // Reading computeInputs.value here is what registers the dependency on
+    // every setting the solve consumes; the debounced callback must not be the
+    // thing that reads them, or the effect would only ever re-run on
+    // autoCompute itself.
     watchEffect(() => {
-      if (autoCompute.value) {
-        runCompute();
-      } else {
+      const input = computeInputs.value;
+      if (!autoCompute.value) {
         pendingCompute.value = true;
+        return;
       }
+      if (!input) {
+        computedResults.value = [];
+        return;
+      }
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(runCompute, AUTO_COMPUTE_DEBOUNCE_MS);
+    });
+
+    onUnmounted(() => {
+      clearTimeout(debounceTimer);
+      client?.terminate();
     });
 
     const inventoryTree = computed(() =>
-      computeInventoryTree(artifactId.value, recipeDag.value, playerInventory.value)
+      computeInventoryTree(primaryArtifactId.value, recipeDag.value, playerInventory.value)
+    );
+
+    // Name/icon lookup shared by every per-target label in the results UI,
+    // reusing the same artifact metadata source as the recipe-tree builders
+    // (optimizer-tree.ts) rather than inventing a second lookup.
+    function artifactDisplay(nodeId: string): { name: string; iconUrl: string } {
+      const props = getArtifactTierPropsFromId(nodeId);
+      return { name: props.name, iconUrl: iconURL('egginc/' + props.icon_filename, 64) };
+    }
+
+    // Per-target inventory trees, for the n>=2 inventory panel below; unused
+    // (and not rendered) when there's a single target, which keeps using the
+    // plain `inventoryTree` above so its markup stays unchanged.
+    const inventoryTrees = computed(() =>
+      artifactIds.value.map(nodeId => ({
+        nodeId,
+        ...artifactDisplay(nodeId),
+        tree: computeInventoryTree(nodeId, recipeDag.value, playerInventory.value),
+      }))
     );
 
     const solutionViews = computed(() =>
-      computedResults.value.map(solution => ({
-        solution,
-        pCraft: legendaryCraftProbabilityOf(solution, artifactId.value),
-        lambda: lambdaFromDropProbability(solution.dropProbability),
-        craftChainTree: computeCraftChainTree(solution, artifactId.value, playerInventory.value),
-        missionLegendarySources: computeMissionLegendaryRows(solution, artifactId.value),
-        dropDataIsSparse: legendaryDataIsSparse(artifactId.value),
-      }))
+      computedResults.value.map(solution => {
+        // Built once per target so n=1 and n>=2 share the exact same
+        // per-target computation; the n=1 render path additionally gets the
+        // primary target's values duplicated onto flat props below so it can
+        // keep reading them exactly as it did before this existed.
+        //
+        // Iterate solution.perTarget (the solution's own actual target list)
+        // rather than the live artifactIds: between the user changing their
+        // selection and the next completed optimize() run, computedResults
+        // is stale while artifactIds is live, so looking up live ids in the
+        // stale solution would either miss (falling back to the wrong
+        // target's data) or under/over-count targets vs what this solution
+        // actually describes. Deriving purely from `solution` keeps this
+        // view internally consistent no matter how out of sync the live
+        // selection currently is.
+        const targets: TargetView[] = solution.perTarget.map(perTarget => {
+          const nodeId = perTarget.nodeId;
+          const display = artifactDisplay(nodeId);
+          return {
+            nodeId,
+            name: display.name,
+            iconUrl: display.iconUrl,
+            perTarget,
+            pCraft: legendaryCraftProbabilityOf(solution, nodeId),
+            lambda: lambdaFromDropProbability(perTarget.dropProbability),
+            craftChainTree: computeCraftChainTree(solution, nodeId, playerInventory.value),
+            missionLegendarySources: computeMissionLegendaryRows(solution, nodeId),
+            dropDataIsSparse: legendaryDataIsSparse(nodeId),
+          };
+        });
+        return {
+          solution,
+          targets,
+          // Flat primary-target fields, kept for the n=1 render branch of
+          // OptimizerSolutionCard, which must read the exact same values it
+          // did before multi-target support existed.
+          pCraft: targets[0].pCraft,
+          lambda: targets[0].lambda,
+          craftChainTree: targets[0].craftChainTree,
+          missionLegendarySources: targets[0].missionLegendarySources,
+          dropDataIsSparse: targets[0].dropDataIsSparse,
+        };
+      })
     );
 
     return {
@@ -194,11 +347,15 @@ export default defineComponent({
       lastComputedMaxWaitTimeSeconds,
       timeBudgetValid,
       pendingCompute,
+      computing,
+      computeError,
+      autoCompute,
       playerId,
       runCompute,
       submitPlayerId,
       playerInventory,
       inventoryTree,
+      inventoryTrees,
       solutionViews,
     };
   },

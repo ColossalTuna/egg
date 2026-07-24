@@ -2,13 +2,30 @@
 // builders live in optimizer-tree.ts.
 
 import type { ei, MissionType } from 'lib';
-import type { OptimizerSolution } from './types';
+import type { CraftChainMetrics, RecipeTreeNode } from './optimizer-tree';
+import type { OptimizerSolution, TargetProbability } from './types';
 
 export interface MissionLegendaryRow {
   ship: MissionType;
   targetAfxId: ei.ArtifactSpec.Name;
   numShipsLaunched: number;
   legendaryDrops: number;
+}
+
+// One target's worth of presentation data for the results card: its slice of
+// perTarget plus everything the single-target views (craft chain, mission
+// sources, sparse-data flag) need, all resolved against that target's own
+// nodeId rather than the plan's primary target.
+export interface TargetView {
+  nodeId: string;
+  name: string;
+  iconUrl: string;
+  perTarget: TargetProbability;
+  pCraft: number;
+  lambda: number;
+  craftChainTree: RecipeTreeNode<CraftChainMetrics> | null;
+  missionLegendarySources: MissionLegendaryRow[];
+  dropDataIsSparse: boolean;
 }
 
 // Invert P(drop) = 1 - e^(-lambda); 0 outside (0, 1).

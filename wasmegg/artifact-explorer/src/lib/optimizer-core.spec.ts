@@ -93,6 +93,39 @@ describe('optimizeFull', () => {
     expect(sol.choiceHistory.find(c => c.targetAfxId === opt1.targetAfxId)).toBeDefined();
   });
 
+  it('does not prune the only source of a direct legendary drop', () => {
+    // optDropper costs more and yields fewer ingredients than optBulk, so it
+    // looks dominated on the crafting side alone — but it is the only option
+    // that drops the target's legendary directly. Dominance has to compare the
+    // legendary vector too, or the sole drop source disappears before the
+    // search ever considers it.
+    // optBulk is free, slightly faster and supplies more B, so it dominates
+    // optDropper on every dimension a purely ingredient-based check looks at.
+    // But crafting is weak here (11 B per A at a 4% craft chance), so
+    // optDropper's direct drops are worth far more than the ingredients spent
+    // to afford them: the plan that buys drops with the whole fuel budget and
+    // fills the rest with optBulk reaches ~0.669, against ~0.580 for optBulk
+    // alone. Prune optDropper and the pair scan never sees that trade.
+    const dag: RecipeDAG = new Map([
+      ['A', makeNode('A', false, [['B', 11]], 0.04)],
+      ['B', makeNode('B', true)],
+    ]);
+    const optBulk = makeOpt(0, 6.14, [['B', 2.69]], [], Name.LUNAR_TOTEM);
+    const optDropper = makeOpt(3.49, 6.27, [['B', 1.95]], [['A', 0.05]], Name.TUNGSTEN_ANKH);
+    const sol = optimizeFull({
+      options: [optBulk, optDropper],
+      recipeDag: dag,
+      desiredArtifactNodeIds: ['A'],
+      fuelCapacity: 18.56,
+      timeCapacity: 179.54,
+      baseYield: new Map(),
+    });
+
+    expect(sol.choiceHistory.find(c => c.targetAfxId === optDropper.targetAfxId)).toBeDefined();
+    expect(sol.dropProbability).toBeGreaterThan(0);
+    expect(sol.bestProbability).toBeGreaterThan(0.65);
+  });
+
   it('allocates complementary options together', () => {
     // A needs both B and C; one option yields each, neither dominates.
     // The budget should be split between them.

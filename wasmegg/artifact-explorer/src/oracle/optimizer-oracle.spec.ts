@@ -12,8 +12,8 @@ import { describe, expect, test } from 'vitest';
 import { optimizeFull } from '../lib/optimizer-core';
 import type { OptimizerSolution } from '../lib/types';
 import { makeNode, makeOpt } from '../lib/spec-helpers';
-import { bruteForceBest, packableInto3Bins } from './enumerate';
-import { evaluateAllocation, OracleInstance, targetQ } from './evaluate';
+import { bruteForceBestJoint, packableInto3Bins } from './enumerate';
+import { evaluateAllocation, evaluateAllocationJoint, OracleInstance, targetQ } from './evaluate';
 import { FAMILIES, Family, generateInstance } from './generate';
 
 const GAP_TOL = Number(process.env.ORACLE_GAP_TOL ?? 1e-3);
@@ -73,23 +73,11 @@ function reconstructAllocation(inst: OracleInstance, solution: OptimizerSolution
   return allocation;
 }
 
-// probability of at least one legendary across all targets, as claimed by the
-// solver's perTarget report
-function claimedProbability(solution: OptimizerSolution, inst: OracleInstance): number {
-  let oneMinus = 1;
-  for (const target of inst.targets) {
-    const per = solution.perTarget.find(p => p.nodeId === target);
-    if (!per) {
-      throw new Error(`perTarget missing entry for ${target}`);
-    }
-    oneMinus *= 1 - per.bestProbability;
-  }
-  return 1 - oneMinus;
-}
-
 // Second opinion on an oracle-found allocation: collapse it into a single
 // synthetic take-it-or-leave-it option and let the solver price it with its
 // own value function, so a reported gap cannot be an oracle-model artifact.
+// Reads back jointProbability, the metric the solver maximizes at every target
+// count (with one target it is that target's own probability).
 function solverPricesAllocation(inst: OracleInstance, allocation: number[]): number {
   const yields = new Map<string, number>();
   const legendary = new Map<string, number>();
@@ -109,7 +97,7 @@ function solverPricesAllocation(inst: OracleInstance, allocation: number[]): num
     timeCapacity: 1,
     baseYield: inst.baseYield,
   });
-  return claimedProbability(solution, inst);
+  return solution.jointProbability;
 }
 
 function checkInstance(inst: OracleInstance, gapTol = GAP_TOL): InstanceOutcome {
@@ -182,30 +170,56 @@ function checkInstance(inst: OracleInstance, gapTol = GAP_TOL): InstanceOutcome 
     );
   }
 
-  const planEval = evaluateAllocation(inst, allocation);
-  const claimed = claimedProbability(solution, inst);
-  if (Math.abs(claimed - planEval.probability) > HONESTY_TOL) {
-    fail('honesty', `claimed p=${claimed} vs independent p=${planEval.probability} for allocation [${allocation}]`);
-  } else if (claimed < 1 && planEval.score < 30) {
-    // also compare in score space, which stays sharp where probabilities
-    // compress toward 1; the round-trip resolution is ~ulp(1) * e^score
-    const claimedScore = -Math.log(1 - claimed);
-    const roundTripResolution = 4e-16 * Math.exp(planEval.score);
-    if (Math.abs(claimedScore - planEval.score) > HONESTY_TOL * (1 + planEval.score) + roundTripResolution) {
-      fail('honesty', `claimed score ${claimedScore} vs independent ${planEval.score} for allocation [${allocation}]`);
+  // The solver maximizes the AND (product-over-targets) probability at every
+  // target count, so every instance is checked against the same independent
+  // joint evaluator and brute force regardless of how many targets it has. At
+  // n=1 the product has one factor and evaluateAllocationJoint delegates to the
+  // exact-arithmetic union evaluator, so single-target instances lose no rigour
+  // by not having a checking path of their own.
+  const planEval = evaluateAllocationJoint(inst, allocation);
+  const claimed = solution.jointProbability;
+  const expected = planEval.jointProbability;
+  for (const p of planEval.perTarget) {
+    if (!solution.perTarget.some(q => q.nodeId === p.nodeId)) {
+      fail('honesty', `perTarget missing entry for ${p.nodeId}`);
+    }
+  }
+  if (Math.abs(claimed - expected) > HONESTY_TOL) {
+    fail('honesty', `claimed jointProbability=${claimed} vs independent ${expected} for allocation [${allocation}]`);
+  } else if (claimed > 0 && expected > 0) {
+    // Also compare in log space, which stays sharp at both ends of the range
+    // the absolute test above goes blind at: a joint probability runs from
+    // ~1e-8 on a long-odds multi-target plan up to within an ulp of 1 on an
+    // easy single-target one, and a fixed 1e-6 band is vacuous at the bottom
+    // and unreachable at the top.
+    //
+    // Deliberately on the joint probability rather than per target: the
+    // per-target split is pinned down only where the objective is strictly
+    // curved in it, and on a plan that leaves any target at zero crafts the
+    // joint probability is zero for every split, so the solver's split and the
+    // oracle's can differ freely without either being wrong. The product is
+    // the quantity both sides actually optimize, and comparing it needs no
+    // assumption about which split they landed on.
+    const claimedLog = -Math.log(claimed);
+    const expectedLog = -Math.log(expected);
+    if (Math.abs(claimedLog - expectedLog) > HONESTY_TOL * (1 + expectedLog)) {
+      fail(
+        'honesty',
+        `claimed -log(jointProbability)=${claimedLog} vs independent ${expectedLog} for allocation [${allocation}]`
+      );
     }
   }
 
-  const oracle = bruteForceBest(inst);
-  const gap = Math.max(0, oracle.bestProbability - planEval.probability);
+  const oracle = bruteForceBestJoint(inst);
+  const gap = Math.max(0, oracle.bestJointProbability - planEval.jointProbability);
   if (gap > gapTol) {
     const solverView = solverPricesAllocation(inst, oracle.bestAllocation);
-    const confirmed = solverView - planEval.probability > GAP_TOL / 2;
+    const confirmed = solverView - planEval.jointProbability > GAP_TOL / 2;
     fail(
       'optimality',
-      `plan [${allocation}] p=${planEval.probability.toFixed(6)} but oracle found [${oracle.bestAllocation}] ` +
-        `p=${oracle.bestProbability.toFixed(6)} (gap ${gap.toExponential(3)}, ` +
-        `solver's own pricing of that allocation: ${solverView.toFixed(6)} — ` +
+      `plan [${allocation}] jointP=${planEval.jointProbability.toFixed(6)} but oracle found ` +
+        `[${oracle.bestAllocation}] jointP=${oracle.bestJointProbability.toFixed(6)} ` +
+        `(gap ${gap.toExponential(3)}, solver's own pricing of that allocation: ${solverView.toFixed(6)} — ` +
         `${confirmed ? 'CONFIRMED by solver value function' : 'NOT confirmed; possible oracle model divergence'}, ` +
         `${oracle.evaluatedCount} allocations checked)`
     );
@@ -400,7 +414,13 @@ describe('oracle calibration', () => {
     expect(evaluateAllocation(inst, [2]).probability).toBeCloseTo(expected, 9);
   });
 
-  test('multi-target allocation favors the higher-value target', () => {
+  test('single-target weighted-sum score still favors dumping everything on the higher-Q target', () => {
+    // This is the pre-multi-target-objective ground truth: evaluateAllocation
+    // re-derives the plain weighted-sum score (sum_T Q_T * crafts_T), which
+    // remains an all-or-nothing allocation to the higher-Q target. It is NOT
+    // what optimizeFull optimizes for n>=2 targets any more (see the next
+    // test) -- it only checks the oracle's own independent LP re-derivation
+    // of that score, unrelated to optimizeFull.
     const inst: OracleInstance = {
       label: 'probe',
       seed: 0,
@@ -417,11 +437,114 @@ describe('oracle calibration', () => {
       baseYield: new Map([['a', 2]]),
     };
     // both targets eat the same ingredient; all of it belongs on t1 (higher Q)
+    // under the plain weighted-sum score.
     const bestScore = 2 * targetQ(inst, 't1');
     const mine = evaluateAllocation(inst, []);
     expect(mine.score).toBeCloseTo(bestScore, 9);
+  });
+
+  test('multi-target allocation balances instead of favoring the higher-value target (joint/AND objective)', () => {
+    // Since Phase 1's joint (product) objective, optimizeFull with n>=2
+    // targets maximizes P(all), not the weighted-sum score above: dumping the
+    // whole shared ingredient on one target leaves the other at zero crafts,
+    // which zeroes the AND probability outright. The true continuous optimum
+    // (found independently via calculus on g(Q0*c0) + g(Q1*(2-c0)), g(s) =
+    // log(1 - e^-s)) balances at roughly c0=1.16, c1=0.84, jointProbability
+    // ~0.4095 -- both targets get a share, and the joint probability is
+    // enormously higher than the old all-or-nothing allocation's (which is
+    // exactly 0, since one target's craft count is 0).
+    const inst: OracleInstance = {
+      label: 'probe',
+      seed: 0,
+      options: [],
+      dag: new Map(
+        [makeNode('a', true), makeNode('t0', false, [['a', 1]], 0.5), makeNode('t1', false, [['a', 1]], 0.8)].map(n => [
+          n.id,
+          n,
+        ])
+      ),
+      targets: ['t0', 't1'],
+      fuelCapacity: 0,
+      timeCapacity: 0,
+      baseYield: new Map([['a', 2]]),
+    };
     const theirs = runOptimizer(inst);
-    expect(claimedProbability(theirs, inst)).toBeCloseTo(1 - Math.exp(-bestScore), 6);
+    const crafts = theirs.perTarget.map(p => p.expectedCrafts);
+    expect(Math.min(...crafts)).toBeGreaterThan(0.5); // balanced, not all-or-nothing
+    expect(theirs.jointProbability).toBeCloseTo(0.409536, 2);
+  });
+
+  test('three-target joint plan matches the independent oracle (n=3, exercises N-general Frank-Wolfe)', () => {
+    // Guards the shipped n>=3 path against the oracle now that its joint
+    // evaluator generalizes past 2 targets (evaluateAllocationJoint /
+    // optimizeJointFloat). The three targets share ingredient 'a', so the
+    // outer search must both pick launches and split the resulting inventory
+    // three ways; zeroing any target zeroes the AND probability, so the joint
+    // optimum spreads across all three. checkInstance asserts honesty
+    // (production jointProbability vs the oracle's independent 3-D Frank-Wolfe)
+    // and optimality (vs bruteForceBestJoint over all feasible allocations).
+    const inst: OracleInstance = {
+      label: 'probe-n3',
+      seed: 0,
+      options: [makeOpt(2, 1, [['a', 2]]), makeOpt(3, 1, [['a', 3]])],
+      dag: new Map(
+        [
+          makeNode('a', true),
+          makeNode('t0', false, [['a', 1]], 0.5),
+          makeNode('t1', false, [['a', 1]], 0.7),
+          makeNode('t2', false, [['a', 1]], 0.3),
+        ].map(n => [n.id, n])
+      ),
+      targets: ['t0', 't1', 't2'],
+      fuelCapacity: 6,
+      timeCapacity: 3,
+      baseYield: new Map([['a', 1]]),
+    };
+    assertNoFailures([checkInstance(inst)]);
+    const theirs = runOptimizer(inst);
+    const crafts = theirs.perTarget.map(p => p.expectedCrafts);
+    expect(theirs.perTarget).toHaveLength(3);
+    expect(Math.min(...crafts)).toBeGreaterThan(0); // every target gets a share
+  });
+
+  test('three-target joint plan where targets consume each other (n=3 dependency chain)', () => {
+    // The "structure of how items are consumed" case: t0 is an ingredient of
+    // t1's recipe and t1 of t2's, so crafting up the chain consumes the lower
+    // targets -- even though each craft already counted as its own legendary
+    // roll. The joint split must trade the shared 'a' between crafting each
+    // target for its own rolls and crafting it to feed the target above, over
+    // the dependency-coupled polytope; a naive "split the shared ingredient"
+    // shortcut would mishandle exactly this (the case the oracle docstring
+    // flags at ~9% of random-multi instances). checkInstance holds
+    // production's inner joint solve to the oracle's independent one over that
+    // same polytope, and to bruteForceBestJoint's enumeration.
+    const inst: OracleInstance = {
+      label: 'probe-chain',
+      seed: 0,
+      options: [makeOpt(2, 1, [['a', 3]]), makeOpt(3, 1, [['a', 5]])],
+      dag: new Map(
+        [
+          makeNode('a', true),
+          makeNode('t0', false, [['a', 1]], 0.4),
+          makeNode(
+            't1',
+            false,
+            [
+              ['t0', 1],
+              ['a', 1],
+            ],
+            0.5
+          ),
+          makeNode('t2', false, [['t1', 1]], 0.6),
+        ].map(n => [n.id, n])
+      ),
+      targets: ['t0', 't1', 't2'],
+      fuelCapacity: 6,
+      timeCapacity: 3,
+      baseYield: new Map([['a', 2]]),
+    };
+    assertNoFailures([checkInstance(inst)]);
+    expect(runOptimizer(inst).perTarget).toHaveLength(3);
   });
 });
 

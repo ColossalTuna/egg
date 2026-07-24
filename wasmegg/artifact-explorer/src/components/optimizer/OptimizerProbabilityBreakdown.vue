@@ -1,6 +1,8 @@
 <template>
   <details class="mt-3">
-    <summary class="cursor-pointer text-gray-500 hover:text-gray-700 select-none">Probability breakdown</summary>
+    <summary class="cursor-pointer text-gray-500 hover:text-gray-700 select-none">
+      Probability breakdown<template v-if="heading"> — {{ heading }}</template>
+    </summary>
 
     <!-- Formula decomposition -->
     <div class="mt-2 text-xs bg-gray-50 rounded p-2 space-y-0.5">
@@ -32,8 +34,8 @@
         <optimizer-recipe-tree-row :node="craftChainTree">
           <template #metrics="{ node }">
             <span class="font-mono text-xs whitespace-nowrap flex-shrink-0">
-              <template v-if="hasInventory && node.metrics.owned > 0">
-                <span class="text-amber-600">{{ node.metrics.owned }} inv</span>
+              <template v-if="hasInventory && node.metrics.owned > 0.005">
+                <span class="text-amber-600">{{ formatCount(node.metrics.owned) }} inv</span>
                 <span class="text-gray-400"> + </span>
               </template>
               <span class="text-blue-600">{{ node.metrics.dropped.toFixed(1) }} drop</span>
@@ -88,6 +90,9 @@ import OptimizerRecipeTreeRow from './OptimizerRecipeTreeRow.vue';
 export default defineComponent({
   components: { MissionName, OptimizerRecipeTreeRow },
   props: {
+    // Set only when the parent renders one breakdown per target (n>=2), to
+    // label which artifact each instance describes.
+    heading: { type: String, default: '' },
     bestProbability: { type: Number, required: true },
     craftProbability: { type: Number, required: true },
     dropProbability: { type: Number, required: true },
@@ -97,6 +102,13 @@ export default defineComponent({
     craftChainTree: { type: Object as PropType<RecipeTreeNode<CraftChainMetrics> | null>, required: true },
     missionLegendarySources: { type: Array as PropType<MissionLegendaryRow[]>, required: true },
     hasInventory: { type: Boolean, required: true },
+  },
+  setup() {
+    // Owned stock is a whole item count at n=1, but gets split across targets
+    // for n>=2 (see computeCraftChainTree), so it can land on a fraction. Keep
+    // integers rendering as integers so the single-target row is unchanged.
+    const formatCount = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+    return { formatCount };
   },
 });
 </script>
