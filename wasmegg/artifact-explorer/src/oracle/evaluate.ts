@@ -287,26 +287,26 @@ function goldenSectionArgmax(f: (x: number) => number, iters = 80): number {
 }
 
 interface FrontierVertexFloat {
-  w: number;
-  s0: number;
-  s1: number;
+  scores: number[]; // Q_i * primal[idx_i] for each target
   primal: number[];
 }
 
+// Maximize the weighted-sum craft objective sum_i weights_i * Q_i * craft_i over
+// the conservation polytope (RHS b), for an arbitrary number of targets.
 function solveWeightedFloat(
   template: LpTemplate,
   b: number[],
-  idx0: number,
-  idx1: number,
-  Q0: number,
-  Q1: number,
-  w: number
+  idxs: number[],
+  Qs: number[],
+  weights: number[]
 ): FrontierVertexFloat {
   const c = new Array<number>(template.craftables.length).fill(0);
-  c[idx0] = w * Q0;
-  c[idx1] = (1 - w) * Q1;
+  for (let i = 0; i < idxs.length; i++) {
+    c[idxs[i]] = weights[i] * Qs[i];
+  }
   const { primal } = simplexMaximizeFloatFull(template.A, b, c);
-  return { w, s0: Q0 * primal[idx0], s1: Q1 * primal[idx1], primal };
+  const scores = idxs.map((idx, i) => Qs[i] * primal[idx]);
+  return { scores, primal };
 }
 
 // Marginal slope g'(s) of g(s) = log(1 - e^-s); grows like 1/s as s -> 0, so it
@@ -318,24 +318,25 @@ function jointGPrime(s: number): number {
 }
 
 interface JointOptimum {
-  s0: number;
-  s1: number;
-  craft0: number;
-  craft1: number;
-  logProb: number;
+  scores: number[]; // s_i = Q_i * craft_i + lambda_i, per target
+  crafts: number[]; // expected legendary crafts per target
+  logProb: number; // sum_i logHitProbability(s_i)
 }
 
-// Maximize the exact joint objective g(s0) + g(s1), s_i = Q_i*craft_i + lambda_i,
+// Maximize the exact joint objective sum_i g(s_i), s_i = Q_i*craft_i + lambda_i,
 // over the craft-conservation polytope at a FIXED inventory (RHS b), via
-// Frank-Wolfe (conditional gradient) with an exact 1-D line search. Each step
-// linearizes the concave g at the current scores -- weight_i = g'(s_i) -- and
-// maximizes the resulting weighted-sum craft LP with the oracle's own float
-// simplex; the segment from the current point to that LP vertex is an ascent
-// direction, and a golden-section line search along it (crafts, hence scores,
-// are linear in the segment parameter) lands on the segment's optimum. Because
-// the objective is concave the true objective is non-decreasing each step and
-// converges to the polytope's global optimum, whatever the frontier's vertex
-// arrangement.
+// Frank-Wolfe (conditional gradient) with an exact 1-D line search, for an
+// arbitrary number of targets. Each step linearizes the concave g at the
+// current scores -- weight_i = g'(s_i) -- and maximizes the resulting
+// weighted-sum craft LP with the oracle's own float simplex; the segment from
+// the current point to that LP vertex is an ascent direction, and a
+// golden-section line search along it (crafts, hence scores, are linear in the
+// segment parameter, so sum_i g(s_i) stays concave in it) lands on the
+// segment's optimum. Because the objective is concave the true objective is
+// non-decreasing each step and converges to the polytope's global optimum,
+// whatever the frontier's vertex arrangement. The dimension of the frontier
+// is the target count; Frank-Wolfe needs no vertex enumeration and so scales to
+// n >= 3 without the blind spots a weight-band trace would have.
 //
 // This replaces an earlier weight-bisection frontier trace that could silently
 // miss vertices whose weight-band sat off-center (a probe at the interval
@@ -352,67 +353,84 @@ interface JointOptimum {
 function optimizeJointFloat(
   template: LpTemplate,
   b: number[],
-  idx0: number,
-  idx1: number,
-  Q0: number,
-  Q1: number,
-  lambda0: number,
-  lambda1: number
+  idxs: number[],
+  Qs: number[],
+  lambdas: number[]
 ): JointOptimum {
-  // Seed at the balanced Q-weighted craft vertex.
-  const seed = solveWeightedFloat(template, b, idx0, idx1, Q0, Q1, 0.5);
-  let craft0 = Q0 !== 0 ? seed.s0 / Q0 : 0;
-  let craft1 = Q1 !== 0 ? seed.s1 / Q1 : 0;
+  const n = idxs.length;
+  // Seed strictly inside the polytope by averaging the n per-target max-craft
+  // vertices. A weighted-sum craft LP is linear, so its optimum is a one-target
+  // corner; for n >= 3 a corner seed leaves >= 2 targets at zero crafts, where
+  // g(0) = -Infinity pins the Frank-Wolfe line search -- stepping toward
+  // another one-target corner only ever trades between two targets and never
+  // lifts a third off zero, so the search stalls at a degenerate point. The
+  // centroid of the per-target max-craft vertices gives every craftable target
+  // a positive craft count, keeping every line-search segment in g's finite
+  // interior. (For n=2 the two corners already span both targets, so the old
+  // corner seed happened to escape; the centroid is a strict improvement.)
+  const crafts = new Array<number>(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    const weights = new Array<number>(n).fill(0);
+    weights[i] = 1;
+    const vertex = solveWeightedFloat(template, b, idxs, Qs, weights);
+    for (let j = 0; j < n; j++) {
+      crafts[j] += vertex.primal[idxs[j]] / n;
+    }
+  }
 
   for (let iter = 0; iter < 100; iter++) {
-    const s0 = Q0 * craft0 + lambda0;
-    const s1 = Q1 * craft1 + lambda1;
+    const scores = crafts.map((craft, i) => Qs[i] * craft + lambdas[i]);
     const c = new Array<number>(template.craftables.length).fill(0);
-    c[idx0] = jointGPrime(s0) * Q0;
-    c[idx1] = jointGPrime(s1) * Q1;
+    for (let i = 0; i < n; i++) {
+      c[idxs[i]] = jointGPrime(scores[i]) * Qs[i];
+    }
     const { primal } = simplexMaximizeFloatFull(template.A, b, c);
-    const vc0 = primal[idx0];
-    const vc1 = primal[idx1];
-    const phi = (t: number) =>
-      logHitProbability(Q0 * (craft0 + t * (vc0 - craft0)) + lambda0) +
-      logHitProbability(Q1 * (craft1 + t * (vc1 - craft1)) + lambda1);
+    const vertexCrafts = idxs.map(idx => primal[idx]);
+    const phi = (t: number) => {
+      let total = 0;
+      for (let i = 0; i < n; i++) {
+        total += logHitProbability(Qs[i] * (crafts[i] + t * (vertexCrafts[i] - crafts[i])) + lambdas[i]);
+      }
+      return total;
+    };
     const t = goldenSectionArgmax(phi, 100);
-    const nc0 = craft0 + t * (vc0 - craft0);
-    const nc1 = craft1 + t * (vc1 - craft1);
-    const move = Math.max(Math.abs(Q0 * (nc0 - craft0)), Math.abs(Q1 * (nc1 - craft1)));
-    craft0 = nc0;
-    craft1 = nc1;
+    let move = 0;
+    for (let i = 0; i < n; i++) {
+      const nc = crafts[i] + t * (vertexCrafts[i] - crafts[i]);
+      move = Math.max(move, Math.abs(Qs[i] * (nc - crafts[i])));
+      crafts[i] = nc;
+    }
     if (move < 1e-13 || t < 1e-13) break;
   }
 
-  const s0 = Q0 * craft0 + lambda0;
-  const s1 = Q1 * craft1 + lambda1;
-  return { s0, s1, craft0, craft1, logProb: logHitProbability(s0) + logHitProbability(s1) };
+  const scores = crafts.map((craft, i) => Qs[i] * craft + lambdas[i]);
+  let logProb = 0;
+  for (const s of scores) {
+    logProb += logHitProbability(s);
+  }
+  return { scores, crafts, logProb };
 }
 
 function jointContext(inst: OracleInstance): {
   template: LpTemplate;
-  idx0: number;
-  idx1: number;
-  Q0: number;
-  Q1: number;
-  t0: string;
-  t1: string;
+  idxs: number[];
+  Qs: number[];
+  targets: string[];
 } {
-  if (inst.targets.length !== 2) {
+  if (inst.targets.length < 2) {
     throw new Error(
-      `evaluateAllocationJoint(Float) only supports exactly 2 targets (got ${inst.targets.length}); ` +
-        `n=1 is handled separately and n>=3 is out of this oracle's current scope`
+      `evaluateAllocationJoint(Float) requires 2+ targets (got ${inst.targets.length}); ` +
+        `n=1 is handled separately`
     );
   }
-  const [t0, t1] = inst.targets;
   const template = lpTemplate(inst);
-  const idx0 = template.craftables.indexOf(t0);
-  const idx1 = template.craftables.indexOf(t1);
-  if (idx0 === -1 || idx1 === -1) {
-    throw new Error(`target ${idx0 === -1 ? t0 : t1} is not craftable`);
+  const idxs = inst.targets.map(t => template.craftables.indexOf(t));
+  const missing = idxs.findIndex(idx => idx === -1);
+  if (missing !== -1) {
+    throw new Error(`target ${inst.targets[missing]} is not craftable`);
   }
-  return { template, idx0, idx1, Q0: targetQ(inst, t0), Q1: targetQ(inst, t1), t0, t1 };
+  const Qs = inst.targets.map(t => targetQ(inst, t));
+  return { template, idxs, Qs, targets: inst.targets };
 }
 
 // Cheap ranking path (float simplex): plays the same role for the joint
@@ -421,12 +439,11 @@ export function evaluateAllocationJointFloat(inst: OracleInstance, allocation: n
   if (inst.targets.length === 1) {
     return 1 - Math.exp(-evaluateAllocationFloat(inst, allocation));
   }
-  const { template, idx0, idx1, Q0, Q1, t0, t1 } = jointContext(inst);
+  const { template, idxs, Qs, targets } = jointContext(inst);
   const inv = inventoryFloat(inst, allocation);
   const b = template.items.map(item => inv.get(item) ?? 0);
-  const lambda0 = directDropsFor(inst, allocation, t0);
-  const lambda1 = directDropsFor(inst, allocation, t1);
-  const { logProb } = optimizeJointFloat(template, b, idx0, idx1, Q0, Q1, lambda0, lambda1);
+  const lambdas = targets.map(t => directDropsFor(inst, allocation, t));
+  const { logProb } = optimizeJointFloat(template, b, idxs, Qs, lambdas);
   return Math.exp(logProb);
 }
 
@@ -446,25 +463,23 @@ export function evaluateAllocationJoint(inst: OracleInstance, allocation: number
     };
   }
 
-  const { template, idx0, idx1, Q0, Q1, t0, t1 } = jointContext(inst);
+  const { template, idxs, Qs, targets } = jointContext(inst);
   const inv = inventoryFloat(inst, allocation);
   const b = template.items.map(item => inv.get(item) ?? 0);
-  const lambda0 = directDropsFor(inst, allocation, t0);
-  const lambda1 = directDropsFor(inst, allocation, t1);
+  const lambdas = targets.map(t => directDropsFor(inst, allocation, t));
 
   // Frank-Wolfe converges to the true optimum in float to ~1e-12, which is far
   // inside the honesty tolerance (1e-6); the joint optimum generally lands in
   // the interior of a frontier edge, so there is no single vertex a BigInt
   // solve could report exactly anyway (see optimizeJointFloat).
-  const opt = optimizeJointFloat(template, b, idx0, idx1, Q0, Q1, lambda0, lambda1);
-  const p0 = opt.s0 > 0 ? 1 - Math.exp(-opt.s0) : 0;
-  const p1 = opt.s1 > 0 ? 1 - Math.exp(-opt.s1) : 0;
+  const opt = optimizeJointFloat(template, b, idxs, Qs, lambdas);
+  let jointProbability = 1;
+  const perTarget: OracleJointTargetResult[] = targets.map((nodeId, i) => {
+    const score = opt.scores[i];
+    const bestProbability = score > 0 ? 1 - Math.exp(-score) : 0;
+    jointProbability *= bestProbability;
+    return { nodeId, score, bestProbability, expectedCrafts: opt.crafts[i] };
+  });
 
-  return {
-    jointProbability: p0 * p1,
-    perTarget: [
-      { nodeId: t0, score: opt.s0, bestProbability: p0, expectedCrafts: opt.craft0 },
-      { nodeId: t1, score: opt.s1, bestProbability: p1, expectedCrafts: opt.craft1 },
-    ],
-  };
+  return { jointProbability, perTarget };
 }

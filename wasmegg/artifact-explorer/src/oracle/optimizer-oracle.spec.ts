@@ -518,6 +518,39 @@ describe('oracle calibration', () => {
     expect(Math.min(...crafts)).toBeGreaterThan(0.5); // balanced, not all-or-nothing
     expect(theirs.jointProbability).toBeCloseTo(0.409536, 2);
   });
+
+  test('three-target joint plan matches the independent oracle (n=3, exercises N-general Frank-Wolfe)', () => {
+    // Guards the shipped n>=3 path against the oracle now that its joint
+    // evaluator generalizes past 2 targets (evaluateAllocationJoint /
+    // optimizeJointFloat). The three targets share ingredient 'a', so the
+    // outer search must both pick launches and split the resulting inventory
+    // three ways; zeroing any target zeroes the AND probability, so the joint
+    // optimum spreads across all three. checkInstance asserts honesty
+    // (production jointProbability vs the oracle's independent 3-D Frank-Wolfe)
+    // and optimality (vs bruteForceBestJoint over all feasible allocations).
+    const inst: OracleInstance = {
+      label: 'probe-n3',
+      seed: 0,
+      options: [makeOpt(2, 1, [['a', 2]]), makeOpt(3, 1, [['a', 3]])],
+      dag: new Map(
+        [
+          makeNode('a', true),
+          makeNode('t0', false, [['a', 1]], 0.5),
+          makeNode('t1', false, [['a', 1]], 0.7),
+          makeNode('t2', false, [['a', 1]], 0.3),
+        ].map(n => [n.id, n])
+      ),
+      targets: ['t0', 't1', 't2'],
+      fuelCapacity: 6,
+      timeCapacity: 3,
+      baseYield: new Map([['a', 1]]),
+    };
+    assertNoFailures([checkInstance(inst)]);
+    const theirs = runOptimizer(inst);
+    const crafts = theirs.perTarget.map(p => p.expectedCrafts);
+    expect(theirs.perTarget).toHaveLength(3);
+    expect(Math.min(...crafts)).toBeGreaterThan(0); // every target gets a share
+  });
 });
 
 // Smoke fuzz: a deterministic handful of instances per family.
