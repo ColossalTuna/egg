@@ -5,8 +5,7 @@
       <optimizer-sidebar
         :player-id="playerId"
         :pending-compute="pendingCompute"
-        :auto-compute-active="autoComputeActive"
-        :multi-target="multiTarget"
+        :computing="computing"
         :wait-time-days="waitTimeDays"
         :time-budget-invalid="!timeBudgetValid"
         @submit-player-id="submitPlayerId"
@@ -32,7 +31,15 @@
           :drop-data-is-sparse="view.dropDataIsSparse"
           :targets="view.targets"
         />
-        <p v-if="solutionViews.length === 0" class="text-sm text-gray-400">
+        <p v-if="computing" class="flex items-center gap-2 text-sm text-gray-500">
+          <svg class="animate-spin h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          Computing the best ship set…
+        </p>
+        <p v-else-if="computeError" class="text-sm text-red-600">Could not compute a plan: {{ computeError }}</p>
+        <p v-else-if="solutionViews.length === 0" class="text-sm text-gray-400">
           {{
             timeBudgetValid
               ? 'No ship set found for the current settings.'
@@ -91,13 +98,15 @@ import {
   computeCraftChainTree,
   computeInventoryTree,
   computeMissionLegendaryRows,
+  finalizeSolutions,
   lambdaFromDropProbability,
   legendaryCraftProbabilityOf,
   legendaryDataIsSparse,
-  optimize,
   type OptimizerSolution,
   type TargetView,
 } from '@/lib';
+import { enumerateLaunchOptions } from '@/lib/phases';
+import { createOptimizerClient, type OptimizerClient, type OptimizerRequestInput } from '@/lib/optimizer-client';
 import OptimizerSidebar from './optimizer/OptimizerSidebar.vue';
 import OptimizerInventoryPanel from './optimizer/OptimizerInventoryPanel.vue';
 import OptimizerSolutionCard from './optimizer/OptimizerSolutionCard.vue';
@@ -109,9 +118,10 @@ export default defineComponent({
   },
   setup(props) {
     const { artifactIds } = toRefs(props);
-    // The override modal (and other single-target-only presentation, e.g. the
-    // inventory/craft-chain trees below) only ever reflects the primary
-    // target; Phase 5 owns generalizing that presentation to all targets.
+    // The craft-chain and inventory trees are built per target (see
+    // solutionViews / inventoryTrees below); this is only the override modal's
+    // notion of "the artifact currently being planned", which stays
+    // single-valued because the modal edits one artifact's craft count.
     const primaryArtifactId = computed(() => artifactIds.value[0]);
 
     const waitTimeDays = ref('30');
@@ -146,6 +156,8 @@ export default defineComponent({
     };
 
     const pendingCompute = ref(false);
+    const computing = ref(false);
+    const computeError = ref('');
     const computedResults = ref<OptimizerSolution[]>([]);
     // budget the displayed plan was computed against; the live input can
     // change before a manual recompute
@@ -164,49 +176,92 @@ export default defineComponent({
       computeBaseYield(playerInventory.value, artifactIds.value, recipeDag.value)
     );
 
-    function runCompute() {
-      if (!timeBudgetValid.value) {
-        computedResults.value = [];
-        pendingCompute.value = false;
-        return;
-      }
+    // Everything the search needs, assembled reactively so the auto-compute
+    // effect below can track its inputs without running the solve itself.
+    // Launch-option enumeration happens here rather than in the worker: it is
+    // cheap, and it is the only step that needs the loot dataset, which the
+    // main bundle already loads for the mission views (see
+    // optimizer-worker-protocol.ts).
+    const computeInputs = computed<OptimizerRequestInput | null>(() => {
+      if (!timeBudgetValid.value) return null;
       const launchPeriodSeconds = EFFORT_LAUNCH_PERIOD_SECONDS[missionFilters.value.effort];
       const maxGemCost = missionFilters.value.maxGemCostEnabled ? missionFilters.value.maxGemCost : undefined;
-      lastComputedMaxWaitTimeSeconds.value = maxWaitTimeSeconds.value;
-      computedResults.value = optimize(
-        {
-          desiredArtifactNodeIds: artifactIds.value,
-          includeNotEnoughData: effectiveConfig.value.showNodata,
-          fuelTankCapacity: effectiveFuelTankCapacity.value,
-          timeBudgetSeconds: maxWaitTimeSeconds.value,
-        },
-        effectiveConfig.value,
-        recipeDag.value,
-        playerBaseYield.value,
-        launchPeriodSeconds,
-        maxGemCost
-      );
+      return {
+        options: enumerateLaunchOptions(effectiveConfig.value, recipeDag.value, launchPeriodSeconds, maxGemCost),
+        recipeDag: recipeDag.value,
+        desiredArtifactNodeIds: [...artifactIds.value],
+        fuelCapacity: effectiveFuelTankCapacity.value,
+        timeCapacity: maxWaitTimeSeconds.value,
+        baseYield: playerBaseYield.value,
+      };
+    });
+
+    // The solve runs in a worker (see optimizer.worker.ts), so a multi-second
+    // multi-target search never blocks paint and auto-compute can stay on for
+    // any number of targets. Created lazily so a page that never opens the
+    // planner doesn't pay for the worker bundle.
+    let client: OptimizerClient | null = null;
+    const optimizerClient = () => (client ??= createOptimizerClient());
+
+    async function runCompute() {
+      const input = computeInputs.value;
+      if (!input) {
+        computedResults.value = [];
+        pendingCompute.value = false;
+        computing.value = false;
+        computeError.value = '';
+        return;
+      }
+      const budget = maxWaitTimeSeconds.value;
       pendingCompute.value = false;
+      computing.value = true;
+      computeError.value = '';
+      try {
+        const solutions = await optimizerClient().run(input);
+        // null means a newer request superseded this one; that request owns
+        // the results and the spinner, so leave both alone.
+        if (solutions === null) return;
+        lastComputedMaxWaitTimeSeconds.value = budget;
+        // The same presentation fill-in the synchronous optimize() applies;
+        // it needs artifact metadata the worker has no reason to carry.
+        computedResults.value = finalizeSolutions(solutions, input.recipeDag);
+        computing.value = false;
+      } catch (err) {
+        computeError.value = err instanceof Error ? err.message : String(err);
+        computedResults.value = [];
+        computing.value = false;
+      }
     }
 
-    // Auto-compute is only safe to keep real-time for a single target: every
-    // single-target plan solves in well under 100ms, but the multi-target
-    // joint search runs in seconds, so auto-running it on every input change
-    // would repeatedly freeze the UI. For n>=2 we therefore force the
-    // on-demand path (the "Compute" button) regardless of the user's
-    // auto-compute preference, which stays honored for n=1.
-    const multiTarget = computed(() => artifactIds.value.length > 1);
-    const autoComputeActive = computed(() => autoCompute.value && !multiTarget.value);
+    // Auto-compute coalesces bursts of input changes (dragging the effort
+    // slider, typing a time budget) into one solve. It's a plain debounce
+    // rather than the old immediate call because the search now runs
+    // asynchronously: without it every intermediate value would start a solve
+    // that the next keystroke immediately supersedes.
+    const AUTO_COMPUTE_DEBOUNCE_MS = 250;
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
-    // Recompute on any relevant change while auto-compute is active; otherwise
-    // just flag that a manual recompute is due. Note that when auto-compute is
-    // inactive this effect only tracks autoComputeActive itself.
+    // Reading computeInputs.value here is what registers the dependency on
+    // every setting the solve consumes; the debounced callback must not be the
+    // thing that reads them, or the effect would only ever re-run on
+    // autoCompute itself.
     watchEffect(() => {
-      if (autoComputeActive.value) {
-        runCompute();
-      } else {
+      const input = computeInputs.value;
+      if (!autoCompute.value) {
         pendingCompute.value = true;
+        return;
       }
+      if (!input) {
+        computedResults.value = [];
+        return;
+      }
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(runCompute, AUTO_COMPUTE_DEBOUNCE_MS);
+    });
+
+    onUnmounted(() => {
+      clearTimeout(debounceTimer);
+      client?.terminate();
     });
 
     const inventoryTree = computed(() =>
@@ -283,8 +338,9 @@ export default defineComponent({
       lastComputedMaxWaitTimeSeconds,
       timeBudgetValid,
       pendingCompute,
-      autoComputeActive,
-      multiTarget,
+      computing,
+      computeError,
+      autoCompute,
       playerId,
       runCompute,
       submitPlayerId,
