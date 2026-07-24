@@ -400,7 +400,13 @@ describe('oracle calibration', () => {
     expect(evaluateAllocation(inst, [2]).probability).toBeCloseTo(expected, 9);
   });
 
-  test('multi-target allocation favors the higher-value target', () => {
+  test('single-target weighted-sum score still favors dumping everything on the higher-Q target', () => {
+    // This is the pre-multi-target-objective ground truth: evaluateAllocation
+    // re-derives the plain weighted-sum score (sum_T Q_T * crafts_T), which
+    // remains an all-or-nothing allocation to the higher-Q target. It is NOT
+    // what optimizeFull optimizes for n>=2 targets any more (see the next
+    // test) -- it only checks the oracle's own independent LP re-derivation
+    // of that score, unrelated to optimizeFull.
     const inst: OracleInstance = {
       label: 'probe',
       seed: 0,
@@ -417,11 +423,41 @@ describe('oracle calibration', () => {
       baseYield: new Map([['a', 2]]),
     };
     // both targets eat the same ingredient; all of it belongs on t1 (higher Q)
+    // under the plain weighted-sum score.
     const bestScore = 2 * targetQ(inst, 't1');
     const mine = evaluateAllocation(inst, []);
     expect(mine.score).toBeCloseTo(bestScore, 9);
+  });
+
+  test('multi-target allocation balances instead of favoring the higher-value target (joint/AND objective)', () => {
+    // Since Phase 1's joint (product) objective, optimizeFull with n>=2
+    // targets maximizes P(all), not the weighted-sum score above: dumping the
+    // whole shared ingredient on one target leaves the other at zero crafts,
+    // which zeroes the AND probability outright. The true continuous optimum
+    // (found independently via calculus on g(Q0*c0) + g(Q1*(2-c0)), g(s) =
+    // log(1 - e^-s)) balances at roughly c0=1.16, c1=0.84, jointProbability
+    // ~0.4095 -- both targets get a share, and the joint probability is
+    // enormously higher than the old all-or-nothing allocation's (which is
+    // exactly 0, since one target's craft count is 0).
+    const inst: OracleInstance = {
+      label: 'probe',
+      seed: 0,
+      options: [],
+      dag: new Map(
+        [makeNode('a', true), makeNode('t0', false, [['a', 1]], 0.5), makeNode('t1', false, [['a', 1]], 0.8)].map(n => [
+          n.id,
+          n,
+        ])
+      ),
+      targets: ['t0', 't1'],
+      fuelCapacity: 0,
+      timeCapacity: 0,
+      baseYield: new Map([['a', 2]]),
+    };
     const theirs = runOptimizer(inst);
-    expect(claimedProbability(theirs, inst)).toBeCloseTo(1 - Math.exp(-bestScore), 6);
+    const crafts = theirs.perTarget.map(p => p.expectedCrafts);
+    expect(Math.min(...crafts)).toBeGreaterThan(0.5); // balanced, not all-or-nothing
+    expect(theirs.jointProbability).toBeCloseTo(0.409536, 2);
   });
 });
 

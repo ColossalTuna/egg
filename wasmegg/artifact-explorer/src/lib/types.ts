@@ -95,6 +95,11 @@ export interface OptimizerSolution {
   recipeDag: RecipeDAG;
   craftPrimal: Map<string, number>;
   perTarget: TargetProbability[]; // perTarget[0] mirrors the scalar fields
+  // Probability of getting a legendary of EVERY selected target (the AND/joint
+  // metric): equals the product of perTarget[T].bestProbability over all T,
+  // and therefore equals perTarget[0].bestProbability when there's exactly one
+  // target.
+  jointProbability: number;
 }
 
 export interface OptimizerConfig {

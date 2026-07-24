@@ -208,3 +208,228 @@ export function alphaToProb(
 
   return { bestProbability, craftProbability: craftProbability, dropProbability };
 }
+
+// ---------------------------------------------------------------------------
+// Joint (product) objective support for multi-target search (n >= 2 targets).
+//
+// The single-target search maximizes a linear "score" S = Q*alpha + lambda and
+// converts it to a probability once at the end via 1 - e^-S. For n>=2 targets
+// we instead want P(all) = product_T (1 - e^-score_T), i.e.
+//   log P(all) = sum_T g(score_T),  g(s) = log(1 - e^-s).
+// g is strictly increasing and concave (so for n=1 this reduces to maximizing
+// g(score_1), identical in argmax to maximizing score_1 directly -- which is
+// why n=1 need not, and per this file's other callers must not, route through
+// this code path for correctness to differ).
+//
+// g's concavity lets us bound it from above by an "epigraph" of tangent
+// lines: g(s) <= alpha_k + beta_k*s for every tangent point s_k, since a
+// concave function always lies on or under each of its tangent lines, with
+// equality at s_k. That turns "maximize sum_T g(score_T)" into a linear
+// program: introduce one epigraph variable z_T per target with rows
+// z_T <= alpha_k + beta_k*score_T for every breakpoint k, then maximize
+// sum_T z_T. The LP drives each z_T up to min_k(...), the tightest bound the
+// chosen breakpoints allow -- an upper envelope of the true g, so this always
+// slightly OVER-estimates the true joint objective. That's fine for search
+// ranking (concavity/monotonicity is all the ternary scans and dominance
+// pruning need) as long as the FINAL reported probability is computed exactly
+// (via alphaToProb per target, then multiplied), never via this
+// approximation.
+// Denser near s=0.1-3, where g's curvature (and therefore the tangent
+// envelope's slack) is largest; sparser above ~10, where g is already close
+// to flat and a handful of points suffice.
+export const JOINT_TANGENT_BREAKPOINTS: readonly number[] = [
+  0.05, 0.1, 0.2, 0.3, 0.45, 0.65, 0.9, 1.2, 1.6, 2.1, 2.7, 3.4, 4.2, 5.2, 6.5, 8, 10, 13, 17, 22, 28, 35,
+];
+
+export interface Tangent {
+  alpha: number;
+  beta: number;
+}
+
+// beta_k = g'(s_k) = 1/(e^s_k - 1); alpha_k = g(s_k) - beta_k*s_k, so the line
+// alpha_k + beta_k*s is tangent to g at s_k.
+export const JOINT_TANGENTS: readonly Tangent[] = JOINT_TANGENT_BREAKPOINTS.map(s => {
+  const beta = 1 / Math.expm1(s);
+  const g = Math.log(-Math.expm1(-s));
+  return { alpha: g - beta * s, beta };
+});
+
+// The tangent epigraph variables z_T can be negative (g(s) < 0 for s below
+// ln(2)), but this file's LP solver assumes x >= 0. Shifting every epigraph
+// row's RHS up by this constant keeps z_T comfortably positive without
+// changing the argmax; solveScore/solve subtract targets.length * shift back
+// out of the objective before returning, and callers building their own
+// epigraph rows (the joint outer LP relaxation in optimizer-core.ts) must do
+// the same.
+export const EPIGRAPH_SHIFT = 50;
+
+// Exact g(s) = log(1 - e^-s) = log P(hit at least once | score s). Used only
+// for the FINAL reported numbers and for tests -- never inside the search.
+export function exactLogHitProbability(s: number): number {
+  return s > 0 ? Math.log(-Math.expm1(-s)) : -Infinity;
+}
+
+// The tangent-envelope over-estimate of g(s) described above. Exposed for
+// tests that check the approximation's accuracy and over-estimate direction.
+export function tangentLogHitProbability(s: number): number {
+  let best = Infinity;
+  for (const t of JOINT_TANGENTS) {
+    const v = t.alpha + t.beta * s;
+    if (v < best) best = v;
+  }
+  return best;
+}
+
+export interface JointAlphaResult {
+  craftByTarget: Map<string, number>; // absent for a leaf target, mirroring compileInnerLp
+  primalByNode: Map<string, number>;
+}
+
+export interface JointInnerLp {
+  readonly nonLeafNodes: readonly string[];
+  readonly constraintNodes: readonly string[]; // conservation rows only, in b's row order
+  readonly varIndex: ReadonlyMap<string, number>;
+  readonly targets: readonly string[];
+
+  // Hot path: b is the inventory RHS (constraintNodes order); lambda is the
+  // per-target direct-legendary offset (targets order). Returns the
+  // tangent-approximated sum_T g(Q_T*craft_T + lambda_T), an over-estimate of
+  // the true joint log-probability objective -- safe for search ranking only.
+  solveScore(b: Float64Array, lambda: Float64Array): number;
+
+  // Full solve at a fixed inventory: recovers the per-target craft split (for
+  // final reporting) alongside the crafted count of every non-leaf node.
+  solve(inventory: Map<string, number>, lambda: Map<string, number>): JointAlphaResult;
+}
+
+// Builds the craft-conservation LP shared by the joint search's hot eval path
+// and its final reporting solve, augmented with one epigraph variable z_T per
+// target and the tangent rows described above. lambda enters *inside* each
+// tangent expression (Q_T*craft_T + lambda_T), unlike the plain weighted-sum
+// compileInnerLp where direct-legendary drops are added outside the LP -- the
+// product objective needs lambda attributed to its own target, not pooled.
+export function compileJointInnerLp(
+  recipeDag: RecipeDAG,
+  desiredArtifactNodeIds: string[],
+  QByTarget: ReadonlyMap<string, number>
+): JointInnerLp {
+  const targets = desiredArtifactNodeIds;
+  const nt = targets.length;
+
+  const nonLeafNodes: string[] = [];
+  const varIndex = new Map<string, number>();
+  for (const [id, node] of recipeDag) {
+    if (!node.isLeaf) {
+      varIndex.set(id, nonLeafNodes.length);
+      nonLeafNodes.push(id);
+    }
+  }
+
+  const parentsOf = new Map<string, { parent: string; q: number }[]>();
+  for (const [parentId, parentNode] of recipeDag) {
+    if (parentNode.isLeaf) continue;
+    for (const child of parentNode.children) {
+      let parents = parentsOf.get(child.nodeId);
+      if (!parents) {
+        parents = [];
+        parentsOf.set(child.nodeId, parents);
+      }
+      parents.push({ parent: parentId, q: child.quantity });
+    }
+  }
+
+  const constraintNodes: string[] = [];
+  for (const id of recipeDag.keys()) {
+    const parents = parentsOf.get(id);
+    if (!parents || parents.length === 0) continue;
+    constraintNodes.push(id);
+  }
+
+  const nVars = nonLeafNodes.length;
+  const nCons = constraintNodes.length;
+  const totalVars = nVars + nt;
+  const zBase = nVars;
+
+  const c = new Float64Array(totalVars);
+  for (let i = 0; i < nt; i++) c[zBase + i] = 1;
+
+  const A: Float64Array[] = [];
+  for (let i = 0; i < nCons; i++) {
+    const id = constraintNodes[i];
+    const row = new Float64Array(totalVars);
+    const parents = parentsOf.get(id) ?? [];
+    for (const { parent, q } of parents) {
+      const idx = varIndex.get(parent);
+      if (idx !== undefined) row[idx] += q;
+    }
+    if (varIndex.has(id)) row[varIndex.get(id)!] -= 1;
+    A.push(row);
+  }
+
+  // One row per (target, tangent breakpoint): z_T - beta_k*Q_T*craft_T <=
+  // alpha_k + EPIGRAPH_SHIFT + beta_k*lambda_T (lambda term folded into b at
+  // solve time, since it varies per call; the row coefficients are static).
+  const rowTargetIdx: number[] = [];
+  const rowTangentIdx: number[] = [];
+  for (let ti = 0; ti < nt; ti++) {
+    const t = targets[ti];
+    const q = QByTarget.get(t) ?? 0;
+    const pIdx = varIndex.get(t);
+    for (let k = 0; k < JOINT_TANGENTS.length; k++) {
+      const row = new Float64Array(totalVars);
+      row[zBase + ti] = 1;
+      if (pIdx !== undefined && q !== 0) row[pIdx] = -JOINT_TANGENTS[k].beta * q;
+      A.push(row);
+      rowTargetIdx.push(ti);
+      rowTangentIdx.push(k);
+    }
+  }
+
+  const nRows = A.length;
+  const bScratch = new Float64Array(nRows);
+
+  function fillEpigraphB(lambda: Float64Array) {
+    for (let r = 0; r < rowTargetIdx.length; r++) {
+      const ti = rowTargetIdx[r];
+      const k = rowTangentIdx[r];
+      bScratch[nCons + r] = JOINT_TANGENTS[k].alpha + EPIGRAPH_SHIFT + JOINT_TANGENTS[k].beta * lambda[ti];
+    }
+  }
+
+  return {
+    nonLeafNodes,
+    constraintNodes,
+    varIndex,
+    targets,
+
+    solveScore(b: Float64Array, lambda: Float64Array): number {
+      for (let i = 0; i < nCons; i++) bScratch[i] = b[i] ?? 0;
+      fillEpigraphB(lambda);
+      const r = solveLp(c, A, bScratch);
+      return r.status === 'optimal' ? r.objective - nt * EPIGRAPH_SHIFT : -Infinity;
+    },
+
+    solve(inventory: Map<string, number>, lambdaMap: Map<string, number>): JointAlphaResult {
+      for (let i = 0; i < nCons; i++) {
+        const v = inventory.get(constraintNodes[i]);
+        bScratch[i] = v !== undefined && v > 0 ? v : 0;
+      }
+      const lambda = new Float64Array(nt);
+      for (let i = 0; i < nt; i++) lambda[i] = lambdaMap.get(targets[i]) ?? 0;
+      fillEpigraphB(lambda);
+      const r = solveLp(c, A, bScratch);
+      const craftByTarget = new Map<string, number>();
+      const primalByNode = new Map<string, number>();
+      if (r.status === 'optimal') {
+        for (let ti = 0; ti < nt; ti++) {
+          const idx = varIndex.get(targets[ti]);
+          if (idx !== undefined) craftByTarget.set(targets[ti], r.primal[idx]);
+        }
+        for (let i = 0; i < nVars; i++) {
+          if (r.primal[i] > 1e-9) primalByNode.set(nonLeafNodes[i], r.primal[i]);
+        }
+      }
+      return { craftByTarget, primalByNode };
+    },
+  };
+}

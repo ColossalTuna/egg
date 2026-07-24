@@ -11,6 +11,7 @@
 import type { LaunchOption, LaunchSolution, OptimizerSolution, RecipeDAG, SlotSummary } from './types';
 import { ei } from 'lib';
 import { compileInnerLp, alphaToProb, InnerLp } from './value-function';
+import { compileJointInnerLp, JointInnerLp, JOINT_TANGENTS, EPIGRAPH_SHIFT } from './value-function';
 import { solveLp } from './lp';
 
 const NUM_SLOTS = 3;
@@ -54,6 +55,19 @@ interface PackResult {
   alloc: Map<number, number>;
   slots: SlotSummary[];
   score: number;
+}
+
+// Minimal shapes packAndFill/escalatePacking actually touch, so both the
+// single-target EvalContext/CoreResult and the joint path's own
+// JointEvalContext/JointCoreResult (which carry a differently-computed
+// eval function and search bookkeeping) satisfy them structurally. This is a
+// type-only widening -- it changes no runtime behavior of either path.
+interface SearchContext {
+  options: LaunchOption[];
+  evalScoreAt: EvalFn;
+}
+interface SearchResult {
+  support: Set<number>;
 }
 
 function buildEvalContext(
@@ -129,7 +143,21 @@ function buildEvalContext(
   return { options, recipeDag, targets, baseYield, QByTarget, innerLp, evalScoreAt, baseScore };
 }
 
+// Entry point: single-target (n<=1) search must stay byte-for-byte identical
+// to its behavior before the joint/multi-target objective existed, so it is
+// split out verbatim into optimizeFullSingle rather than sharing code paths
+// with the new n>=2 joint search -- even a provably-equivalent refactor would
+// risk a ULP of numeric drift, which correctness here cannot tolerate.
 export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
+  if (args.desiredArtifactNodeIds.length <= 1) return optimizeFullSingle(args);
+  return optimizeFullJoint(args);
+}
+
+// The pre-Phase-1 optimizeFull body, renamed and otherwise untouched. Also
+// exported (alongside optimizeFullJoint) so tests can call either search
+// directly regardless of what optimizeFull's target-count dispatch would
+// choose.
+export function optimizeFullSingle(args: OptimizeArgs): OptimizerSolution {
   const {
     options,
     recipeDag,
@@ -359,7 +387,7 @@ function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): Co
 // each slot's remaining time within the leftover fuel.
 function packAndFill(
   startAlloc: Map<number, number>,
-  ctx: EvalContext,
+  ctx: SearchContext,
   R: number,
   S: number,
   fillOptions?: Set<number>
@@ -500,7 +528,7 @@ function mergeAdd(alloc: Map<number, number>, i: number, add: number): [number, 
   return trial;
 }
 
-function evalOf(ctx: EvalContext, alloc: Map<number, number>): number {
+function evalOf(ctx: SearchContext, alloc: Map<number, number>): number {
   return ctx.evalScoreAt([...alloc]);
 }
 
@@ -508,9 +536,9 @@ function evalOf(ctx: EvalContext, alloc: Map<number, number>): number {
 // per-slot specializations the balanced relaxation misses. Bounded to a few
 // starts so it can never dominate the latency budget.
 function escalatePacking(
-  relaxed: CoreResult,
-  floor: CoreResult,
-  ctx: EvalContext,
+  relaxed: SearchResult,
+  floor: SearchResult,
+  ctx: SearchContext,
   R: number,
   S: number
 ): PackResult | null {
@@ -583,6 +611,8 @@ function assembleFullSolution(
     recipeDag: recipeDag,
     craftPrimal: finalSolve.primalByNode,
     perTarget: perTarget,
+    // n=1, so the joint (AND-all-targets) probability is just the one target's.
+    jointProbability: primary.bestProbability,
   };
 }
 
@@ -640,6 +670,37 @@ function dominates(oj: LaunchOption, oi: LaunchOption): boolean {
   }
   const strictCost = oj.actualFuel < oi.actualFuel - ZERO_TOL || oj.actualTime < oi.actualTime - ZERO_TOL;
   return strictCost || strictYield;
+}
+
+// Dominance check for the joint (product) path only: unlike the plain
+// weighted-sum score (where every target's direct legendary drop is pooled
+// into one scalar with uniform weight, so only the total matters), the
+// product objective values each target's legendary yield inside its own
+// g(score_T) term. An option that drops more of target A's legendary but less
+// of target B's does not strictly dominate its opposite under a product
+// objective, so legendaryYieldVector must be compared pointwise here too.
+function dominatesJoint(j: LaunchOption, i: LaunchOption): boolean {
+  if (j.actualFuel > i.actualFuel + ZERO_TOL) return false;
+  if (j.actualTime > i.actualTime + ZERO_TOL) return false;
+  let strict = false;
+  for (const [n, vi] of i.yieldVector) {
+    const vj = j.yieldVector.get(n) ?? 0;
+    if (vj < vi - ZERO_TOL) return false;
+    if (vj > vi + ZERO_TOL) strict = true;
+  }
+  for (const [n, vj] of j.yieldVector) {
+    if (vj > ZERO_TOL && !i.yieldVector.has(n)) strict = true;
+  }
+  for (const [t, li] of i.legendaryYieldVector) {
+    const lj = j.legendaryYieldVector.get(t) ?? 0;
+    if (lj < li - ZERO_TOL) return false;
+    if (lj > li + ZERO_TOL) strict = true;
+  }
+  for (const [t, lj] of j.legendaryYieldVector) {
+    if (lj > ZERO_TOL && !i.legendaryYieldVector.has(t)) strict = true;
+  }
+  const strictCost = j.actualFuel < i.actualFuel - ZERO_TOL || j.actualTime < i.actualTime - ZERO_TOL;
+  return strictCost || strict;
 }
 
 // Greedy repair: starting from an allocation, keep adding the best-scoring
@@ -1001,4 +1062,472 @@ function solveJointLp(
     nodeDuals.set(constraintRowNode[r], result.duals[2 + r]);
   }
   return { score, x, support, dualR, dualS, nodeDuals };
+}
+
+// ---------------------------------------------------------------------------
+// Joint (product) objective search, for n >= 2 desired targets: maximize
+// F = sum_T g(score_T) (see value-function.ts's JOINT_TANGENTS docs for the
+// derivation), which is a concave over-estimate-safe proxy for
+// log(product_T bestProbability_T). This mirrors optimizeFullSingle's overall
+// shape (relaxed 3S solve, packable floor solve, greedy pack/fill,
+// certificate-guided escalation) but with its own eval context, its own LP
+// relaxation (tangent-augmented), its own dominance check (dominatesJoint),
+// and gap arithmetic done in probability space rather than relative
+// score-space, since F <= 0 makes a relative gap meaningless.
+
+// exp(min(v, 0)): converts a (possibly very negative, always <= 0 at the
+// optimum) joint log-probability bound into an actual probability in (0, 1],
+// so gap comparisons for the n>=2 path can be made in probability space
+// rather than the n=1 path's relative score-space (which assumes score >= 0).
+function toProb(v: number): number {
+  return Math.exp(Math.min(v, 0));
+}
+
+interface JointEvalContext {
+  options: LaunchOption[];
+  recipeDag: RecipeDAG;
+  targets: string[];
+  baseYield: Map<string, number>;
+  QByTarget: Map<string, number>;
+  jointInnerLp: JointInnerLp;
+  evalScoreAt: EvalFn; // returns the tangent-approximated F, not a probability
+  baseF: number;
+}
+
+function buildJointEvalContext(
+  options: LaunchOption[],
+  recipeDag: RecipeDAG,
+  desiredArtifactNodeIds: string[],
+  baseYield: Map<string, number>
+): JointEvalContext {
+  const targets = desiredArtifactNodeIds;
+  const QByTarget = new Map<string, number>();
+  for (const t of targets) {
+    const pCraft = recipeDag.get(t)?.legendaryCraftProbability ?? 0;
+    QByTarget.set(t, pCraft <= 0 ? 0 : pCraft >= 1 ? 1e6 : -Math.log(1 - pCraft));
+  }
+
+  const jointInnerLp = compileJointInnerLp(recipeDag, targets, QByTarget);
+
+  const nRows = jointInnerLp.constraintNodes.length;
+  const rowIdxByNode = new Map<string, number>();
+  for (let i = 0; i < nRows; i++) {
+    rowIdxByNode.set(jointInnerLp.constraintNodes[i], i);
+  }
+  const bBase = new Float64Array(nRows);
+  for (const [k, v] of baseYield) {
+    const row = rowIdxByNode.get(k);
+    if (row !== undefined && v > 0) {
+      bBase[row] = v;
+    }
+  }
+
+  const optYieldRows: Int32Array[] = new Array(options.length);
+  const optYieldRates: Float64Array[] = new Array(options.length);
+  const optLegRates: Float64Array[] = new Array(options.length); // per-target legendary rate, targets order
+  for (let i = 0; i < options.length; i++) {
+    const rows: number[] = [];
+    const rates: number[] = [];
+    for (const [n, r] of options[i].yieldVector) {
+      const row = rowIdxByNode.get(n);
+      if (row !== undefined) {
+        rows.push(row);
+        rates.push(r);
+      }
+    }
+    optYieldRows[i] = new Int32Array(rows);
+    optYieldRates[i] = new Float64Array(rates);
+    const legRates = new Float64Array(targets.length);
+    for (let ti = 0; ti < targets.length; ti++) {
+      legRates[ti] = options[i].legendaryYieldVector.get(targets[ti]) ?? 0;
+    }
+    optLegRates[i] = legRates;
+  }
+
+  const bEval = new Float64Array(nRows);
+  const lambdaEval = new Float64Array(targets.length);
+  const evalScoreAt: EvalFn = multipliers => {
+    bEval.set(bBase);
+    lambdaEval.fill(0);
+    for (const [idx, k] of multipliers) {
+      if (k <= 0) continue;
+      const rows = optYieldRows[idx];
+      const rates = optYieldRates[idx];
+      for (let j = 0; j < rows.length; j++) {
+        bEval[rows[j]] += k * rates[j];
+      }
+      const legRates = optLegRates[idx];
+      for (let ti = 0; ti < legRates.length; ti++) {
+        lambdaEval[ti] += k * legRates[ti];
+      }
+    }
+    return jointInnerLp.solveScore(bEval, lambdaEval);
+  };
+
+  const baseF = jointInnerLp.solveScore(bBase, new Float64Array(targets.length));
+
+  return { options, recipeDag, targets, baseYield, QByTarget, jointInnerLp, evalScoreAt, baseF };
+}
+
+interface JointCoreResult {
+  bestAlloc: Map<number, number>;
+  bestF: number;
+  U: number; // tangent-LP relaxation value: an upper bound on F
+  support: Set<number>;
+}
+
+function coreSearchJoint(ctx: JointEvalContext, R: number, S: number, epsilon: number): JointCoreResult {
+  const { options, evalScoreAt, baseF, jointInnerLp, baseYield, targets, recipeDag, QByTarget } = ctx;
+
+  const scoreAlone = new Float64Array(options.length).fill(-Infinity);
+
+  let bestF = baseF;
+  let bestAlloc: Map<number, number> = new Map();
+
+  const tryUpdateAllocations = (score: number, alloc: Map<number, number>) => {
+    if (score > bestF + ZERO_TOL) {
+      bestF = score;
+      bestAlloc = alloc;
+    }
+  };
+
+  for (let idx = 0; idx < options.length; idx++) {
+    const o = options[idx];
+    const r_i = o.actualFuel;
+    const s_i = o.actualTime;
+    if (s_i <= 0) continue;
+    const k_i_R = r_i > ZERO_TOL ? Math.floor(R / r_i) : Infinity;
+    const k_i_S = Math.floor(S / s_i);
+    const k_i = Math.min(k_i_R, k_i_S);
+    if (!isFinite(k_i) || k_i < 0) continue;
+    const a = evalScoreAt([[idx, k_i]]);
+    scoreAlone[idx] = a;
+    if (a > bestF + ZERO_TOL) {
+      tryUpdateAllocations(a, new Map([[idx, k_i]]));
+    }
+  }
+
+  // Dominance pruning (dominatesJoint: legendary yield compared per-target).
+  const survives = new Uint8Array(options.length);
+  for (let i = 0; i < options.length; i++) survives[i] = 1;
+
+  for (let i = 0; i < options.length; i++) {
+    if (!survives[i]) continue;
+    for (let j = 0; j < options.length; j++) {
+      if (i === j || !survives[j]) continue;
+      if (dominatesJoint(options[j], options[i])) {
+        survives[i] = 0;
+        break;
+      }
+    }
+  }
+
+  const allSurvivors: number[] = [];
+  for (let i = 0; i < options.length; i++) {
+    if (survives[i]) allSurvivors.push(i);
+  }
+
+  // Joint LP relaxation (tangent-augmented): upper bound on F, plus support.
+  const jointLp = solveJointLpProduct(
+    allSurvivors,
+    options,
+    jointInnerLp,
+    R,
+    S,
+    baseYield,
+    targets,
+    recipeDag,
+    QByTarget
+  );
+  const scoreLP = jointLp.F;
+  const lpSupport = new Set<number>(jointLp.support);
+
+  // No dual-cost filter here (judgment call, see optimizer-regression report):
+  // the single-target dual filter's loss budget is a fraction of a
+  // nonnegative score, which doesn't translate to this path's F <= 0 without
+  // risking wrongly aggressive pruning, so every dominance survivor proceeds
+  // to the pair/triple scans instead.
+  const survivorsAfter = allSurvivors;
+
+  for (let a = 0; a < survivorsAfter.length; a++) {
+    for (let b = a + 1; b < survivorsAfter.length; b++) {
+      pairwiseScan(survivorsAfter[a], survivorsAfter[b], options, R, S, evalScoreAt, tryUpdateAllocations);
+    }
+  }
+
+  // Gap check in probability space (F <= 0 makes a relative gap meaningless).
+  const gapProb = toProb(scoreLP) - toProb(bestF);
+  if (gapProb > epsilon) {
+    const bySingle = survivorsAfter
+      .filter(i => isFinite(scoreAlone[i]) && scoreAlone[i] > -Infinity)
+      .sort((x, y) => scoreAlone[y] - scoreAlone[x])
+      .slice(0, TRIPLE_TOP_K);
+    const ranked = [...lpSupport];
+    const seen = new Set(ranked);
+    for (const i of bySingle) {
+      if (!seen.has(i)) {
+        seen.add(i);
+        ranked.push(i);
+      }
+    }
+    ranked.length = Math.min(ranked.length, TRIPLE_TOP_K + lpSupport.size);
+    for (let a = 0; a < ranked.length; a++) {
+      for (let b = a + 1; b < ranked.length; b++) {
+        for (let c = b + 1; c < ranked.length; c++) {
+          tripleScan(ranked[a], ranked[b], ranked[c], options, R, S, evalScoreAt, tryUpdateAllocations);
+        }
+      }
+    }
+  }
+
+  bestF = repairAlloc(bestAlloc, bestF, options, R, S, evalScoreAt);
+
+  const lpRounded = new Map<number, number>();
+  for (let s = 0; s < allSurvivors.length; s++) {
+    const k = Math.floor(jointLp.x[s]);
+    if (k > 0) lpRounded.set(allSurvivors[s], k);
+  }
+  let lpRoundedScore = evalScoreAt([...lpRounded]);
+  lpRoundedScore = repairAlloc(lpRounded, lpRoundedScore, options, R, S, evalScoreAt);
+  if (lpRoundedScore > bestF + ZERO_TOL) {
+    bestF = lpRoundedScore;
+    bestAlloc = lpRounded;
+  }
+
+  return { bestAlloc, bestF, U: scoreLP, support: lpSupport };
+}
+
+export function optimizeFullJoint(args: OptimizeArgs): OptimizerSolution {
+  const {
+    options,
+    recipeDag,
+    desiredArtifactNodeIds,
+    fuelCapacity: rawR,
+    timeCapacity: rawS,
+    baseYield,
+    epsilon = DEFAULT_EPSILON,
+  } = args;
+
+  const R = Number.isFinite(rawR) && rawR > 0 ? rawR : 0;
+  const S = Number.isFinite(rawS) && rawS > 0 ? rawS : 0;
+
+  const feasibleOptions = options.filter(o => o.actualTime > ZERO_TOL && o.actualTime <= S);
+
+  const ctx = buildJointEvalContext(feasibleOptions, recipeDag, desiredArtifactNodeIds, baseYield);
+
+  let bestAlloc = new Map<number, number>();
+  let bestF = ctx.baseF;
+  let bestSlots: SlotSummary[] = [];
+  let U = ctx.baseF;
+
+  if (feasibleOptions.length > 0 && S > 0) {
+    const relaxed = coreSearchJoint(ctx, R, NUM_SLOTS * S, epsilon);
+    U = Math.max(U, relaxed.U);
+
+    const floor = coreSearchJoint(ctx, R / NUM_SLOTS, S, epsilon);
+    const floorAlloc = new Map<number, number>();
+    for (const [i, k] of floor.bestAlloc) floorAlloc.set(i, k * NUM_SLOTS);
+
+    const candidates = [
+      packAndFill(relaxed.bestAlloc, ctx, R, S),
+      packAndFill(floorAlloc, ctx, R, S),
+      packAndFill(new Map(), ctx, R, S),
+    ];
+    for (const cand of candidates) {
+      if (cand.score > bestF + ZERO_TOL) {
+        bestF = cand.score;
+        bestAlloc = cand.alloc;
+        bestSlots = cand.slots;
+      }
+    }
+
+    // Certificate-guided escalation, gated on the probability-space gap.
+    if (toProb(U) - toProb(bestF) > epsilon) {
+      const escalated = escalatePacking(relaxed, floor, ctx, R, S);
+      if (escalated && escalated.score > bestF + ZERO_TOL) {
+        bestAlloc = escalated.alloc;
+        bestSlots = escalated.slots;
+      }
+    }
+  }
+
+  return assembleFullJointSolution(ctx, bestAlloc, bestSlots, baseYield, desiredArtifactNodeIds, recipeDag);
+}
+
+function assembleFullJointSolution(
+  ctx: JointEvalContext,
+  bestAlloc: Map<number, number>,
+  bestSlots: SlotSummary[],
+  baseYield: Map<string, number>,
+  desiredArtifactNodeIds: string[],
+  recipeDag: RecipeDAG
+): OptimizerSolution {
+  const { finalYieldVector, totalLegendary, fuelUsed, fuelByEgg, choiceHistory } = assembleSolution(
+    baseYield,
+    bestAlloc,
+    ctx.options
+  );
+
+  const busiest = bestSlots.reduce<SlotSummary | null>(
+    (best, s) => (best === null || s.loadSeconds > best.loadSeconds ? s : best),
+    null
+  );
+  const makespan = busiest?.loadSeconds ?? 0;
+  const running = busiest?.rawLoadSeconds ?? 0;
+
+  // Recover the per-target craft split at the final chosen inventory using
+  // the JOINT (tangent-balanced) inner LP, not the weighted-sum
+  // compileInnerLp, which would winner-take-all a shared ingredient and
+  // misreport the other targets' craft counts. The reported probabilities are
+  // then computed EXACTLY via alphaToProb per target (never via the tangent
+  // approximation used during search), so the displayed numbers are always
+  // exact even though the search that picked this allocation was ranked
+  // using the tangent relaxation.
+  const finalSolve = ctx.jointInnerLp.solve(finalYieldVector, totalLegendary);
+  const perTarget = desiredArtifactNodeIds.map(t => {
+    const craftCount =
+      finalSolve.craftByTarget.get(t) ?? (recipeDag.get(t)?.isLeaf ? (finalYieldVector.get(t) ?? 0) : 0);
+    const p = alphaToProb(craftCount, totalLegendary, [t], recipeDag);
+    return { nodeId: t, expectedCrafts: craftCount, ...p };
+  });
+  const primary = perTarget[0] ?? {
+    bestProbability: 0,
+    craftProbability: 0,
+    dropProbability: 0,
+    expectedCrafts: 0,
+  };
+
+  let jointProbability = 1;
+  for (const t of perTarget) jointProbability *= t.bestProbability;
+
+  return {
+    bestProbability: primary.bestProbability,
+    craftProbability: primary.craftProbability,
+    dropProbability: primary.dropProbability,
+    expectedCrafts: primary.expectedCrafts,
+    fuelUsed: fuelUsed,
+    fuelByEgg: fuelByEgg,
+    timeUnitsUsed: Math.round(makespan),
+    runningTimeSeconds: Math.round(running),
+    slots: bestSlots.length > 0 ? bestSlots : undefined,
+    choiceHistory: choiceHistory,
+    expectedDrops: [], // populated by index.ts
+    finalYieldVector: finalYieldVector,
+    baseYield: new Map(baseYield),
+    recipeDag: recipeDag,
+    craftPrimal: finalSolve.primalByNode,
+    perTarget: perTarget,
+    jointProbability,
+  };
+}
+
+interface JointLpProductResult {
+  F: number; // objective (tangent-shift already removed): an upper bound on F
+  x: Float64Array; // multiplicity per surviving option
+  support: number[]; // indices into `options` with x > 0
+}
+
+// The outer LP relaxation for the joint path: same decision-variable shape as
+// solveJointLp (option counts + craft vars) plus one epigraph z_T per target
+// and the same tangent rows as compileJointInnerLp, except here lambda_T is
+// itself a linear combination of the option-count variables (via each
+// option's legendaryYieldVector), not a precomputed constant -- so this LP is
+// built directly rather than reusing compileJointInnerLp's fixed matrix.
+function solveJointLpProduct(
+  survivors: number[],
+  options: LaunchOption[],
+  jointInnerLp: JointInnerLp,
+  R: number,
+  S: number,
+  baseYield: Map<string, number>,
+  targets: string[],
+  recipeDag: RecipeDAG,
+  QByTarget: Map<string, number>
+): JointLpProductResult {
+  const nx = survivors.length;
+  const np = jointInnerLp.nonLeafNodes.length;
+  const nt = targets.length;
+  const totalVars = nx + np + nt;
+  if (totalVars === 0) {
+    return { F: 0, x: new Float64Array(0), support: [] };
+  }
+  const zBase = nx + np;
+
+  const c = new Float64Array(totalVars);
+  for (let i = 0; i < nt; i++) c[zBase + i] = 1;
+
+  const A: Float64Array[] = [];
+  const bArr: number[] = [];
+
+  const rRow = new Float64Array(totalVars);
+  const sRow = new Float64Array(totalVars);
+  for (let s = 0; s < nx; s++) {
+    rRow[s] = options[survivors[s]].actualFuel;
+    sRow[s] = options[survivors[s]].actualTime;
+  }
+  A.push(rRow);
+  bArr.push(R);
+  A.push(sRow);
+  bArr.push(S);
+
+  const parentsOf = new Map<string, { parent: string; q: number }[]>();
+  for (const [pid, pnode] of recipeDag) {
+    if (pnode.isLeaf) continue;
+    for (const child of pnode.children) {
+      let arr = parentsOf.get(child.nodeId);
+      if (!arr) {
+        arr = [];
+        parentsOf.set(child.nodeId, arr);
+      }
+      arr.push({ parent: pid, q: child.quantity });
+    }
+  }
+  for (const nodeId of recipeDag.keys()) {
+    const parents = parentsOf.get(nodeId);
+    if (!parents || parents.length === 0) continue;
+    const row = new Float64Array(totalVars);
+    for (const { parent, q } of parents) {
+      const pIdx = jointInnerLp.varIndex.get(parent);
+      if (pIdx !== undefined) row[nx + pIdx] += q;
+    }
+    const myIdx = jointInnerLp.varIndex.get(nodeId);
+    if (myIdx !== undefined) row[nx + myIdx] -= 1;
+    for (let s = 0; s < nx; s++) {
+      const v = options[survivors[s]].yieldVector.get(nodeId) ?? 0;
+      if (v) row[s] -= v;
+    }
+    A.push(row);
+    bArr.push(baseYield.get(nodeId) ?? 0);
+  }
+
+  for (let ti = 0; ti < nt; ti++) {
+    const t = targets[ti];
+    const q = QByTarget.get(t) ?? 0;
+    const pIdx = jointInnerLp.varIndex.get(t);
+    for (let k = 0; k < JOINT_TANGENTS.length; k++) {
+      const row = new Float64Array(totalVars);
+      row[zBase + ti] = 1;
+      if (pIdx !== undefined && q !== 0) row[nx + pIdx] = -JOINT_TANGENTS[k].beta * q;
+      for (let s = 0; s < nx; s++) {
+        const lv = options[survivors[s]].legendaryYieldVector.get(t) ?? 0;
+        if (lv) row[s] -= JOINT_TANGENTS[k].beta * lv;
+      }
+      A.push(row);
+      bArr.push(JOINT_TANGENTS[k].alpha + EPIGRAPH_SHIFT);
+    }
+  }
+
+  const b = new Float64Array(bArr);
+  const result = solveLp(c, A, b);
+  if (result.status !== 'optimal') {
+    return { F: -Infinity, x: new Float64Array(nx), support: [] };
+  }
+  const x = new Float64Array(nx);
+  const support: number[] = [];
+  for (let s = 0; s < nx; s++) {
+    x[s] = result.primal[s];
+    if (x[s] > ZERO_TOL) support.push(survivors[s]);
+  }
+  const F = result.objective - nt * EPIGRAPH_SHIFT;
+  return { F, x, support };
 }
