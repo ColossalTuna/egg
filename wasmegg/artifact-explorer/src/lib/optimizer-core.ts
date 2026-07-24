@@ -1169,7 +1169,25 @@ function buildJointEvalContext(
 
   const bEval = new Float64Array(nRows);
   const lambdaEval = new Float64Array(targets.length);
+
+  // The pair and triple scans are nested ternary searches over multiplicities,
+  // so they re-probe the same allocation many times -- both within one scan
+  // (the ternary bracket revisits interior points) and across overlapping
+  // tuples that share an option. Each miss costs a full tangent-augmented LP
+  // solve, which dominates this path's runtime, so caching on the allocation
+  // is worth the key construction. Bounded because the key space is only
+  // loosely tied to instance size.
+  const MAX_EVAL_CACHE = 200_000;
+  const evalCache = new Map<string, number>();
   const evalScoreAt: EvalFn = multipliers => {
+    let key = '';
+    for (const [idx, k] of multipliers) {
+      if (k <= 0) continue;
+      key += idx + ':' + k + ',';
+    }
+    const cached = evalCache.get(key);
+    if (cached !== undefined) return cached;
+
     bEval.set(bBase);
     lambdaEval.fill(0);
     for (const [idx, k] of multipliers) {
@@ -1184,7 +1202,10 @@ function buildJointEvalContext(
         lambdaEval[ti] += k * legRates[ti];
       }
     }
-    return jointInnerLp.solveScore(bEval, lambdaEval);
+    const score = jointInnerLp.solveScore(bEval, lambdaEval);
+    if (evalCache.size >= MAX_EVAL_CACHE) evalCache.clear();
+    evalCache.set(key, score);
+    return score;
   };
 
   const baseF = jointInnerLp.solveScore(bBase, new Float64Array(targets.length));
@@ -1240,6 +1261,7 @@ function coreSearchJoint(ctx: JointEvalContext, R: number, S: number, epsilon: n
     }
   };
 
+  const kAlone = new Int32Array(options.length);
   for (let idx = 0; idx < options.length; idx++) {
     const o = options[idx];
     const r_i = o.actualFuel;
@@ -1249,6 +1271,7 @@ function coreSearchJoint(ctx: JointEvalContext, R: number, S: number, epsilon: n
     const k_i_S = Math.floor(S / s_i);
     const k_i = Math.min(k_i_R, k_i_S);
     if (!isFinite(k_i) || k_i < 0) continue;
+    kAlone[idx] = k_i;
     const a = evalScoreAt([[idx, k_i]]);
     scoreAlone[idx] = a;
     if (a > bestF + ZERO_TOL) {
@@ -1291,21 +1314,61 @@ function coreSearchJoint(ctx: JointEvalContext, R: number, S: number, epsilon: n
   const scoreLP = jointLp.F;
   const lpSupport = new Set<number>(jointLp.support);
 
-  // No dual-cost filter here (judgment call, see optimizer-regression report):
-  // the single-target dual filter's loss budget is a fraction of a
-  // nonnegative score, which doesn't translate to this path's F <= 0 without
-  // risking wrongly aggressive pruning. But leaving every dominance survivor
-  // to reach the pair/triple scans unfiltered is combinatorially infeasible at
-  // production scale -- each probe re-solves the pricier tangent-augmented LP,
-  // and hundreds of survivors squared (or cubed) is millions of LP solves,
-  // measured in minutes on a real 2-target instance. jointPairPool /
-  // jointTriplePool substitute a bound already trusted elsewhere in this
-  // file for that missing filter: the LP relaxation's own support (its
-  // complementary providers) unioned with the best standalone options.
-  // repairAlloc afterwards still scans every option regardless, so a good
-  // budget-filler outside these pools is never permanently lost, only left
-  // for repair to find.
-  const jointPairPool = boundedCandidatePool(allSurvivors, scoreAlone, lpSupport, JOINT_PAIR_TOP_K);
+  // Dual filter, in probability space. The n=1 path's loss budget is a
+  // fraction of a nonnegative score, which doesn't translate here: F is a log
+  // probability, so F <= 0 and a *relative* gap on it is meaningless. The
+  // translation that does work goes through the objective's own semantics --
+  // P = e^F, so giving up dF of objective costs P*(1 - e^-dF) of probability.
+  // Inverting that at half the epsilon budget gives the largest F-loss worth
+  // tolerating, which is the direct analogue of the n=1 lossBudget.
+  //
+  // Only meaningful while the LP's own probability is above the tolerance;
+  // below that the whole instance is already inside epsilon (the gap check
+  // before the triple scan would short-circuit anyway), and the budget
+  // formula would divide through a vanishing P and prune everything.
+  const probLP = toProb(scoreLP);
+  if (probLP > epsilon) {
+    const lossBudgetF = -Math.log(1 - (0.5 * epsilon) / probLP);
+    const yR = jointLp.dualR;
+    const yS = jointLp.dualS;
+    const nodeDuals = jointLp.nodeDuals;
+    const legendaryDuals = jointLp.legendaryDuals;
+    for (let i = 0; i < options.length; i++) {
+      if (!survives[i]) continue;
+      if (lpSupport.has(i)) continue;
+      const opt = options[i];
+      // Reduced cost of forcing this option into the tangent-augmented LP:
+      // its legendary drops relieve the epigraph rows, its yields relieve the
+      // conservation rows, and it consumes fuel and slot time.
+      let rc = 0;
+      for (const [t, dt] of legendaryDuals) {
+        if (dt === 0) continue;
+        const lv = opt.legendaryYieldVector.get(t);
+        if (lv) rc += lv * dt;
+      }
+      for (const [n, dn] of nodeDuals) {
+        if (dn === 0) continue;
+        const v = opt.yieldVector.get(n);
+        if (v) rc += v * dn;
+      }
+      rc -= opt.actualFuel * yR;
+      rc -= opt.actualTime * yS;
+      const k = Math.max(1, kAlone[i]);
+      const maxLoss = -rc * k;
+      if (maxLoss > lossBudgetF) survives[i] = 0;
+    }
+  }
+
+  // Survivors of both prunings feed the pair/triple scans. The pools stay
+  // bounded on top of the filter: with many near-duplicate missions the
+  // filter can leave more clones than the cubic triple scan can afford, and
+  // the bound also caps the instances where probLP <= epsilon skipped the
+  // filter entirely. repairAlloc afterwards still scans every option
+  // regardless, so a good budget-filler outside these pools is never
+  // permanently lost, only left for repair to find.
+  const filteredSurvivors = allSurvivors.filter(i => survives[i]);
+
+  const jointPairPool = boundedCandidatePool(filteredSurvivors, scoreAlone, lpSupport, JOINT_PAIR_TOP_K);
   for (let a = 0; a < jointPairPool.length; a++) {
     for (let b = a + 1; b < jointPairPool.length; b++) {
       pairwiseScan(jointPairPool[a], jointPairPool[b], options, R, S, evalScoreAt, tryUpdateAllocations);
@@ -1318,7 +1381,7 @@ function coreSearchJoint(ctx: JointEvalContext, R: number, S: number, epsilon: n
     // Triple scan's nested ternary search costs an order of magnitude more
     // probes per candidate tuple than the pairwise scan, so it gets its own
     // (smaller) pool rather than reusing jointPairPool.
-    const jointTriplePool = boundedCandidatePool(allSurvivors, scoreAlone, lpSupport, JOINT_TRIPLE_TOP_K);
+    const jointTriplePool = boundedCandidatePool(filteredSurvivors, scoreAlone, lpSupport, JOINT_TRIPLE_TOP_K);
     for (let a = 0; a < jointTriplePool.length; a++) {
       for (let b = a + 1; b < jointTriplePool.length; b++) {
         for (let c = b + 1; c < jointTriplePool.length; c++) {
@@ -1496,6 +1559,14 @@ interface JointLpProductResult {
   F: number; // objective (tangent-shift already removed): an upper bound on F
   x: Float64Array; // multiplicity per surviving option
   support: number[]; // indices into `options` with x > 0
+  dualR: number; // fuel budget shadow price
+  dualS: number; // slot-time budget shadow price
+  nodeDuals: Map<string, number>; // per conservation row, keyed by node id
+  // Per target, sum_k y_{T,k} * beta_k over that target's tangent rows. An
+  // option's direct legendary drops for T enter every one of those rows with
+  // coefficient -beta_k, so this collapses them into the single multiplier the
+  // reduced cost needs.
+  legendaryDuals: Map<string, number>;
 }
 
 // The outer LP relaxation for the joint path: same decision-variable shape as
@@ -1520,7 +1591,15 @@ function solveJointLpProduct(
   const nt = targets.length;
   const totalVars = nx + np + nt;
   if (totalVars === 0) {
-    return { F: 0, x: new Float64Array(0), support: [] };
+    return {
+      F: 0,
+      x: new Float64Array(0),
+      support: [],
+      dualR: 0,
+      dualS: 0,
+      nodeDuals: new Map(),
+      legendaryDuals: new Map(),
+    };
   }
   const zBase = nx + np;
 
@@ -1540,6 +1619,10 @@ function solveJointLpProduct(
   bArr.push(R);
   A.push(sRow);
   bArr.push(S);
+
+  // Row order for the dual vector: rows 0/1 are R/S, then one conservation row
+  // per entry here, then the per-target tangent block.
+  const constraintRowNode: string[] = [];
 
   const parentsOf = new Map<string, { parent: string; q: number }[]>();
   for (const [pid, pnode] of recipeDag) {
@@ -1569,6 +1652,7 @@ function solveJointLpProduct(
     }
     A.push(row);
     bArr.push(baseYield.get(nodeId) ?? 0);
+    constraintRowNode.push(nodeId);
   }
 
   for (let ti = 0; ti < nt; ti++) {
@@ -1591,7 +1675,15 @@ function solveJointLpProduct(
   const b = new Float64Array(bArr);
   const result = solveLp(c, A, b);
   if (result.status !== 'optimal') {
-    return { F: -Infinity, x: new Float64Array(nx), support: [] };
+    return {
+      F: -Infinity,
+      x: new Float64Array(nx),
+      support: [],
+      dualR: 0,
+      dualS: 0,
+      nodeDuals: new Map(),
+      legendaryDuals: new Map(),
+    };
   }
   const x = new Float64Array(nx);
   const support: number[] = [];
@@ -1600,5 +1692,22 @@ function solveJointLpProduct(
     if (x[s] > ZERO_TOL) support.push(survivors[s]);
   }
   const F = result.objective - nt * EPIGRAPH_SHIFT;
-  return { F, x, support };
+
+  const dualR = result.duals[0];
+  const dualS = result.duals[1];
+  const nodeDuals = new Map<string, number>();
+  for (let r = 0; r < constraintRowNode.length; r++) {
+    nodeDuals.set(constraintRowNode[r], result.duals[2 + r]);
+  }
+  const tangentBase = 2 + constraintRowNode.length;
+  const legendaryDuals = new Map<string, number>();
+  for (let ti = 0; ti < nt; ti++) {
+    let acc = 0;
+    for (let k = 0; k < JOINT_TANGENTS.length; k++) {
+      acc += result.duals[tangentBase + ti * JOINT_TANGENTS.length + k] * JOINT_TANGENTS[k].beta;
+    }
+    legendaryDuals.set(targets[ti], acc);
+  }
+
+  return { F, x, support, dualR, dualS, nodeDuals, legendaryDuals };
 }
