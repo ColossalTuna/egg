@@ -10,8 +10,10 @@
 
 import type { LaunchOption, LaunchSolution, OptimizerSolution, RecipeDAG, SlotSummary } from './types';
 import { ei } from 'lib';
-import { compileInnerLp, alphaToProb, InnerLp } from './value-function';
 import {
+  compileInnerLp,
+  alphaToProb,
+  InnerLp,
   compileJointInnerLp,
   JointInnerLp,
   JOINT_TANGENTS,
@@ -1261,25 +1263,14 @@ function coreSearchJoint(ctx: JointEvalContext, R: number, S: number, epsilon: n
     }
   };
 
-  const kAlone = new Int32Array(options.length);
-  for (let idx = 0; idx < options.length; idx++) {
-    const o = options[idx];
-    const r_i = o.actualFuel;
-    const s_i = o.actualTime;
-    if (s_i <= 0) continue;
-    const k_i_R = r_i > ZERO_TOL ? Math.floor(R / r_i) : Infinity;
-    const k_i_S = Math.floor(S / s_i);
-    const k_i = Math.min(k_i_R, k_i_S);
-    if (!isFinite(k_i) || k_i < 0) continue;
-    kAlone[idx] = k_i;
-    const a = evalScoreAt([[idx, k_i]]);
-    scoreAlone[idx] = a;
-    if (a > bestF + ZERO_TOL) {
-      tryUpdateAllocations(a, new Map([[idx, k_i]]));
-    }
-  }
-
   // Dominance pruning (dominatesJoint: legendary yield compared per-target).
+  // Runs before the standalone pass, not after: a dominator costs no more fuel
+  // and no more time and yields at least as much of everything, so it admits
+  // at least the dominated option's multiplicity at a score at least as high.
+  // A dominated option therefore can't be the best standalone seed, and every
+  // later reader of scoreAlone/kAlone (the candidate pools, the dual filter)
+  // already looks only at survivors -- so scoring the dominated ones was pure
+  // waste, and one LP solve per option is a large share of this path's budget.
   const survives = new Uint8Array(options.length);
   for (let i = 0; i < options.length; i++) survives[i] = 1;
 
@@ -1297,6 +1288,24 @@ function coreSearchJoint(ctx: JointEvalContext, R: number, S: number, epsilon: n
   const allSurvivors: number[] = [];
   for (let i = 0; i < options.length; i++) {
     if (survives[i]) allSurvivors.push(i);
+  }
+
+  const kAlone = new Int32Array(options.length);
+  for (const idx of allSurvivors) {
+    const o = options[idx];
+    const r_i = o.actualFuel;
+    const s_i = o.actualTime;
+    if (s_i <= 0) continue;
+    const k_i_R = r_i > ZERO_TOL ? Math.floor(R / r_i) : Infinity;
+    const k_i_S = Math.floor(S / s_i);
+    const k_i = Math.min(k_i_R, k_i_S);
+    if (!isFinite(k_i) || k_i < 0) continue;
+    kAlone[idx] = k_i;
+    const a = evalScoreAt([[idx, k_i]]);
+    scoreAlone[idx] = a;
+    if (a > bestF + ZERO_TOL) {
+      tryUpdateAllocations(a, new Map([[idx, k_i]]));
+    }
   }
 
   // Joint LP relaxation (tangent-augmented): upper bound on F, plus support.
