@@ -70,14 +70,19 @@ reviews:
 
     # Game data refreshed by .github/workflows/update-*.yml
     - "!wasmegg/artifact-explorer/src/lib/loot.json"
-    - "!wasmegg/_common/loot/**"
-    - "!wasmegg/_common/loot_legacy/**"
+    # Scoped to the data files only: these directories also hold the
+    # hand-written loot.go transformation logic, which must stay reviewable.
+    - "!wasmegg/_common/loot/latest-mission_reward_count.json"
+    - "!wasmegg/_common/loot_legacy/mission_reward_count.json"
     - "!**/contracts.json"
     - "!**/events.json"
     - "!wasmegg/events/src/legacy_events.json"
     - "!**/version_history.json"
     - "!**/colleggtible-contracts.json"
+    # contractseasons.json and seasoncontracts.json are two different
+    # generated files; both exist and both need excluding.
     - "!**/contractseasons.json"
+    - "!**/seasoncontracts.json"
     - "!**/customeggs.json"
     - "!periodicals/data/**"
 
