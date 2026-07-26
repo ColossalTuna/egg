@@ -18,7 +18,7 @@ Stack: Vue 3 with `<script setup lang="ts">`, TypeScript in strict mode, Vite, T
 
 ## What to prioritise
 
-**Cross-file and cross-workspace correctness above all.** This is where real bugs in this repo actually hide — a change that looks locally fine but breaks a consumer three workspaces away. Anything exported from `lib/` is consumed by every app listed in `pnpm-workspace.yaml`.
+**Cross-file and cross-workspace correctness above all.** This is where real bugs in this repo actually hide — a change that looks locally fine but breaks a consumer three workspaces away. `lib/` is shared code: 21 of the 24 workspaces in `pnpm-workspace.yaml` declare a dependency on it. Depending on the package is not the same as using a given export, though — trace the specific changed symbol to its actual consumers before describing the blast radius, rather than assuming a change to one export reaches every app.
 
 Beyond that, in rough order:
 

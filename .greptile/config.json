@@ -26,7 +26,7 @@
     },
     {
       "id": "vue-reactivity",
-      "rule": "In Vue single-file components, flag reactivity bugs: losing reactivity by destructuring a reactive object, a missing `.value` on a ref, computed properties with side effects, a watcher that should be a computed, `v-for` without a stable `:key`, and props mutated directly instead of emitting. Note that `vue/html-self-closing` requires normal HTML elements NOT to be self-closed while void elements must be.",
+      "rule": "In Vue single-file components, flag reactivity bugs: losing reactivity by destructuring a reactive object, a missing `.value` on a ref, computed properties with side effects, a watcher that should be a computed, `v-for` without a stable `:key`, and props mutated directly instead of emitting.",
       "scope": ["**/*.vue"],
       "severity": "medium"
     },

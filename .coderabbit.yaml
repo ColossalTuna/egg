@@ -118,8 +118,7 @@ reviews:
         `v-for` without a stable `:key`, props mutated directly instead of
         emitting, and lifecycle cleanup (event listeners, intervals, and
         observers registered in `onMounted` must be torn down in
-        `onUnmounted`). Note that `vue/html-self-closing` requires normal
-        HTML elements NOT to be self-closed while void elements must be.
+        `onUnmounted`).
 
     - path: "lib/**"
       instructions: >-
