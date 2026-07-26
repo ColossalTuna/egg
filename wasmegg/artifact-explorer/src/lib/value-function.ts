@@ -3,8 +3,13 @@
 // some parent gets a conservation row, targets included. A final target (no
 // parents) has no row, so dropped copies of it don't count as crafts; a
 // target that is also an ingredient keeps its row and its drops feed the
-// parent recipe. compileInnerLp builds the matrix once; the outer search
-// then scores millions of candidate inventories against it.
+// parent recipe.
+//
+// Two LPs are built over that same conservation polytope. compileJointInnerLp
+// (below) carries the search's actual objective and is what the outer search
+// scores millions of candidate inventories against. compileInnerLp is the
+// plain weighted-sum version, used for the linearized subproblems that
+// refineJointCraftSplit's Frank-Wolfe iteration solves.
 
 import type { RecipeDAG } from './types';
 import { solveLp } from './lp';
@@ -26,10 +31,6 @@ export interface InnerLp {
   readonly weightByTarget: ReadonlyMap<string, number>;
 
   solve(inventory: Map<string, number>): AlphaResult;
-  // Hot-path variant: caller supplies b directly (one entry per
-  // constraintNodes row) and gets back only the weighted objective, skipping
-  // the per-call result Maps. 0 when the LP is not optimal.
-  solveScore(b: Float64Array): number;
 }
 
 // `weights` is the per-target objective weight; targets without an entry get
@@ -144,11 +145,6 @@ export function compileInnerLp(
       }
       return { alpha, score: r.objective, craftByTarget, duals, primalByNode };
     },
-
-    solveScore(b: Float64Array): number {
-      const r = solveLp(c, A, b);
-      return r.status === 'optimal' ? r.objective : 0;
-    },
   };
 }
 
@@ -163,9 +159,6 @@ function makeTrivialLp(primary: string, targets: readonly string[], weightByTarg
     solve(inventory: Map<string, number>): AlphaResult {
       const v = inventory.get(primary) ?? 0;
       return { alpha: v > 0 ? v : 0, score: 0, craftByTarget: new Map(), duals: new Map(), primalByNode: new Map() };
-    },
-    solveScore(): number {
-      return 0;
     },
   };
 }
@@ -210,16 +203,18 @@ export function alphaToProb(
 }
 
 // ---------------------------------------------------------------------------
-// Joint (product) objective support for multi-target search (n >= 2 targets).
+// Joint (product) objective support -- the search's objective at every target
+// count.
 //
-// The single-target search maximizes a linear "score" S = Q*alpha + lambda and
-// converts it to a probability once at the end via 1 - e^-S. For n>=2 targets
-// we instead want P(all) = product_T (1 - e^-score_T), i.e.
+// Each target has a linear "score" S_T = Q_T*alpha_T + lambda_T, and
+// 1 - e^-S_T is its probability. What we want is P(all) = product_T
+// (1 - e^-score_T), i.e.
 //   log P(all) = sum_T g(score_T),  g(s) = log(1 - e^-s).
-// g is strictly increasing and concave (so for n=1 this reduces to maximizing
-// g(score_1), identical in argmax to maximizing score_1 directly -- which is
-// why n=1 need not, and per this file's other callers must not, route through
-// this code path for correctness to differ).
+// g is strictly increasing and concave. Strictly increasing is what makes this
+// the only objective the solver needs: with one target, maximizing g(score_1)
+// is identical in argmax to maximizing score_1 directly, so a plain
+// weighted-sum search over a single target is this objective with one term
+// rather than a separate mode.
 //
 // g's concavity lets us bound it from above by an "epigraph" of tangent
 // lines: g(s) <= alpha_k + beta_k*s for every tangent point s_k, since a
@@ -302,12 +297,12 @@ export interface JointInnerLp {
   solve(inventory: Map<string, number>, lambda: Map<string, number>): JointAlphaResult;
 }
 
-// Builds the craft-conservation LP shared by the joint search's hot eval path
-// and its final reporting solve, augmented with one epigraph variable z_T per
-// target and the tangent rows described above. lambda enters *inside* each
-// tangent expression (Q_T*craft_T + lambda_T), unlike the plain weighted-sum
-// compileInnerLp where direct-legendary drops are added outside the LP -- the
-// product objective needs lambda attributed to its own target, not pooled.
+// Builds the craft-conservation LP shared by the search's hot eval path and its
+// final reporting solve, augmented with one epigraph variable z_T per target and
+// the tangent rows described above. lambda enters *inside* each tangent
+// expression (Q_T*craft_T + lambda_T) rather than being added outside the LP as
+// one pooled scalar -- the product objective needs each target's direct
+// legendary drops attributed to that target's own g term.
 export function compileJointInnerLp(
   recipeDag: RecipeDAG,
   desiredArtifactNodeIds: string[],
@@ -547,23 +542,38 @@ export function refineJointCraftSplit(
       }
       return sum;
     };
-    const tStar = goldenSectionArgmax01(phi);
+    // Golden section only ever converges *toward* an endpoint, so when the
+    // segment optimum is an endpoint it stops a few ULPs short. That matters
+    // because the endpoints are the common case, not a corner: whenever one
+    // target's gradient dominates -- always, when there is only one craftable
+    // target, since more of it is unambiguously better -- the answer is the FW
+    // vertex itself. Probe both endpoints and prefer them on ties so the
+    // reported craft counts are the LP's exact vertex rather than a rounded
+    // approach to it.
+    const tInterior = goldenSectionArgmax01(phi);
+    const fInterior = phi(tInterior);
+    let tStar = tInterior;
+    if (phi(1) >= fInterior) tStar = 1;
+    else if (phi(0) >= fInterior) tStar = 0;
 
     // Interpolate craft counts and the full per-node primal along the segment
-    // (a convex combination of two feasible points stays feasible).
+    // (a convex combination of two feasible points stays feasible). At an
+    // endpoint take that endpoint's value verbatim: a + 1*(b - a) is not
+    // exactly b in floating point.
+    const lerp = (a: number, b: number) => (tStar === 1 ? b : tStar === 0 ? a : a + tStar * (b - a));
     let maxMove = 0;
     const newCraft = new Map<string, number>();
     for (let i = 0; i < craftTargets.length; i++) {
       const t = craftTargets[i];
       const c0 = currentCraft.get(t) ?? 0;
-      const cNew = c0 + tStar * ((vertex.craftByTarget.get(t) ?? 0) - c0);
+      const cNew = lerp(c0, vertex.craftByTarget.get(t) ?? 0);
       newCraft.set(t, cNew);
       maxMove = Math.max(maxMove, Math.abs(Q(t) * (cNew - c0)));
     }
     const newPrimal = new Map<string, number>();
     for (const node of nonLeafNodes) {
       const p0 = currentPrimal.get(node) ?? 0;
-      const pNew = p0 + tStar * ((vertex.primalByNode.get(node) ?? 0) - p0);
+      const pNew = lerp(p0, vertex.primalByNode.get(node) ?? 0);
       if (pNew > 1e-9) newPrimal.set(node, pNew);
     }
     currentCraft = newCraft;

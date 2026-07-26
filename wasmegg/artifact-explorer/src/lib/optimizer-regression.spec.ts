@@ -1,32 +1,37 @@
-// Golden-snapshot regression gate for the single-target (n=1) optimizer path.
+// Golden-snapshot regression gate for single-target (n=1) optimizer output.
 //
-// This spec exists to prove that Phase 1's introduction of a joint/product
-// objective for multi-target search (n>=2) leaves the existing n=1 behavior
-// completely unchanged. It replays every deterministic fixture from
-// optimizer-core.spec.ts plus two production-scale instances (puzzle-cube-4,
-// used elsewhere in pipeline.spec.ts, and tachyon-deflector-4, used in
-// optimizer-perf.spec.ts) through optimizeFull and snapshots the full
-// OptimizerSolution. The snapshot committed alongside the pristine (pre-Phase-1)
-// code is ground truth: a diff here is a regression, full stop — never "fix"
-// one by updating the snapshot to match new output.
+// The values below were captured from the standalone weighted-sum search that
+// used to handle n=1, before the solver was consolidated onto one
+// joint/product objective for every target count. They still pass unchanged,
+// which is the point: g(s) = log(1 - e^-s) is strictly increasing, so a
+// single-target product objective has the same argmax as the weighted-sum
+// score it replaced, and this snapshot is the evidence that the equivalence
+// holds in the implementation and not just on paper.
+//
+// It replays every deterministic fixture from optimizer-core.spec.ts plus two
+// production-scale instances (puzzle-cube-4, used elsewhere in
+// pipeline.spec.ts, and tachyon-deflector-4, used in optimizer-perf.spec.ts)
+// through optimizeFull and snapshots the full OptimizerSolution. The committed
+// snapshot is ground truth: a diff here is a regression, full stop — never
+// "fix" one by updating the snapshot to match new output.
 //
 // The single exception is a loot-data refresh on the base branch. Only the two
 // production-scale cases read loot.json; the other seventeen run on hand-built
 // DAGs and fixture launch options, so they cannot move for any reason but a
 // code change. A refresh therefore has an unmistakable signature: exactly the
 // two production-scale cases drift and the seventeen fixture cases stay put.
-// Before re-capturing on that signature, confirm the n=1 path is genuinely
+// Before re-capturing on that signature, confirm the solver is genuinely
 // untouched by diffing this branch's loot.json, phases.ts, lp.ts, artifacts.ts
 // and missions.ts against the base (they must be identical — the refreshed
 // loot.json arrives via the base, not the branch) and checking that
-// optimizer-core.ts's single-target body is unchanged. Anything short of that
-// signature is a real regression, and no other diff is ever re-captured.
+// optimizer-core.ts and value-function.ts are unchanged. Anything short of
+// that signature is a real regression, and no other diff is ever re-captured.
 //
-// jointProbability (added to OptimizerSolution by Phase 1) is deliberately
-// EXCLUDED from the serialized shape below: it did not exist when this
-// snapshot was first captured, so including it would make every case show a
-// spurious "undefined -> number" diff. Its correctness is covered separately
-// by joint-objective.spec.ts.
+// jointProbability is deliberately EXCLUDED from the serialized shape below:
+// it did not exist when this snapshot was first captured, so including it
+// would make every case show a spurious "undefined -> number" diff. At n=1 it
+// equals bestProbability, which is snapshotted; joint-objective.spec.ts covers
+// it directly.
 
 import { describe, it, expect } from 'vitest';
 import { ei, perfectShipsConfig } from 'lib';

@@ -277,15 +277,17 @@ const RANKING_SLOP_JOINT = 1e-6;
 const MAX_FINALISTS_JOINT = 8;
 
 // Ranks feasible/maximal allocations by the JOINT (AND, product-of-targets)
-// probability instead of bruteForceBest's union-style score, for the
-// 2-target instances this oracle's random-multi family generates. The
-// enumeration itself (maximal-allocation walk, 3-slot packing) is identical
-// to bruteForceBest's -- duplicated rather than shared so the two ranking
-// objectives can never accidentally cross-contaminate each other's tuning.
+// probability, which is the objective the solver actually maximizes at every
+// target count -- so this is the brute force the main optimality check uses,
+// for any number of targets. At n=1 the product has one factor and
+// evaluateAllocationJoint delegates to the exact-arithmetic union evaluator, so
+// nothing is given up by not routing single-target instances elsewhere.
+//
+// bruteForceBest below ranks by the union-style score instead. Its enumeration
+// (maximal-allocation walk, 3-slot packing) is identical to this one's,
+// duplicated rather than shared so the two ranking objectives can never
+// accidentally cross-contaminate each other's tuning.
 export function bruteForceBestJoint(inst: OracleInstance): BruteForceJointResult {
-  if (inst.targets.length < 2) {
-    throw new Error('bruteForceBestJoint requires 2+ targets; use bruteForceBest for single-target instances');
-  }
   const n = inst.options.length;
   for (const opt of inst.options) {
     if (opt.actualFuel <= 0 && opt.actualTime <= 0) {

@@ -52,19 +52,17 @@ describe('optimizer performance', () => {
   });
 });
 
-// Joint (n=2) path latency guard. The joint search now runs the same kind of
-// dual-cost filter as the n=1 path (in probability space -- see
-// coreSearchJoint), which is what brought this path down from ~3.3s to the
-// budget below. It stays looser than the n=1 guard because every eval
-// re-solves the heavier tangent-augmented LP and the search runs twice (the
-// 3S relaxation and the per-slot floor): a second real target sharing
-// tachyon-deflector-4's option pool is a realistic worst case, not a
-// pathological one.
+// n=2 latency guard. There is one search, so this differs from the guard above
+// only in instance size -- but that size costs: the inner and relaxation LPs
+// each carry one epigraph variable and a block of tangent rows per target, so a
+// second target roughly doubles the per-eval LP the search re-solves millions
+// of times. A second real target sharing tachyon-deflector-4's option pool is a
+// realistic worst case, not a pathological one.
 const JOINT_LOOSE_CAP_MS = 600;
 const JOINT_STRICT_CAP_MS = 250;
 const SECOND_TARGET = 'puzzle-cube-4';
 
-describe('optimizer performance (joint, n=2)', () => {
+describe('optimizer performance (n=2)', () => {
   it(`solves a production-scale 2-target instance under ${STRICT ? JOINT_STRICT_CAP_MS : JOINT_LOOSE_CAP_MS}ms`, () => {
     const targets = [TARGET, SECOND_TARGET];
     const dag = buildRecipeDag(targets, 30);

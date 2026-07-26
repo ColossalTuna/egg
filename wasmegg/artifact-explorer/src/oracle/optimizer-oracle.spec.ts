@@ -12,7 +12,7 @@ import { describe, expect, test } from 'vitest';
 import { optimizeFull } from '../lib/optimizer-core';
 import type { OptimizerSolution } from '../lib/types';
 import { makeNode, makeOpt } from '../lib/spec-helpers';
-import { bruteForceBest, bruteForceBestJoint, packableInto3Bins } from './enumerate';
+import { bruteForceBestJoint, packableInto3Bins } from './enumerate';
 import { evaluateAllocation, evaluateAllocationJoint, OracleInstance, targetQ } from './evaluate';
 import { FAMILIES, Family, generateInstance } from './generate';
 
@@ -73,49 +73,12 @@ function reconstructAllocation(inst: OracleInstance, solution: OptimizerSolution
   return allocation;
 }
 
-// probability of at least one legendary across all targets, as claimed by the
-// solver's perTarget report
-function claimedProbability(solution: OptimizerSolution, inst: OracleInstance): number {
-  let oneMinus = 1;
-  for (const target of inst.targets) {
-    const per = solution.perTarget.find(p => p.nodeId === target);
-    if (!per) {
-      throw new Error(`perTarget missing entry for ${target}`);
-    }
-    oneMinus *= 1 - per.bestProbability;
-  }
-  return 1 - oneMinus;
-}
-
 // Second opinion on an oracle-found allocation: collapse it into a single
 // synthetic take-it-or-leave-it option and let the solver price it with its
 // own value function, so a reported gap cannot be an oracle-model artifact.
+// Reads back jointProbability, the metric the solver maximizes at every target
+// count (with one target it is that target's own probability).
 function solverPricesAllocation(inst: OracleInstance, allocation: number[]): number {
-  const yields = new Map<string, number>();
-  const legendary = new Map<string, number>();
-  inst.options.forEach((opt, i) => {
-    for (const [item, qty] of opt.yieldVector) {
-      yields.set(item, (yields.get(item) ?? 0) + allocation[i] * qty);
-    }
-    for (const [item, qty] of opt.legendaryYieldVector) {
-      legendary.set(item, (legendary.get(item) ?? 0) + allocation[i] * qty);
-    }
-  });
-  const solution = optimizeFull({
-    options: [makeOpt(1, 1, [...yields], [...legendary])],
-    recipeDag: inst.dag,
-    desiredArtifactNodeIds: inst.targets,
-    fuelCapacity: 1,
-    timeCapacity: 1,
-    baseYield: inst.baseYield,
-  });
-  return claimedProbability(solution, inst);
-}
-
-// Same second-opinion trick as solverPricesAllocation, but reads back
-// jointProbability (the AND metric optimizeFullJoint reports) instead of the
-// union-style claimedProbability, for the n>=2 optimality check below.
-function solverPricesAllocationJoint(inst: OracleInstance, allocation: number[]): number {
   const yields = new Map<string, number>();
   const legendary = new Map<string, number>();
   inst.options.forEach((opt, i) => {
@@ -207,64 +170,56 @@ function checkInstance(inst: OracleInstance, gapTol = GAP_TOL): InstanceOutcome 
     );
   }
 
-  // n>=2 targets route through optimizeFullJoint, which maximizes the AND
-  // (product) probability, not the union score optimizeFullSingle maximizes
-  // below -- so it is checked against the independent joint evaluator/brute
-  // force (evaluateAllocationJoint/bruteForceBestJoint) instead. n=1
-  // instances (the only ones that exercise optimizeFullSingle) fall through
-  // to the unchanged union-style checks that follow.
-  if (inst.targets.length >= 2) {
-    const planEvalJoint = evaluateAllocationJoint(inst, allocation);
-    const claimedJoint = solution.jointProbability;
-    if (Math.abs(claimedJoint - planEvalJoint.jointProbability) > HONESTY_TOL) {
+  // The solver maximizes the AND (product-over-targets) probability at every
+  // target count, so every instance is checked against the same independent
+  // joint evaluator and brute force regardless of how many targets it has. At
+  // n=1 the product has one factor and evaluateAllocationJoint delegates to the
+  // exact-arithmetic union evaluator, so single-target instances lose no rigour
+  // by not having a checking path of their own.
+  const planEval = evaluateAllocationJoint(inst, allocation);
+  const claimed = solution.jointProbability;
+  const expected = planEval.jointProbability;
+  for (const p of planEval.perTarget) {
+    if (!solution.perTarget.some(q => q.nodeId === p.nodeId)) {
+      fail('honesty', `perTarget missing entry for ${p.nodeId}`);
+    }
+  }
+  if (Math.abs(claimed - expected) > HONESTY_TOL) {
+    fail('honesty', `claimed jointProbability=${claimed} vs independent ${expected} for allocation [${allocation}]`);
+  } else if (claimed > 0 && expected > 0) {
+    // Also compare in log space, which stays sharp at both ends of the range
+    // the absolute test above goes blind at: a joint probability runs from
+    // ~1e-8 on a long-odds multi-target plan up to within an ulp of 1 on an
+    // easy single-target one, and a fixed 1e-6 band is vacuous at the bottom
+    // and unreachable at the top.
+    //
+    // Deliberately on the joint probability rather than per target: the
+    // per-target split is pinned down only where the objective is strictly
+    // curved in it, and on a plan that leaves any target at zero crafts the
+    // joint probability is zero for every split, so the solver's split and the
+    // oracle's can differ freely without either being wrong. The product is
+    // the quantity both sides actually optimize, and comparing it needs no
+    // assumption about which split they landed on.
+    const claimedLog = -Math.log(claimed);
+    const expectedLog = -Math.log(expected);
+    if (Math.abs(claimedLog - expectedLog) > HONESTY_TOL * (1 + expectedLog)) {
       fail(
         'honesty',
-        `claimed jointProbability=${claimedJoint} vs independent ${planEvalJoint.jointProbability} for allocation [${allocation}]`
+        `claimed -log(jointProbability)=${claimedLog} vs independent ${expectedLog} for allocation [${allocation}]`
       );
-    }
-
-    const oracleJoint = bruteForceBestJoint(inst);
-    const gapJoint = Math.max(0, oracleJoint.bestJointProbability - planEvalJoint.jointProbability);
-    if (gapJoint > gapTol) {
-      const solverView = solverPricesAllocationJoint(inst, oracleJoint.bestAllocation);
-      const confirmed = solverView - planEvalJoint.jointProbability > GAP_TOL / 2;
-      fail(
-        'optimality',
-        `plan [${allocation}] jointP=${planEvalJoint.jointProbability.toFixed(6)} but oracle found ` +
-          `[${oracleJoint.bestAllocation}] jointP=${oracleJoint.bestJointProbability.toFixed(6)} ` +
-          `(gap ${gapJoint.toExponential(3)}, solver's own pricing of that allocation: ${solverView.toFixed(6)} — ` +
-          `${confirmed ? 'CONFIRMED by solver value function' : 'NOT confirmed; possible oracle model divergence'}, ` +
-          `${oracleJoint.evaluatedCount} allocations checked)`
-      );
-    }
-
-    return { family: inst.label, seed: inst.seed, gap: gapJoint, failures };
-  }
-
-  const planEval = evaluateAllocation(inst, allocation);
-  const claimed = claimedProbability(solution, inst);
-  if (Math.abs(claimed - planEval.probability) > HONESTY_TOL) {
-    fail('honesty', `claimed p=${claimed} vs independent p=${planEval.probability} for allocation [${allocation}]`);
-  } else if (claimed < 1 && planEval.score < 30) {
-    // also compare in score space, which stays sharp where probabilities
-    // compress toward 1; the round-trip resolution is ~ulp(1) * e^score
-    const claimedScore = -Math.log(1 - claimed);
-    const roundTripResolution = 4e-16 * Math.exp(planEval.score);
-    if (Math.abs(claimedScore - planEval.score) > HONESTY_TOL * (1 + planEval.score) + roundTripResolution) {
-      fail('honesty', `claimed score ${claimedScore} vs independent ${planEval.score} for allocation [${allocation}]`);
     }
   }
 
-  const oracle = bruteForceBest(inst);
-  const gap = Math.max(0, oracle.bestProbability - planEval.probability);
+  const oracle = bruteForceBestJoint(inst);
+  const gap = Math.max(0, oracle.bestJointProbability - planEval.jointProbability);
   if (gap > gapTol) {
     const solverView = solverPricesAllocation(inst, oracle.bestAllocation);
-    const confirmed = solverView - planEval.probability > GAP_TOL / 2;
+    const confirmed = solverView - planEval.jointProbability > GAP_TOL / 2;
     fail(
       'optimality',
-      `plan [${allocation}] p=${planEval.probability.toFixed(6)} but oracle found [${oracle.bestAllocation}] ` +
-        `p=${oracle.bestProbability.toFixed(6)} (gap ${gap.toExponential(3)}, ` +
-        `solver's own pricing of that allocation: ${solverView.toFixed(6)} — ` +
+      `plan [${allocation}] jointP=${planEval.jointProbability.toFixed(6)} but oracle found ` +
+        `[${oracle.bestAllocation}] jointP=${oracle.bestJointProbability.toFixed(6)} ` +
+        `(gap ${gap.toExponential(3)}, solver's own pricing of that allocation: ${solverView.toFixed(6)} — ` +
         `${confirmed ? 'CONFIRMED by solver value function' : 'NOT confirmed; possible oracle model divergence'}, ` +
         `${oracle.evaluatedCount} allocations checked)`
     );

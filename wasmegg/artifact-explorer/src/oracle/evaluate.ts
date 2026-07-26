@@ -475,10 +475,11 @@ function jointContext(inst: OracleInstance): {
   Qs: number[];
   targets: string[];
 } {
+  // n=1 never reaches here: both entry points short-circuit to the union
+  // evaluator, whose single-target arithmetic is exact.
   if (inst.targets.length < 2) {
     throw new Error(
-      `evaluateAllocationJoint(Float) requires 2+ targets (got ${inst.targets.length}); ` +
-        `n=1 is handled separately`
+      `jointContext requires 2+ targets (got ${inst.targets.length}); n=1 short-circuits to the union evaluator`
     );
   }
   const template = lpTemplate(inst);

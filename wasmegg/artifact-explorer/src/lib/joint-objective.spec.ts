@@ -1,10 +1,10 @@
-// Tests for the Phase 1 joint (product) objective: maximizing P(all selected
-// targets) rather than the single-target weighted-sum score. See
-// value-function.ts's JOINT_TANGENTS docs and optimizer-core.ts's
-// optimizeFullJoint docs for the math.
+// Tests for the solver's joint (product) objective: maximizing P(all selected
+// targets). See value-function.ts's JOINT_TANGENTS docs and optimizer-core.ts's
+// file header for the math, including why a single target is this same
+// objective with one term rather than a separate weighted-sum mode.
 
 import { describe, it, expect } from 'vitest';
-import { optimizeFull, optimizeFullSingle, optimizeFullJoint } from './optimizer-core';
+import { optimizeFull } from './optimizer-core';
 import {
   compileInnerLp,
   alphaToProb,
@@ -177,28 +177,47 @@ describe('tangent approximation accuracy', () => {
   });
 });
 
-describe('joint path algebraic equivalence at n=1', () => {
-  it('matches optimizeFullSingle when the joint code path is forced with a single target', () => {
-    // Production code always routes a single target through optimizeFullSingle
-    // (optimizeFull's length<=1 guard), but log P(all) reduces to g(score_1)
-    // for n=1, and g is strictly increasing, so maximizing it is argmax-
-    // equivalent to maximizing score_1 directly. This forces the joint path
-    // directly (bypassing the guard) to confirm that equivalence holds in
-    // practice, not just on paper.
-    const dag = craftDag(0.1);
-    const opt = makeOpt(10, 10, [['B', 1]]);
-    const args = {
-      options: [opt],
-      recipeDag: dag,
-      desiredArtifactNodeIds: ['A'],
-      fuelCapacity: 65,
-      timeCapacity: 40,
-      baseYield: new Map<string, number>(),
-    };
+describe('the product objective reduces to the linear score at n=1', () => {
+  // The solver has one objective, sum_T g(score_T), for every target count.
+  // That is only legitimate at n=1 because g is strictly increasing, making
+  // argmax g(score_1) = argmax score_1 -- i.e. the product objective is not an
+  // approximation of the old weighted-sum search, it is the same search. These
+  // check the reduction against independently computed answers rather than
+  // against a second code path.
+  const dag = craftDag(0.1);
+  const opt = makeOpt(10, 10, [['B', 1]]);
+  const args = {
+    options: [opt],
+    recipeDag: dag,
+    desiredArtifactNodeIds: ['A'],
+    fuelCapacity: 65,
+    timeCapacity: 40,
+    baseYield: new Map<string, number>(),
+  };
 
-    const single = optimizeFullSingle(args);
-    const joint = optimizeFullJoint(args);
+  it('lands on the plain linear score optimum', () => {
+    const sol = optimizeFull(args);
 
-    expect(joint.jointProbability).toBeCloseTo(single.bestProbability, 9);
+    // Brute force the linear score S = Q*alpha over every 3-slot-packable
+    // multiplicity of the single option, and convert once at the end. This is
+    // exactly what the pre-consolidation weighted-sum search computed.
+    const Q = -Math.log(1 - 0.1);
+    const perSlot = Math.floor(args.timeCapacity / opt.actualTime);
+    const maxK = Math.min(Math.floor(args.fuelCapacity / opt.actualFuel), 3 * perSlot);
+    let bestScore = 0;
+    for (let k = 0; k <= maxK; k++) {
+      // packable into 3 slots of equal capacity
+      if (k > 3 * perSlot) continue;
+      const alpha = compileInnerLp(dag, ['A']).solve(new Map([['B', k]])).alpha;
+      bestScore = Math.max(bestScore, Q * alpha);
+    }
+
+    expect(sol.bestProbability).toBeCloseTo(1 - Math.exp(-bestScore), 9);
+  });
+
+  it('reports jointProbability as that one target’s own probability', () => {
+    const sol = optimizeFull(args);
+    expect(sol.perTarget).toHaveLength(1);
+    expect(sol.jointProbability).toBeCloseTo(sol.bestProbability, 12);
   });
 });
