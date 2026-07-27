@@ -165,8 +165,7 @@ export default defineComponent({
       'Drop data is sparse: no mission has 5+ recorded legendary observations of this artifact, so the displayed rate may be off by several multiples.';
     const chanceTooltip =
       'Probability of at least one legendary of this artifact from this ship set, via crafting or a direct drop.';
-    const jointTooltip =
-      "The probability of ending up with at least one legendary of every selected artifact from this ship set, treating each artifact's chance as independent of the others.";
+    const jointTooltip = 'The probability of ending up with at least one legendary of every selected artifact.';
     const craftTooltip =
       'Probability of crafting at least one legendary from the gathered ingredients (plus anything already in your inventory).';
     const dropTooltip = 'Probability of at least one legendary dropping directly from the missions.';

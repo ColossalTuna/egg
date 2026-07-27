@@ -2,7 +2,7 @@
   <spoiler-alert class="my-4" />
   <mission-selector :key="route.path" v-model="selectedMissionId" class="my-4" />
   <artifact-selector :key="route.path" v-model="selectedArtifactId" class="my-4" />
-  <tank-artifact-multi-selector :key="route.name" v-model="selectedTankArtifactIds" class="my-4" />
+  <tank-artifact-selector :key="route.name" v-model="selectedTankArtifactIds" class="my-4" />
   <router-view name="mission" />
   <div class="my-4 text-xs text-red-900">
     <p class="font-medium">Artifact notes:</p>
@@ -26,7 +26,7 @@ import { parseKnownTankIds } from '@/lib/filter';
 import SpoilerAlert from '@/components/SpoilerAlert.vue';
 import ArtifactGrid from '@/components/ArtifactGrid.vue';
 import ArtifactSelector from '@/components/ArtifactSelector.vue';
-import TankArtifactMultiSelector from '@/components/TankArtifactMultiSelector.vue';
+import TankArtifactSelector from '@/components/TankArtifactSelector.vue';
 import MissionSelector from '@/components/MissionSelector.vue';
 
 export default defineComponent({
@@ -34,7 +34,7 @@ export default defineComponent({
     SpoilerAlert,
     ArtifactGrid,
     ArtifactSelector,
-    TankArtifactMultiSelector,
+    TankArtifactSelector,
     MissionSelector,
   },
   props: {

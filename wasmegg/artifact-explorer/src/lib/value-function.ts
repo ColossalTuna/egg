@@ -372,7 +372,7 @@ export function compileJointInnerLp(
 
 // argmax over t in [0, 1] of a concave function. Robust to phi returning
 // -Infinity on part of the interval.
-function goldenSectionArgmax01(phi: (t: number) => number, iters = 100): number {
+function goldenSectionArgmaxZeroToOne(phi: (t: number) => number, iters = 100): number {
   const GOLDEN = (Math.sqrt(5) - 1) / 2;
   let a = 0;
   let b = 1;
@@ -456,7 +456,7 @@ export function refineJointCraftSplit(
     };
     // Golden section only converges *toward* an endpoint, stopping a few ULPs
     // short, and endpoints are the common case. Probe them and prefer on ties.
-    const tInterior = goldenSectionArgmax01(phi);
+    const tInterior = goldenSectionArgmaxZeroToOne(phi);
     const fInterior = phi(tInterior);
     let tStar = tInterior;
     if (phi(1) >= fInterior) tStar = 1;

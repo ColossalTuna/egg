@@ -248,8 +248,6 @@ function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): Co
     }
   };
 
-  // Dominance pruning runs before the standalone pass: a dominated option can
-  // never be the best standalone seed, and one LP solve per option is dear.
   const survives = new Uint8Array(options.length);
   for (let i = 0; i < options.length; i++) survives[i] = 1;
 
@@ -647,28 +645,28 @@ function assembleSolution(baseYield: Map<string, number>, bestAlloc: Map<number,
 function dominates(j: LaunchOption, i: LaunchOption, targetSet: Set<string>): boolean {
   if (j.actualFuel > i.actualFuel + ZERO_TOL) return false;
   if (j.actualTime > i.actualTime + ZERO_TOL) return false;
-  let strict = false;
+  let strictYield = false;
   for (const [n, vi] of i.yieldVector) {
     const vj = j.yieldVector.get(n) ?? 0;
     if (vj < vi - ZERO_TOL) return false;
-    if (vj > vi + ZERO_TOL) strict = true;
+    if (vj > vi + ZERO_TOL) strictYield = true;
   }
   // j producing an ingredient i lacks entirely also counts as strict
   for (const [n, vj] of j.yieldVector) {
-    if (vj > ZERO_TOL && !i.yieldVector.has(n)) strict = true;
+    if (vj > ZERO_TOL && !i.yieldVector.has(n)) strictYield = true;
   }
   for (const [t, li] of i.legendaryYieldVector) {
     if (!targetSet.has(t)) continue;
     const lj = j.legendaryYieldVector.get(t) ?? 0;
     if (lj < li - ZERO_TOL) return false;
-    if (lj > li + ZERO_TOL) strict = true;
+    if (lj > li + ZERO_TOL) strictYield = true;
   }
   for (const [t, lj] of j.legendaryYieldVector) {
     if (!targetSet.has(t)) continue;
-    if (lj > ZERO_TOL && !i.legendaryYieldVector.has(t)) strict = true;
+    if (lj > ZERO_TOL && !i.legendaryYieldVector.has(t)) strictYield = true;
   }
   const strictCost = j.actualFuel < i.actualFuel - ZERO_TOL || j.actualTime < i.actualTime - ZERO_TOL;
-  return strictCost || strict;
+  return strictCost || strictYield;
 }
 
 // Greedy repair over the FULL option list, pruned options included. Mutates
