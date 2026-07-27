@@ -114,8 +114,8 @@ import { useRouter } from 'vue-router';
 
 import { iconURL } from 'lib';
 import { getArtifactTierPropsFromId as id2artifact } from 'lib/artifacts/data';
-import { cmpArtifactTiers, parseTankIds, serializeTankIds } from '@/lib';
-import { artifactIdToArtifact } from '@/lib/filter';
+import { cmpArtifactTiers, serializeTankIds } from '@/lib';
+import { parseKnownTankIds } from '@/lib/filter';
 import BaseInfo from 'ui/components/BaseInfo.vue';
 import ArtifactName from '@/components/ArtifactName.vue';
 import ArtifactMissionOptimizer from '@/components/ArtifactMissionOptimizer.vue';
@@ -132,13 +132,19 @@ function recursiveIngredientsOf(artifact: ReturnType<typeof id2artifact>) {
   const ingredients = [];
   while (queue.length > 0) {
     const item = queue.shift()!;
-    if (!directIngredients.has(item.id)) {
-      if (seen.has(item.id)) {
-        continue;
-      }
-      ingredients.push(item);
+    // Dedupe on first pop regardless of whether this is a direct ingredient.
+    // Skipping the check for direct ingredients meant one reachable as a
+    // descendant of another was re-expanded, and its whole subtree re-enqueued,
+    // every time it recurred — same output, repeated work. That cost used to be
+    // paid once per page; with several artifacts selected it is paid per
+    // artifact.
+    if (seen.has(item.id)) {
+      continue;
     }
     seen.add(item.id);
+    if (!directIngredients.has(item.id)) {
+      ingredients.push(item);
+    }
     if (!item.recipe) {
       continue;
     }
@@ -169,7 +175,7 @@ export default defineComponent({
     // unrecognized ids. The route param comes straight from the URL, so a
     // hand-edited link or a stale bookmark referencing a renamed/removed
     // artifact must not be able to crash this view.
-    const artifactIds = computed(() => parseTankIds(rawParam.value).filter(id => artifactIdToArtifact.has(id)));
+    const artifactIds = computed(() => parseKnownTankIds(rawParam.value));
     const serializedArtifactIds = computed(() => serializeTankIds(artifactIds.value));
     const artifacts = computed(() => artifactIds.value.map(id => id2artifact(id)));
     // Keep this deep-linkable-single-artifact-compatible: with one id this is

@@ -28,9 +28,18 @@ function makeChoice(): LaunchSolution {
 
 describe('optimizer worker protocol', () => {
   it('round-trips launch options into the worker', () => {
+    // Distinct ships on purpose: makeOpt hands out one shared fixture ship, so
+    // asserting per-element ship mapping against identical ships would pass
+    // whatever the converters did with the ordering.
     const options = [
-      makeOpt(100, 3600, [['tachyon-stone-1', 4]], [['tachyon-deflector-4', 0.01]]),
-      makeOpt(200, 7200, [['tachyon-stone-2', 1.5]]),
+      {
+        ...makeOpt(100, 3600, [['tachyon-stone-1', 4]], [['tachyon-deflector-4', 0.01]]),
+        ship: new MissionType(Spaceship.HENERPRISE, DurationType.EPIC),
+      },
+      {
+        ...makeOpt(200, 7200, [['tachyon-stone-2', 1.5]]),
+        ship: new MissionType(Spaceship.ATREGGIES, DurationType.SHORT),
+      },
     ];
 
     const received = optionsFromWire(structuredClone(optionsToWire(options)));
@@ -40,12 +49,13 @@ describe('optimizer worker protocol', () => {
     expect(received[0].yieldVector.get('tachyon-stone-1')).toBe(4);
     expect(received[0].legendaryYieldVector.get('tachyon-deflector-4')).toBe(0.01);
     expect(received[1].supplyVector.get('tachyon-stone-2')).toBe(1.5);
-    for (const option of received) {
+    received.forEach((option, i) => {
       // optimizeFull copies this straight onto the solution's choiceHistory,
       // where the presentation layer reads its getters.
       expect(option.ship).toBeInstanceOf(MissionType);
-      expect(option.ship.shipType).toBe(options[0].ship.shipType);
-    }
+      expect(option.ship.shipType).toBe(options[i].ship.shipType);
+      expect(option.ship.durationType).toBe(options[i].ship.durationType);
+    });
   });
 
   it('survives a structured clone with Maps and a usable MissionType', () => {
