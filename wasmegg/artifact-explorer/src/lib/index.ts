@@ -47,6 +47,19 @@ export function buildRecipeDag(
   return recipeDag;
 }
 
+// The player's existing stock, as the optimizer's starting inventory. Counted
+// across all rarities (item.have) because any rarity crafts — this is "how many
+// copies you can feed a recipe", never "you already own a legendary"; the
+// legendary side of the objective comes solely from mission drops.
+//
+// A target is skipped only when nothing in the DAG consumes it. Such a node has
+// no conservation row in the inner LP (see compileInnerLp), so owned copies of
+// it could never be spent on anything and would only look like free progress.
+// A target that IS an ingredient of another target — which covers 21 of the 22
+// selectable legendaries, e.g. the-chalice-4 inside phoenix-feather-4 — keeps
+// its stock: those copies are genuinely spendable on the parent recipe, and
+// they can only relax the consumption side of that row, never inflate the
+// nested target's own craft count.
 export function computeBaseYield(
   playerInventory: Inventory | null | undefined,
   desiredArtifactNodeIds: string[],
@@ -55,10 +68,16 @@ export function computeBaseYield(
   const baseYield = new Map<string, number>();
 
   if (playerInventory) {
-    const rootIds = new Set(desiredArtifactNodeIds);
+    // Parent relation, derived exactly as compileInnerLp derives it.
+    const hasParent = new Set<string>();
+    for (const node of recipeDag.values()) {
+      if (node.isLeaf) continue;
+      for (const child of node.children) hasParent.add(child.nodeId);
+    }
+    const unconsumedTargets = new Set(desiredArtifactNodeIds.filter(id => !hasParent.has(id)));
 
     for (const nodeId of recipeDag.keys()) {
-      if (rootIds.has(nodeId)) continue;
+      if (unconsumedTargets.has(nodeId)) continue;
       const props = getArtifactTierPropsFromId(nodeId);
       const item = playerInventory.getItem({ name: props.afx_id, level: props.afx_level });
       const total = item.have;

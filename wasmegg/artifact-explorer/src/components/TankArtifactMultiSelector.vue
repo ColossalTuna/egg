@@ -10,7 +10,7 @@
         :key="artifact.id"
         class="inline-flex items-center pl-1 pr-1.5 py-1 rounded-full bg-gray-100 border border-gray-300 text-sm text-gray-700"
       >
-        <img class="h-5 w-5 flex-shrink-0 mr-1" :src="iconURL('egginc/' + artifact.icon_filename, 32)" />
+        <img class="h-5 w-5 flex-shrink-0 mr-1" :src="iconURL('egginc/' + artifact.icon_filename, 32)" alt="" />
         <span class="truncate max-w-[10rem]">{{ artifact.display }}</span>
         <button
           type="button"
@@ -37,6 +37,7 @@
 
     <div
       v-if="modelValue.length > 2 && !warningDismissed"
+      role="status"
       class="flex items-start gap-2 rounded-md bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm px-3 py-2"
     >
       <span class="flex-1">

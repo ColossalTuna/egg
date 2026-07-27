@@ -22,6 +22,7 @@ import { defineComponent, ref, PropType, toRefs, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { parseTankIds, serializeTankIds } from '@/lib';
+import { artifactIdToArtifact } from '@/lib/filter';
 import SpoilerAlert from '@/components/SpoilerAlert.vue';
 import ArtifactGrid from '@/components/ArtifactGrid.vue';
 import ArtifactSelector from '@/components/ArtifactSelector.vue';
@@ -81,22 +82,47 @@ export default defineComponent({
       }
     });
 
-    const selectedTankArtifactIds = ref<string[]>(parseTankIds(tankPlannerArtifactId.value));
+    // The route param is hand-editable, so an id that parses fine can still not
+    // name a real artifact. FuelTankPlanner already drops those before they
+    // reach getArtifactTierPropsFromId(); the selector has to drop them too, or
+    // an unknown id stays in the model forever and gets written back into the
+    // URL on the next add, leaving the Share link describing something other
+    // than what is actually planned. Filtered here rather than inside
+    // parseTankIds so that stays a pure string routine with no dependency on
+    // artifact data (see tank-ids.spec.ts).
+    const parseSelectedTankIds = (raw: string | null) => parseTankIds(raw).filter(id => artifactIdToArtifact.has(id));
+
+    const selectedTankArtifactIds = ref<string[]>(parseSelectedTankIds(tankPlannerArtifactId.value));
     watch(tankPlannerArtifactId, current => {
-      selectedTankArtifactIds.value = parseTankIds(current);
+      selectedTankArtifactIds.value = parseSelectedTankIds(current);
     });
-    watch(
-      selectedTankArtifactIds,
-      current => {
-        if (current.length > 0) {
-          router.push({
-            name: 'tank',
-            params: { tankPlannerArtifactId: serializeTankIds(current) },
-          });
+    watch(selectedTankArtifactIds, current => {
+      if (current.length === 0) {
+        // Removing the last chip has to leave the tank route: staying on
+        // /tank/<id>/ would keep the planner rendering the artifact that was
+        // just removed. Same destination FuelTankPlanner falls back to when
+        // none of its ids resolve. Guarded on the route so clearing a
+        // selection that was never in the URL doesn't navigate anywhere.
+        if (route.name === 'tank') {
+          router.replace({ name: 'home' });
         }
-      },
-      { deep: true }
-    );
+        return;
+      }
+      const serialized = serializeTankIds(current);
+      // When the incoming param was merely a non-canonical spelling of this
+      // same selection (`#/tank/a,a`, `#/tank/a,,b`, stray whitespace, an
+      // unknown id we just dropped), pushing the canonical URL would leave the
+      // non-canonical entry one step back in history -- where Back lands, the
+      // param watcher re-normalizes, and we push forward again, so the user
+      // can never get past it. Replace in that case; a genuine selection
+      // change still pushes so Back undoes it.
+      const sameSelection = serialized === serializeTankIds(parseSelectedTankIds(tankPlannerArtifactId.value));
+      const navigate = sameSelection ? router.replace : router.push;
+      navigate({
+        name: 'tank',
+        params: { tankPlannerArtifactId: serialized },
+      });
+    });
 
     return {
       route,

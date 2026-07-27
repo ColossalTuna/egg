@@ -7,7 +7,7 @@
           Chance of a legendary
         </span>
         : {{ (solution.bestProbability * 100).toFixed(2) }}%<sup
-          v-if="dropDataIsSparse"
+          v-if="primary.dropDataIsSparse"
           v-tippy="sparseTooltip"
           class="text-gray-500 cursor-help ml-0.5"
           >?</sup
@@ -22,7 +22,7 @@
           >…via direct drops</span
         >
         : {{ (solution.dropProbability * 100).toFixed(2) }}%<sup
-          v-if="dropDataIsSparse"
+          v-if="primary.dropDataIsSparse"
           v-tippy="sparseTooltip"
           class="text-gray-500 cursor-help ml-0.5"
           >?</sup
@@ -41,7 +41,7 @@
 
       <div v-for="target in targets" :key="'target-' + target.nodeId" class="mt-2 pl-2 border-l-2 border-green-100">
         <div class="flex items-center gap-1.5 font-medium text-gray-700">
-          <img :src="target.iconUrl" class="h-4 w-4 flex-shrink-0" />
+          <img :src="target.iconUrl" class="h-4 w-4 flex-shrink-0" alt="" />
           <span>{{ target.name }}</span>
         </div>
         <div class="text-sm text-green-700 pl-3">
@@ -106,10 +106,10 @@
       :craft-probability="solution.craftProbability"
       :drop-probability="solution.dropProbability"
       :expected-crafts="solution.expectedCrafts"
-      :p-craft="pCraft"
-      :lambda="lambda"
-      :craft-chain-tree="craftChainTree"
-      :mission-legendary-sources="missionLegendarySources"
+      :p-craft="primary.pCraft"
+      :lambda="primary.lambda"
+      :craft-chain-tree="primary.craftChainTree"
+      :mission-legendary-sources="primary.missionLegendarySources"
       :has-inventory="hasInventory"
     />
     <template v-else>
@@ -135,7 +135,7 @@
 import { computed, defineComponent, PropType } from 'vue';
 
 import { eggIconPath, formatDuration, formatEIValue } from 'lib';
-import type { CraftChainMetrics, MissionLegendaryRow, OptimizerSolution, RecipeTreeNode, TargetView } from '@/lib';
+import type { OptimizerSolution, TargetView } from '@/lib';
 import BaseIcon from 'ui/components/BaseIcon.vue';
 import OptimizerChoiceList from './OptimizerChoiceList.vue';
 import OptimizerExpectedDrops from './OptimizerExpectedDrops.vue';
@@ -146,20 +146,26 @@ export default defineComponent({
   props: {
     solution: { type: Object as PropType<OptimizerSolution>, required: true },
     maxWaitTimeSeconds: { type: Number, required: true },
-    // Primary-target values, used only by the n=1 render branch below (kept
-    // separate from `targets` so that branch reads the exact same props it
-    // always has, regardless of how many targets are selected).
-    pCraft: { type: Number, required: true },
-    lambda: { type: Number, required: true },
-    craftChainTree: { type: Object as PropType<RecipeTreeNode<CraftChainMetrics> | null>, required: true },
-    missionLegendarySources: { type: Array as PropType<MissionLegendaryRow[]>, required: true },
     hasInventory: { type: Boolean, required: true },
-    dropDataIsSparse: { type: Boolean, default: false },
     // One entry per selected target (length 1 when only one target is
-    // selected); drives the n>=2 render branch.
+    // selected); drives both render branches.
     targets: { type: Array as PropType<TargetView[]>, required: true },
   },
   setup(props) {
+    // The n=1 branch's view of the plan. perTarget -- and so targets -- can be
+    // empty (optimizer-core guards the same case when deriving its own primary
+    // readouts), and `perTarget.length <= 1` routes that here, so this branch
+    // must not dereference a target that isn't there.
+    const primary = computed<Omit<TargetView, 'nodeId' | 'name' | 'iconUrl' | 'perTarget'>>(
+      () =>
+        props.targets[0] ?? {
+          pCraft: 0,
+          lambda: 0,
+          craftChainTree: null,
+          missionLegendarySources: [],
+          dropDataIsSparse: false,
+        }
+    );
     const sparseTooltip =
       'Drop data is sparse: no mission has 5+ recorded legendary observations of this artifact, so the displayed rate may be off by several multiples.';
     const chanceTooltip =
@@ -185,6 +191,7 @@ export default defineComponent({
       dropTooltip,
       idleTooltip,
       idleTimeSeconds,
+      primary,
     };
   },
 });

@@ -325,11 +325,12 @@ function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): Co
   const survives = new Uint8Array(options.length);
   for (let i = 0; i < options.length; i++) survives[i] = 1;
 
+  const targetSet = new Set(targets);
   for (let i = 0; i < options.length; i++) {
     if (!survives[i]) continue;
     for (let j = 0; j < options.length; j++) {
       if (i === j || !survives[j]) continue;
-      if (dominates(options[j], options[i])) {
+      if (dominates(options[j], options[i], targetSet)) {
         survives[i] = 0;
         break;
       }
@@ -625,9 +626,11 @@ function escalatePacking(
   let best: PackResult | null = null;
   let starts = 0;
   for (const i of support) {
-    if (starts++ >= 8) break;
     const d = ctx.options[i].actualTime;
+    // Budget only usable seeds: an option that can't fit a single copy produces
+    // no start at all, so counting it would starve the seeds that can.
     if (d <= ZERO_TOL || d > S + ZERO_TOL) continue;
+    if (starts++ >= 8) break;
     const seed = new Map<number, number>([[i, Math.floor(S / d)]]);
     const r = packAndFill(seed, ctx, R, S, support);
     if (!best || r.score > best.score) best = r;
@@ -694,8 +697,10 @@ function assembleFullSolution(
   };
 
   // P(all targets). With a single target this is just that target's own
-  // probability, which is what the single-target readouts show.
-  let jointProbability = 1;
+  // probability, which is what the single-target readouts show. With no targets
+  // the empty product would read as a certain 100%, which is worse than useless
+  // in the UI — nothing was asked for, so nothing is achieved.
+  let jointProbability = perTarget.length > 0 ? 1 : 0;
   for (const t of perTarget) jointProbability *= t.bestProbability;
 
   return {
@@ -764,7 +769,14 @@ function assembleSolution(baseYield: Map<string, number>, bestAlloc: Map<number,
 // comparison altogether: the sole source of that target's direct drops would be
 // prunable by a cheaper option supplying more crafting ingredients and no
 // legendaries at all.
-function dominates(j: LaunchOption, i: LaunchOption): boolean {
+//
+// Only the search targets are compared, though: they are the only nodes whose
+// legendary rate reaches the objective (optLegRates, and the tangent rows that
+// price it). Demanding j match i on a non-target ingredient's legendary rate
+// rejects dominations nothing downstream can distinguish, and every survivor
+// costs twice — once in the O(n^2) pairwise scan, once as a column of the
+// relaxation LP.
+function dominates(j: LaunchOption, i: LaunchOption, targetSet: Set<string>): boolean {
   if (j.actualFuel > i.actualFuel + ZERO_TOL) return false;
   if (j.actualTime > i.actualTime + ZERO_TOL) return false;
   let strict = false;
@@ -778,11 +790,13 @@ function dominates(j: LaunchOption, i: LaunchOption): boolean {
     if (vj > ZERO_TOL && !i.yieldVector.has(n)) strict = true;
   }
   for (const [t, li] of i.legendaryYieldVector) {
+    if (!targetSet.has(t)) continue;
     const lj = j.legendaryYieldVector.get(t) ?? 0;
     if (lj < li - ZERO_TOL) return false;
     if (lj > li + ZERO_TOL) strict = true;
   }
   for (const [t, lj] of j.legendaryYieldVector) {
+    if (!targetSet.has(t)) continue;
     if (lj > ZERO_TOL && !i.legendaryYieldVector.has(t)) strict = true;
   }
   const strictCost = j.actualFuel < i.actualFuel - ZERO_TOL || j.actualTime < i.actualTime - ZERO_TOL;

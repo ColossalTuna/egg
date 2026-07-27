@@ -23,16 +23,11 @@
           :key="'solution-' + i"
           :solution="view.solution"
           :max-wait-time-seconds="lastComputedMaxWaitTimeSeconds"
-          :p-craft="view.pCraft"
-          :lambda="view.lambda"
-          :craft-chain-tree="view.craftChainTree"
-          :mission-legendary-sources="view.missionLegendarySources"
           :has-inventory="!!playerInventory"
-          :drop-data-is-sparse="view.dropDataIsSparse"
           :targets="view.targets"
         />
-        <p v-if="computing" class="flex items-center gap-2 text-sm text-gray-500">
-          <svg class="animate-spin h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none">
+        <p v-if="computing" role="status" class="flex items-center gap-2 text-sm text-gray-500">
+          <svg class="animate-spin h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
@@ -48,19 +43,24 @@
         </p>
       </div>
 
-      <optimizer-inventory-panel
-        v-if="artifactIds.length <= 1"
-        :tree="inventoryTree"
-        :has-inventory="!!playerInventory"
-      />
-      <template v-else>
-        <div v-for="target in inventoryTrees" :key="'inventory-' + target.nodeId">
-          <div class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1">
-            <img :src="target.iconUrl" class="h-4 w-4 flex-shrink-0" />
-            <span>{{ target.name }}</span>
-          </div>
-          <optimizer-inventory-panel :tree="target.tree" :has-inventory="!!playerInventory" />
+      <!-- One path for any number of targets: the per-target label is only
+           meaningful with more than one, and it has to sit under exactly the
+           same condition as the panel itself. OptimizerInventoryPanel renders
+           nothing without a tree and an inventory, so a heading outside it
+           leaves a bare list of artifact names with nothing under them
+           whenever no player id has been entered -- the default state. The
+           v-for is on a <template> so the single-target case still renders the
+           panel as a direct child of the layout's spacing container, exactly
+           as it did before there was anything to label. -->
+      <template v-for="target in inventoryTrees" :key="'inventory-' + target.nodeId">
+        <div
+          v-if="inventoryTrees.length > 1 && target.tree && playerInventory"
+          class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1"
+        >
+          <img :src="target.iconUrl" class="h-4 w-4 flex-shrink-0" alt="" />
+          <span>{{ target.name }}</span>
         </div>
+        <optimizer-inventory-panel :tree="target.tree" :has-inventory="!!playerInventory" />
       </template>
 
       <slot />
@@ -256,6 +256,13 @@ export default defineComponent({
     // autoCompute itself.
     watchEffect(() => {
       const input = computeInputs.value;
+      // Every exit from here has to cancel the queued solve first. A timer
+      // armed by the previous run would otherwise still fire: turning
+      // auto-compute off inside the debounce window would compute anyway, and
+      // runCompute clearing pendingCompute would leave the button reading
+      // "Compute" next to a plan the user's latest input has already
+      // invalidated.
+      clearTimeout(debounceTimer);
       if (!autoCompute.value) {
         pendingCompute.value = true;
         return;
@@ -264,7 +271,6 @@ export default defineComponent({
         computedResults.value = [];
         return;
       }
-      clearTimeout(debounceTimer);
       debounceTimer = setTimeout(runCompute, AUTO_COMPUTE_DEBOUNCE_MS);
     });
 
@@ -272,10 +278,6 @@ export default defineComponent({
       clearTimeout(debounceTimer);
       client?.terminate();
     });
-
-    const inventoryTree = computed(() =>
-      computeInventoryTree(primaryArtifactId.value, recipeDag.value, playerInventory.value)
-    );
 
     // Name/icon lookup shared by every per-target label in the results UI,
     // reusing the same artifact metadata source as the recipe-tree builders
@@ -285,9 +287,9 @@ export default defineComponent({
       return { name: props.name, iconUrl: iconURL('egginc/' + props.icon_filename, 64) };
     }
 
-    // Per-target inventory trees, for the n>=2 inventory panel below; unused
-    // (and not rendered) when there's a single target, which keeps using the
-    // plain `inventoryTree` above so its markup stays unchanged.
+    // Per-target inventory trees; with a single target this is the one tree
+    // the panel has always shown, just reached through the same code path as
+    // the multi-target case.
     const inventoryTrees = computed(() =>
       artifactIds.value.map(nodeId => ({
         nodeId,
@@ -299,9 +301,7 @@ export default defineComponent({
     const solutionViews = computed(() =>
       computedResults.value.map(solution => {
         // Built once per target so n=1 and n>=2 share the exact same
-        // per-target computation; the n=1 render path additionally gets the
-        // primary target's values duplicated onto flat props below so it can
-        // keep reading them exactly as it did before this existed.
+        // per-target computation; the n=1 render path reads targets[0].
         //
         // Iterate solution.perTarget (the solution's own actual target list)
         // rather than the live artifactIds: between the user changing their
@@ -327,18 +327,7 @@ export default defineComponent({
             dropDataIsSparse: legendaryDataIsSparse(nodeId),
           };
         });
-        return {
-          solution,
-          targets,
-          // Flat primary-target fields, kept for the n=1 render branch of
-          // OptimizerSolutionCard, which must read the exact same values it
-          // did before multi-target support existed.
-          pCraft: targets[0].pCraft,
-          lambda: targets[0].lambda,
-          craftChainTree: targets[0].craftChainTree,
-          missionLegendarySources: targets[0].missionLegendarySources,
-          dropDataIsSparse: targets[0].dropDataIsSparse,
-        };
+        return { solution, targets };
       })
     );
 
@@ -349,12 +338,10 @@ export default defineComponent({
       pendingCompute,
       computing,
       computeError,
-      autoCompute,
       playerId,
       runCompute,
       submitPlayerId,
       playerInventory,
-      inventoryTree,
       inventoryTrees,
       solutionViews,
     };

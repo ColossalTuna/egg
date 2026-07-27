@@ -226,7 +226,7 @@
       >
         {{ computing ? 'Computing…' : pendingCompute ? 'Recompute — results out of date' : 'Compute' }}
       </button>
-      <p v-else-if="computing" class="text-xs text-gray-500">Computing…</p>
+      <p v-else-if="computing" role="status" class="text-xs text-gray-500">Computing…</p>
       <div class="mt-3">
         <loot-data-credit />
       </div>
