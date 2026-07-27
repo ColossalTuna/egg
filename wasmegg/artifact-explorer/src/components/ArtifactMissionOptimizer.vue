@@ -10,7 +10,7 @@
         :time-budget-invalid="!timeBudgetValid"
         @submit-player-id="submitPlayerId"
         @run-compute="runCompute"
-        @update:wait-time-days="waitTimeDays = $event"
+        @update:wait-time-days="setWaitTimeDays"
       />
     </div>
 
@@ -18,29 +18,44 @@
     <div class="min-w-0 space-y-4">
       <div class="border border-gray-200 rounded-lg p-4">
         <h3 class="text-base font-semibold text-gray-700 mb-3">Best Ship Set</h3>
-        <optimizer-solution-card
-          v-for="(view, i) in solutionViews"
-          :key="'solution-' + i"
-          :solution="view.solution"
-          :max-wait-time-seconds="lastComputedMaxWaitTimeSeconds"
-          :has-inventory="!!playerInventory"
-          :targets="view.targets"
-        />
-        <p v-if="computing" role="status" class="flex items-center gap-2 text-sm text-gray-500">
-          <svg class="animate-spin h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          Computing the best ship set…
-        </p>
-        <p v-else-if="computeError" class="text-sm text-red-600">Could not compute a plan: {{ computeError }}</p>
-        <p v-else-if="solutionViews.length === 0" class="text-sm text-gray-400">
-          {{
-            timeBudgetValid
-              ? 'No ship set found for the current settings.'
-              : 'Enter a time budget (e.g. 30, 12d12h, 10h5m) to compute a plan.'
-          }}
-        </p>
+        <div class="relative">
+          <div :class="dimSolution ? 'opacity-40 pointer-events-none transition-opacity' : ''">
+            <optimizer-solution-card
+              v-for="(view, i) in solutionViews"
+              :key="'solution-' + i"
+              :solution="view.solution"
+              :max-wait-time-seconds="lastComputedMaxWaitTimeSeconds"
+              :has-inventory="!!playerInventory"
+              :targets="view.targets"
+            />
+            <p
+              v-if="computing && solutionViews.length === 0"
+              role="status"
+              class="flex items-center gap-2 text-sm text-gray-500"
+            >
+              <svg class="animate-spin h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              Computing the best ship set…
+            </p>
+            <p v-else-if="computeError" class="text-sm text-red-600">Could not compute a plan: {{ computeError }}</p>
+            <p v-else-if="solutionViews.length === 0" class="text-sm text-gray-400">
+              {{
+                timeBudgetValid
+                  ? 'No ship set found for the current settings.'
+                  : 'Enter a time budget (e.g. 30, 12d12h, 10h5m) to compute a plan.'
+              }}
+            </p>
+          </div>
+          <div v-if="dimSolution" role="status" class="absolute inset-0 flex items-start justify-center pt-8">
+            <svg class="animate-spin h-8 w-8 text-gray-500" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span class="sr-only">Computing the best ship set…</span>
+          </div>
+        </div>
       </div>
 
       <!-- One path for any number of targets: the per-target label is only
@@ -82,15 +97,16 @@ import {
 
 import {
   autoCompute,
-  currentOptimizerArtifactId,
+  currentOptimizerArtifactIds,
   effectiveConfig,
   effectiveFuelTankCapacity,
-  effectivePreviousCrafts,
+  effectivePreviousCraftsOverride,
   effectiveCraftingLevel,
   EFFORT_LAUNCH_PERIOD_SECONDS,
   missionFilters,
   playerInventory,
   setPlayerData,
+  setWaitTimeDays,
 } from '@/store';
 import {
   buildRecipeDag,
@@ -118,13 +134,10 @@ export default defineComponent({
   },
   setup(props) {
     const { artifactIds } = toRefs(props);
-    // The craft-chain and inventory trees are built per target (see
-    // solutionViews / inventoryTrees below); this is only the override modal's
-    // notion of "the artifact currently being planned", which stays
-    // single-valued because the modal edits one artifact's craft count.
-    const primaryArtifactId = computed(() => artifactIds.value[0]);
 
-    const waitTimeDays = ref('30');
+    // Persisted in the store so it survives this component unmounting when the
+    // selection empties and the route falls back home.
+    const waitTimeDays = computed(() => missionFilters.value.waitTimeDays);
     const maxWaitTimeSeconds = computed(() => parseDurationDays(waitTimeDays.value));
 
     const timeBudgetValid = computed(() => Number.isFinite(maxWaitTimeSeconds.value) && maxWaitTimeSeconds.value > 0);
@@ -136,16 +149,16 @@ export default defineComponent({
       });
     }
 
-    // let the override modal show the prior craft count for this artifact
+    // let the settings UI show each target's prior craft count
     watch(
-      primaryArtifactId,
+      artifactIds,
       v => {
-        currentOptimizerArtifactId.value = v;
+        currentOptimizerArtifactIds.value = [...v];
       },
       { immediate: true }
     );
     onUnmounted(() => {
-      currentOptimizerArtifactId.value = null;
+      currentOptimizerArtifactIds.value = [];
     });
 
     const submitPlayerId = async (id: string) => {
@@ -168,7 +181,7 @@ export default defineComponent({
         artifactIds.value,
         effectiveCraftingLevel.value,
         playerInventory.value,
-        effectivePreviousCrafts.value
+        effectivePreviousCraftsOverride.value
       )
     );
 
@@ -331,8 +344,13 @@ export default defineComponent({
       })
     );
 
+    // Overlay only makes sense on top of a rendered solution.
+    const dimSolution = computed(() => computing.value && solutionViews.value.length > 0);
+
     return {
       waitTimeDays,
+      setWaitTimeDays,
+      dimSolution,
       lastComputedMaxWaitTimeSeconds,
       timeBudgetValid,
       pendingCompute,

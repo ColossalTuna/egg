@@ -140,8 +140,10 @@
           :has-save="playerPreviousCrafts !== null"
           :overridden="overrides.previousCrafts"
           :save-value="playerPreviousCrafts"
+          :save-entries="previousCraftEntries"
           :manual-value="extras.previousCrafts"
           :min="0"
+          hint="Applies to every selected target."
           @update:overridden="setOverridePreviousCrafts"
           @update:manual="setPreviousCraftCount"
         />
@@ -241,6 +243,7 @@ import {
   formatDuration,
   formatEIValue,
   fuelTankSizes,
+  getArtifactTierPropsFromId,
   isDurationNormalizable,
   parseDurationDays,
   parseValueWithUnit,
@@ -254,6 +257,7 @@ import OptimizerSettingRow from './OptimizerSettingRow.vue';
 import {
   autoCompute,
   config,
+  currentOptimizerArtifactIds,
   effectiveConfig,
   EFFORT_LEVELS,
   type EffortLevel,
@@ -263,6 +267,7 @@ import {
   overrides,
   playerCraftingLevel,
   playerPreviousCrafts,
+  playerPreviousCraftsByArtifact,
   playerShipsConfig,
   playerTankLevel,
   setAutoCompute,
@@ -346,6 +351,18 @@ export default defineComponent({
 
     const maxTankLevel = fuelTankSizes.length - 1;
     const hasPlayerData = computed(() => !!playerShipsConfig.value);
+
+    // The save's crafted count for each selected target, shown when the
+    // override is off (each target then uses its own count).
+    const previousCraftEntries = computed(() =>
+      currentOptimizerArtifactIds.value
+        .filter(id => playerPreviousCraftsByArtifact.value.has(id))
+        .map(id => ({
+          id,
+          label: getArtifactTierPropsFromId(id).name,
+          value: playerPreviousCraftsByArtifact.value.get(id)!,
+        }))
+    );
 
     // The tank level currently in effect for display; when editable this tracks
     // the manual value, otherwise the save value.
@@ -432,6 +449,7 @@ export default defineComponent({
       onWaitTimeBlur,
       hasPlayerData,
       maxTankLevel,
+      previousCraftEntries,
       tankCapacityLabel,
       totalShips,
       shipsVisibleCount,

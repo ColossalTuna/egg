@@ -8,10 +8,22 @@
       <span
         v-for="artifact in selectedArtifacts"
         :key="artifact.id"
-        class="inline-flex items-center pl-1 pr-1.5 py-1 rounded-full bg-gray-100 border border-gray-300 text-sm text-gray-700"
+        class="inline-flex items-center pl-1 pr-1.5 py-1 rounded-full border text-sm"
+        :class="
+          replacingId === artifact.id
+            ? 'bg-indigo-50 border-indigo-400 ring-1 ring-indigo-400 text-indigo-800'
+            : 'bg-gray-100 border-gray-300 text-gray-700'
+        "
       >
-        <img class="h-5 w-5 flex-shrink-0 mr-1" :src="iconURL('egginc/' + artifact.icon_filename, 32)" alt="" />
-        <span class="truncate max-w-[10rem]">{{ artifact.display }}</span>
+        <button
+          type="button"
+          class="inline-flex items-center min-w-0 rounded-full focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          :aria-label="`Replace ${artifact.display}`"
+          @click="beginReplace(artifact.id)"
+        >
+          <img class="h-5 w-5 flex-shrink-0 mr-1" :src="iconURL('egginc/' + artifact.icon_filename, 32)" alt="" />
+          <span class="truncate max-w-[10rem]">{{ artifact.display }}</span>
+        </button>
         <button
           type="button"
           class="ml-1 flex-shrink-0 rounded-full p-0.5 text-gray-400 hover:text-gray-600 hover:bg-gray-200 focus:outline-none"
@@ -24,16 +36,25 @@
     </div>
 
     <base-select-filterable
+      ref="picker"
       :items="availableArtifacts"
       :get-item-id="artifact => artifact.id"
       :get-item-display="artifact => artifact.display"
       :get-item-icon-path="artifact => 'egginc/' + artifact.icon_filename"
       :item-from-id="id => artifactIdToArtifact.get(id)!"
       :search-items="searchAvailableArtifacts"
-      placeholder="Add artifact (type to filter)"
+      :placeholder="replacingArtifact ? `Replace ${replacingArtifact.display} with…` : 'Add artifact (type to filter)'"
       :model-value="pendingId"
-      @update:model-value="onAdd"
+      @update:model-value="onPick"
     />
+
+    <p v-if="replacingArtifact" class="text-xs text-gray-500">
+      Pick a replacement for {{ replacingArtifact.display }}, or
+      <button type="button" class="underline hover:text-gray-700 focus:outline-none" @click="cancelReplace">
+        cancel
+      </button>
+      .
+    </p>
 
     <div
       v-if="modelValue.length > 2 && !warningDismissed"
@@ -57,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, PropType, ref, watch } from 'vue';
+import { computed, nextTick, PropType, ref, watch } from 'vue';
 import { XIcon } from '@heroicons/vue/solid';
 
 import { iconURL } from 'lib';
@@ -83,28 +104,52 @@ const selectedArtifacts = computed(() =>
     .filter((artifact): artifact is NonNullable<typeof artifact> => artifact !== undefined)
 );
 
-// Exclude already-selected artifacts from the adder dropdown/search results so
-// the same artifact can't be picked twice.
 const selectedIdSet = computed(() => new Set(props.modelValue));
 const availableArtifacts = computed(() => legendaryArtifacts.filter(artifact => !selectedIdSet.value.has(artifact.id)));
 function searchAvailableArtifacts(query: string) {
   return searchLegendaryArtifacts(query).filter(artifact => !selectedIdSet.value.has(artifact.id));
 }
 
-// The adder's own selection is transient: picking an item appends its id to
-// the outer array (deduped defensively, though availableArtifacts already
-// keeps duplicates out of the dropdown) and resets back to null so the
-// picker is immediately ready to add another artifact.
+// Set while a chip is being swapped out; the next pick replaces this id in
+// place rather than appending. Switching a single target this way never passes
+// through an empty selection, which would navigate away and tear down the
+// planner's state.
+const replacingId = ref<string | null>(null);
+const replacingArtifact = computed(() =>
+  replacingId.value === null ? null : (artifactIdToArtifact.get(replacingId.value) ?? null)
+);
+
+const picker = ref<{ selectButtonRef?: HTMLInputElement | null } | null>(null);
+
+function beginReplace(id: string) {
+  replacingId.value = id;
+  nextTick(() => picker.value?.selectButtonRef?.focus());
+}
+
+function cancelReplace() {
+  replacingId.value = null;
+}
+
 const pendingId = ref<string | null>(null);
-function onAdd(id: string | null) {
+function onPick(id: string | null) {
   if (id === null) return;
-  if (!props.modelValue.includes(id)) {
+  const replacing = replacingId.value;
+  if (replacing !== null) {
+    replacingId.value = null;
+    if (replacing !== id && !props.modelValue.includes(id)) {
+      emit(
+        'update:modelValue',
+        props.modelValue.map(existing => (existing === replacing ? id : existing))
+      );
+    }
+  } else if (!props.modelValue.includes(id)) {
     emit('update:modelValue', [...props.modelValue, id]);
   }
   pendingId.value = null;
 }
 
 function remove(id: string) {
+  if (replacingId.value === id) replacingId.value = null;
   emit(
     'update:modelValue',
     props.modelValue.filter(existing => existing !== id)
@@ -112,13 +157,8 @@ function remove(id: string) {
 }
 
 const warningDismissed = ref(false);
-// Only re-arm the dismissal when the selection count crosses UP from at-or-
-// below the threshold to at-or-above it (e.g. 2 -> 3). Any other length
-// change while already at/above the threshold (3 -> 4, 4 -> 3, etc) leaves a
-// prior dismissal in place, since the user already acknowledged the warning
-// in that regime; dropping back to <=2 hides the warning outright (see the
-// v-if above) without touching the dismissal, so re-entering >=3 later
-// re-arms it correctly.
+// Re-arm only when the count crosses up past the threshold, so a dismissal
+// survives further edits within the same regime.
 watch(
   () => props.modelValue.length,
   (newLength, oldLength) => {
