@@ -243,6 +243,10 @@ export default defineComponent({
           computing.value = false;
           return;
         }
+        // Inputs changed inside the debounce window, so the replacement solve
+        // is queued but hasn't posted yet -- nothing superseded this request at
+        // the worker. Drop the stale plan and leave the spinner to that solve.
+        if (autoCompute.value && computeInputs.value !== input) return;
         lastComputedMaxWaitTimeSeconds.value = budget;
         // The same presentation fill-in the synchronous optimize() applies;
         // it needs artifact metadata the worker has no reason to carry.

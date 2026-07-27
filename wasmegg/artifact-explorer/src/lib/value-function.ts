@@ -229,11 +229,12 @@ export function alphaToProb(
 // pruning need) as long as the FINAL reported probability is computed exactly
 // (via alphaToProb per target, then multiplied), never via this
 // approximation.
-// Denser near s=0.1-3, where g's curvature (and therefore the tangent
-// envelope's slack) is largest; sparser above ~10, where g is already close
-// to flat and a handful of points suffice.
+// Spaced to roughly equalize the envelope's probability-space slack across
+// s in [0.05, 40]; g is nearly flat above ~4, so three points cover the tail.
+// Every row here is re-solved millions of times, so the count is deliberately
+// small — see optimizer-perf.spec.ts.
 export const JOINT_TANGENT_BREAKPOINTS: readonly number[] = [
-  0.05, 0.1, 0.2, 0.3, 0.45, 0.65, 0.9, 1.2, 1.6, 2.1, 2.7, 3.4, 4.2, 5.2, 6.5, 8, 10, 13, 17, 22, 28, 35,
+  0.05, 0.12, 0.23, 0.38, 0.58, 0.85, 1.2, 1.7, 2.4, 3.6, 7, 30,
 ];
 
 export interface Tangent {

@@ -6,9 +6,12 @@ import { optimizeFull } from './optimizer-core';
 
 // Latency guard for the outer solver. The tight bar is gated behind RUN_PERF=1
 // (shared runners are noisy); the loose cap catches gross regressions.
+// Reference measurement on the slowest machine this was calibrated on: median
+// ~71ms, worst observed process median ~85ms. The strict cap is set to trip on
+// a ~25% regression, the loose one on a ~2x one.
 const STRICT = process.env.RUN_PERF === '1';
-const LOOSE_CAP_MS = 300;
-const STRICT_CAP_MS = 100;
+const LOOSE_CAP_MS = 150;
+const STRICT_CAP_MS = 90;
 
 // tachyon-deflector-4 has the most launch options of any craftable target
 // under perfectShipsConfig (~240), so it is the heaviest realistic instance.
@@ -58,8 +61,9 @@ describe('optimizer performance', () => {
 // second target roughly doubles the per-eval LP the search re-solves millions
 // of times. A second real target sharing tachyon-deflector-4's option pool is a
 // realistic worst case, not a pathological one.
-const JOINT_LOOSE_CAP_MS = 600;
-const JOINT_STRICT_CAP_MS = 250;
+// Reference: median ~136ms on the same machine, worst observed ~177ms.
+const JOINT_LOOSE_CAP_MS = 300;
+const JOINT_STRICT_CAP_MS = 175;
 const SECOND_TARGET = 'puzzle-cube-4';
 
 describe('optimizer performance (n=2)', () => {
@@ -83,7 +87,7 @@ describe('optimizer performance (n=2)', () => {
     run(); // warm up the JIT
 
     const samples: number[] = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 5; i++) {
       const t0 = performance.now();
       run();
       samples.push(performance.now() - t0);

@@ -128,7 +128,7 @@ describe('tangent approximation accuracy', () => {
       expect(approx).toBeGreaterThanOrEqual(exact - 1e-12);
       // The over-estimate is small in probability-space terms. (The fixed
       // breakpoint set trades some accuracy for a small, constant-size LP --
-      // worst case among these midpoints is ~5e-3, well under 1e-2; this only
+      // worst case among these midpoints is ~8.3e-3, under 1e-2; this only
       // affects search ranking, never the exact final reported probability.)
       expect(approxProb - exactProb).toBeGreaterThanOrEqual(-1e-9);
       expect(approxProb - exactProb).toBeLessThan(1e-2);

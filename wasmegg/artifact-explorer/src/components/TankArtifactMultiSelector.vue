@@ -130,6 +130,15 @@ function cancelReplace() {
   replacingId.value = null;
 }
 
+// The route watcher can replace modelValue out from under us (browser Back),
+// dropping the chip being replaced; the next pick would then match nothing.
+watch(
+  () => replacingId.value !== null && !props.modelValue.includes(replacingId.value),
+  stale => {
+    if (stale) replacingId.value = null;
+  }
+);
+
 const pendingId = ref<string | null>(null);
 function onPick(id: string | null) {
   if (id === null) return;
