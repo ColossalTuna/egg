@@ -314,8 +314,6 @@ export default defineComponent({
   props: {
     playerId: { type: String, default: '' },
     pendingCompute: { type: Boolean, required: true },
-    // A solve is in flight in the optimizer worker. The search is off the main
-    // thread, so this can render (and animate) while it runs.
     computing: { type: Boolean, required: true },
     waitTimeDays: { type: String, required: true },
     timeBudgetInvalid: { type: Boolean, default: false },
@@ -352,8 +350,7 @@ export default defineComponent({
     const maxTankLevel = fuelTankSizes.length - 1;
     const hasPlayerData = computed(() => !!playerShipsConfig.value);
 
-    // The save's crafted count for each selected target, shown when the
-    // override is off (each target then uses its own count).
+    // Shown when the override is off, in which case each target uses its own.
     const previousCraftEntries = computed(() =>
       currentOptimizerArtifactIds.value
         .filter(id => playerPreviousCraftsByArtifact.value.has(id))
@@ -364,8 +361,6 @@ export default defineComponent({
         }))
     );
 
-    // The tank level currently in effect for display; when editable this tracks
-    // the manual value, otherwise the save value.
     const shownTankLevel = computed(() => {
       const editable = playerTankLevel.value === null || overrides.value.tankLevel;
       return editable ? extras.value.tankLevel : (playerTankLevel.value ?? 0);

@@ -110,10 +110,8 @@ function searchAvailableArtifacts(query: string) {
   return searchLegendaryArtifacts(query).filter(artifact => !selectedIdSet.value.has(artifact.id));
 }
 
-// Set while a chip is being swapped out; the next pick replaces this id in
-// place rather than appending. Switching a single target this way never passes
-// through an empty selection, which would navigate away and tear down the
-// planner's state.
+// Set while a chip is being swapped out. Replacing in place avoids passing
+// through an empty selection, which would navigate away.
 const replacingId = ref<string | null>(null);
 const replacingArtifact = computed(() =>
   replacingId.value === null ? null : (artifactIdToArtifact.get(replacingId.value) ?? null)
@@ -130,8 +128,8 @@ function cancelReplace() {
   replacingId.value = null;
 }
 
-// The route watcher can replace modelValue out from under us (browser Back),
-// dropping the chip being replaced; the next pick would then match nothing.
+// Browser Back can replace modelValue out from under us, dropping the chip
+// being replaced.
 watch(
   () => replacingId.value !== null && !props.modelValue.includes(replacingId.value),
   stale => {

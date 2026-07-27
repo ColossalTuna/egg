@@ -1,20 +1,7 @@
 // Message shapes shared by the optimizer worker and its main-thread client.
-//
-// Only the search itself crosses into the worker. Launch-option enumeration
-// stays on the main thread deliberately: it is the one cheap step that needs
-// the loot dataset, and the main bundle already loads that dataset for the
-// mission views, so enumerating there keeps the worker's bundle free of an
-// 18MB duplicate. What's left in the worker (optimizeFull) is pure arithmetic
-// over the options and the recipe DAG.
-//
-// Everything crossing the boundary goes through structured clone, which
-// preserves Maps and plain objects but drops prototypes. The payloads are
-// plain data except for `ship`, a `MissionType` instance whose entire API is
-// getters over two numeric fields — a cloned copy would arrive with those
-// fields intact and every getter gone, which fails far away from here (in
-// whatever template reads `ship.shipName`). So the ship is explicitly narrowed
-// to its two fields on the way out and reconstructed on the way in, rather
-// than left to the clone algorithm's implicit behavior.
+// This wire format exists because structured clone drops prototypes: `ship` is
+// a MissionType whose entire API is getters, so it is narrowed to its two
+// fields on the way out and reconstructed on the way in. See OPTIMIZER.md.
 
 import { ei, MissionType } from 'lib';
 import type { LaunchOption, LaunchSolution, OptimizerSolution, RecipeDAG } from './types';

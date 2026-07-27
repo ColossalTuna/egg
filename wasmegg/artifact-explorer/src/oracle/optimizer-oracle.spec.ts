@@ -73,11 +73,9 @@ function reconstructAllocation(inst: OracleInstance, solution: OptimizerSolution
   return allocation;
 }
 
-// Second opinion on an oracle-found allocation: collapse it into a single
-// synthetic take-it-or-leave-it option and let the solver price it with its
-// own value function, so a reported gap cannot be an oracle-model artifact.
-// Reads back jointProbability, the metric the solver maximizes at every target
-// count (with one target it is that target's own probability).
+// Second opinion on an oracle-found allocation: collapse it into one synthetic
+// take-it-or-leave-it option and let the solver price it, so a reported gap
+// cannot be an oracle-model artifact.
 function solverPricesAllocation(inst: OracleInstance, allocation: number[]): number {
   const yields = new Map<string, number>();
   const legendary = new Map<string, number>();
@@ -170,12 +168,8 @@ function checkInstance(inst: OracleInstance, gapTol = GAP_TOL): InstanceOutcome 
     );
   }
 
-  // The solver maximizes the AND (product-over-targets) probability at every
-  // target count, so every instance is checked against the same independent
-  // joint evaluator and brute force regardless of how many targets it has. At
-  // n=1 the product has one factor and evaluateAllocationJoint delegates to the
-  // exact-arithmetic union evaluator, so single-target instances lose no rigour
-  // by not having a checking path of their own.
+  // One checking path at every target count; at n=1 evaluateAllocationJoint
+  // delegates to the exact-arithmetic union evaluator, so rigour is unchanged.
   const planEval = evaluateAllocationJoint(inst, allocation);
   const claimed = solution.jointProbability;
   const expected = planEval.jointProbability;
@@ -187,19 +181,10 @@ function checkInstance(inst: OracleInstance, gapTol = GAP_TOL): InstanceOutcome 
   if (Math.abs(claimed - expected) > HONESTY_TOL) {
     fail('honesty', `claimed jointProbability=${claimed} vs independent ${expected} for allocation [${allocation}]`);
   } else if (claimed > 0 && expected > 0) {
-    // Also compare in log space, which stays sharp at both ends of the range
-    // the absolute test above goes blind at: a joint probability runs from
-    // ~1e-8 on a long-odds multi-target plan up to within an ulp of 1 on an
-    // easy single-target one, and a fixed 1e-6 band is vacuous at the bottom
-    // and unreachable at the top.
-    //
-    // Deliberately on the joint probability rather than per target: the
-    // per-target split is pinned down only where the objective is strictly
-    // curved in it, and on a plan that leaves any target at zero crafts the
-    // joint probability is zero for every split, so the solver's split and the
-    // oracle's can differ freely without either being wrong. The product is
-    // the quantity both sides actually optimize, and comparing it needs no
-    // assumption about which split they landed on.
+    // Log space too: joint probabilities span ~1e-8 to within an ulp of 1, so
+    // a fixed 1e-6 band is vacuous at the bottom and unreachable at the top.
+    // On the joint probability, never per target: the split is unpinned
+    // wherever the objective is not strictly curved in it.
     const claimedLog = -Math.log(claimed);
     const expectedLog = -Math.log(expected);
     if (Math.abs(claimedLog - expectedLog) > HONESTY_TOL * (1 + expectedLog)) {
@@ -415,12 +400,8 @@ describe('oracle calibration', () => {
   });
 
   test('single-target weighted-sum score still favors dumping everything on the higher-Q target', () => {
-    // This is the pre-multi-target-objective ground truth: evaluateAllocation
-    // re-derives the plain weighted-sum score (sum_T Q_T * crafts_T), which
-    // remains an all-or-nothing allocation to the higher-Q target. It is NOT
-    // what optimizeFull optimizes for n>=2 targets any more (see the next
-    // test) -- it only checks the oracle's own independent LP re-derivation
-    // of that score, unrelated to optimizeFull.
+    // Checks the oracle's own weighted-sum LP re-derivation only. That score
+    // is NOT what optimizeFull maximizes; see the next test.
     const inst: OracleInstance = {
       label: 'probe',
       seed: 0,
@@ -444,15 +425,8 @@ describe('oracle calibration', () => {
   });
 
   test('multi-target allocation balances instead of favoring the higher-value target (joint/AND objective)', () => {
-    // Since Phase 1's joint (product) objective, optimizeFull with n>=2
-    // targets maximizes P(all), not the weighted-sum score above: dumping the
-    // whole shared ingredient on one target leaves the other at zero crafts,
-    // which zeroes the AND probability outright. The true continuous optimum
-    // (found independently via calculus on g(Q0*c0) + g(Q1*(2-c0)), g(s) =
-    // log(1 - e^-s)) balances at roughly c0=1.16, c1=0.84, jointProbability
-    // ~0.4095 -- both targets get a share, and the joint probability is
-    // enormously higher than the old all-or-nothing allocation's (which is
-    // exactly 0, since one target's craft count is 0).
+    // The true continuous optimum, found independently by calculus on
+    // g(Q0*c0) + g(Q1*(2-c0)), balances at c0~1.16, c1~0.84, joint ~0.4095.
     const inst: OracleInstance = {
       label: 'probe',
       seed: 0,
@@ -475,14 +449,8 @@ describe('oracle calibration', () => {
   });
 
   test('three-target joint plan matches the independent oracle (n=3, exercises N-general Frank-Wolfe)', () => {
-    // Guards the shipped n>=3 path against the oracle now that its joint
-    // evaluator generalizes past 2 targets (evaluateAllocationJoint /
-    // optimizeJointFloat). The three targets share ingredient 'a', so the
-    // outer search must both pick launches and split the resulting inventory
-    // three ways; zeroing any target zeroes the AND probability, so the joint
-    // optimum spreads across all three. checkInstance asserts honesty
-    // (production jointProbability vs the oracle's independent 3-D Frank-Wolfe)
-    // and optimality (vs bruteForceBestJoint over all feasible allocations).
+    // Three targets sharing ingredient 'a': the search must split the
+    // inventory three ways, since zeroing any target zeroes the AND.
     const inst: OracleInstance = {
       label: 'probe-n3',
       seed: 0,
@@ -508,16 +476,9 @@ describe('oracle calibration', () => {
   });
 
   test('three-target joint plan where targets consume each other (n=3 dependency chain)', () => {
-    // The "structure of how items are consumed" case: t0 is an ingredient of
-    // t1's recipe and t1 of t2's, so crafting up the chain consumes the lower
-    // targets -- even though each craft already counted as its own legendary
-    // roll. The joint split must trade the shared 'a' between crafting each
-    // target for its own rolls and crafting it to feed the target above, over
-    // the dependency-coupled polytope; a naive "split the shared ingredient"
-    // shortcut would mishandle exactly this (the case the oracle docstring
-    // flags at ~9% of random-multi instances). checkInstance holds
-    // production's inner joint solve to the oracle's independent one over that
-    // same polytope, and to bruteForceBestJoint's enumeration.
+    // Dependency chain: t0 feeds t1 feeds t2, so crafting up the chain
+    // consumes the lower targets even though each craft is its own legendary
+    // roll. A naive "split the shared ingredient" shortcut mishandles this.
     const inst: OracleInstance = {
       label: 'probe-chain',
       seed: 0,

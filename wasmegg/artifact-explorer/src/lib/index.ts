@@ -12,9 +12,8 @@ import { ei, getArtifactTierPropsFromId, getCraftingInfoFromLevel, Inventory, In
 
 import { iconURL } from 'lib';
 
-// Build the recipe DAG for the desired artifacts, plus the player's starting
-// quantities for each ingredient node. Each root's legendaryCraftProbability
-// comes from the player's crafting XP and prior craft count.
+// An undefined previousCraftsOverride means "read each target's own crafted
+// count from the save"; a defined one applies to every target.
 export function buildRecipeDag(
   desiredArtifactNodeIds: string[],
   playerLevel: number,
@@ -47,19 +46,8 @@ export function buildRecipeDag(
   return recipeDag;
 }
 
-// The player's existing stock, as the optimizer's starting inventory. Counted
-// across all rarities (item.have) because any rarity crafts — this is "how many
-// copies you can feed a recipe", never "you already own a legendary"; the
-// legendary side of the objective comes solely from mission drops.
-//
-// A target is skipped only when nothing in the DAG consumes it. Such a node has
-// no conservation row in the inner LP (see compileInnerLp), so owned copies of
-// it could never be spent on anything and would only look like free progress.
-// A target that IS an ingredient of another target — which covers 21 of the 22
-// selectable legendaries, e.g. the-chalice-4 inside phoenix-feather-4 — keeps
-// its stock: those copies are genuinely spendable on the parent recipe, and
-// they can only relax the consumption side of that row, never inflate the
-// nested target's own craft count.
+// Counted across all rarities: this is "copies you can feed a recipe", never
+// "you already own a legendary". See OPTIMIZER.md.
 export function computeBaseYield(
   playerInventory: Inventory | null | undefined,
   desiredArtifactNodeIds: string[],
@@ -68,7 +56,7 @@ export function computeBaseYield(
   const baseYield = new Map<string, number>();
 
   if (playerInventory) {
-    // Parent relation, derived exactly as compileInnerLp derives it.
+    // Must match compileInnerLp's parent relation exactly.
     const hasParent = new Set<string>();
     for (const node of recipeDag.values()) {
       if (node.isLeaf) continue;
@@ -128,11 +116,8 @@ function computeFuelByEgg(solution: OptimizerSolution): Map<ei.Egg, number> {
   return totals;
 }
 
-// Presentation-only fields, easier to compute here than inside the search.
-// Exported because the app runs the search in a worker (optimizer.worker.ts)
-// and applies this finishing step on the main thread afterwards, so both the
-// synchronous optimize() below and the worker path produce identical
-// solutions.
+// Presentation-only fields. The worker path applies this on the main thread
+// afterwards, so both it and optimize() below produce identical solutions.
 export function finalizeSolutions(solutions: OptimizerSolution[], dag: RecipeDAG): OptimizerSolution[] {
   for (const solution of solutions) {
     solution.choiceHistory.sort((a: LaunchSolution, b: LaunchSolution) => a.ship.shipType - b.ship.shipType);
@@ -142,9 +127,7 @@ export function finalizeSolutions(solutions: OptimizerSolution[], dag: RecipeDAG
   return solutions;
 }
 
-// Run the optimizer and fill in the presentation-only fields. Returns an
-// array though today it's always one solution. May extend this to return
-// top N solutions.
+// Returns an array though today it's always one solution.
 export function optimize(
   config: OptimizerConfig,
   playerConfig: ShipsConfig,

@@ -12,9 +12,7 @@ export interface MissionLegendaryRow {
   legendaryDrops: number;
 }
 
-// One target's worth of presentation data for the results card: its slice of
-// perTarget plus everything the single-target views (craft chain, mission
-// sources, sparse-data flag) need, all resolved against that target's own
+// One target's worth of presentation data, resolved against that target's own
 // nodeId rather than the plan's primary target.
 export interface TargetView {
   nodeId: string;
@@ -33,8 +31,7 @@ export function lambdaFromDropProbability(p: number): number {
   return p > 0 && p < 1 ? -Math.log(1 - p) : 0;
 }
 
-// Per-mission expected direct legendary drops of the targeted root; near-zero
-// contributors are dropped from the breakdown.
+// Per-mission expected direct legendary drops of `rootId`.
 export function computeMissionLegendaryRows(solution: OptimizerSolution, rootId: string): MissionLegendaryRow[] {
   return solution.choiceHistory
     .map(choice => ({

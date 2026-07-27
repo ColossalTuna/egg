@@ -90,8 +90,6 @@ import OptimizerRecipeTreeRow from './OptimizerRecipeTreeRow.vue';
 export default defineComponent({
   components: { MissionName, OptimizerRecipeTreeRow },
   props: {
-    // Set only when the parent renders one breakdown per target (n>=2), to
-    // label which artifact each instance describes.
     heading: { type: String, default: '' },
     bestProbability: { type: Number, required: true },
     craftProbability: { type: Number, required: true },
@@ -104,9 +102,7 @@ export default defineComponent({
     hasInventory: { type: Boolean, required: true },
   },
   setup() {
-    // Owned stock is a whole item count at n=1, but gets split across targets
-    // for n>=2 (see computeCraftChainTree), so it can land on a fraction. Keep
-    // integers rendering as integers so the single-target row is unchanged.
+    // Owned stock is whole at n=1 but demand-split (so fractional) for n>=2.
     const formatCount = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
     return { formatCount };
   },

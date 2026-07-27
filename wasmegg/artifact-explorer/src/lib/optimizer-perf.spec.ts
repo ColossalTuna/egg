@@ -4,11 +4,9 @@ import { buildRecipeDag, computeBaseYield } from '.';
 import { enumerateLaunchOptions } from './phases';
 import { optimizeFull } from './optimizer-core';
 
-// Latency guard for the outer solver. The tight bar is gated behind RUN_PERF=1
-// (shared runners are noisy); the loose cap catches gross regressions.
-// Reference measurement on the slowest machine this was calibrated on: median
-// ~71ms, worst observed process median ~85ms. The strict cap is set to trip on
-// a ~25% regression, the loose one on a ~2x one.
+// Latency guard, local-only: CI never runs the tests. The tight bar is gated
+// behind RUN_PERF=1; the loose cap catches gross regressions. Calibration on
+// the reference machine: best-of-9 lands at 65-71ms.
 const STRICT = process.env.RUN_PERF === '1';
 const LOOSE_CAP_MS = 150;
 const STRICT_CAP_MS = 90;
@@ -57,13 +55,9 @@ describe('optimizer performance', () => {
   });
 });
 
-// n=2 latency guard. There is one search, so this differs from the guard above
-// only in instance size -- but that size costs: the inner and relaxation LPs
-// each carry one epigraph variable and a block of tangent rows per target, so a
-// second target roughly doubles the per-eval LP the search re-solves millions
-// of times. A second real target sharing tachyon-deflector-4's option pool is a
-// realistic worst case, not a pathological one.
-// Reference: median ~136ms on the same machine, worst observed ~177ms.
+// n=2 guard. A second target adds an epigraph variable and a block of tangent
+// rows to every LP the search re-solves, roughly doubling per-eval cost.
+// Same calibration: best-of-9 lands at 129-140ms.
 const JOINT_LOOSE_CAP_MS = 300;
 const JOINT_STRICT_CAP_MS = 175;
 const SECOND_TARGET = 'puzzle-cube-4';

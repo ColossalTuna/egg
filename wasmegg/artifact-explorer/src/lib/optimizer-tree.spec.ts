@@ -322,10 +322,8 @@ describe('computeCraftChainTree', () => {
   });
 
   it('splits a shared component across targets in proportion to demand (multi-target)', () => {
-    // lt3 and lt2 are both selected targets and both craft from the shared leaf
-    // lt1. The LP crafts lt1's supply once (pooled); each target's breakdown
-    // must show only its demand-weighted slice, and the slices must sum back to
-    // the pooled totals -- not the full pool under each target.
+    // The LP crafts lt1's supply once; each target's breakdown must show only
+    // its demand-weighted slice, and the slices must sum back to the pool.
     const dag: RecipeDAG = new Map([
       [lt3, makeNode(lt3, false, [[lt1, 3]])],
       [lt2, makeNode(lt2, false, [[lt1, 2]])],
@@ -366,9 +364,8 @@ describe('computeCraftChainTree', () => {
   });
 
   it('splits owned stock by the same share, so the coverage check stays consistent', () => {
-    // Same demand split as above (lt3 6/16, lt2 10/16). Owned stock is one
-    // shared pool, so leaving it whole would let both targets claim all 5 lt1
-    // and make owned+dropped+crafted >= consumed read as covered under each.
+    // Owned stock is scaled too: leaving it whole would let both targets claim
+    // all 5 lt1 and read as covered under each.
     const dag: RecipeDAG = new Map([
       [lt3, makeNode(lt3, false, [[lt1, 3]])],
       [lt2, makeNode(lt2, false, [[lt1, 2]])],
@@ -399,9 +396,8 @@ describe('computeCraftChainTree', () => {
   });
 
   it('falls back to an even split when no target demands the node', () => {
-    // Every target crafting zero leaves proportional attribution with no
-    // signal; handing each tree the full pooled drop would reproduce the very
-    // "each target uses everything" display the scaling exists to prevent.
+    // No demand at all: attribution has no signal, so it splits evenly rather
+    // than hand each tree the full pool.
     const dag: RecipeDAG = new Map([
       [lt3, makeNode(lt3, false, [[lt1, 3]])],
       [lt2, makeNode(lt2, false, [[lt1, 2]])],

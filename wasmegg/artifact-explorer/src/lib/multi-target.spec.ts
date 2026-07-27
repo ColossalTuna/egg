@@ -187,9 +187,8 @@ function runNested(baseYield: Map<string, number>, targets = ['A', 'B']) {
 
 describe('owned copies of a target', () => {
   it('leave a top-level target untouched', () => {
-    // Nothing consumes A, so its stock has no conservation row to relax.
-    // computeBaseYield drops it; this pins down that keeping it would have been
-    // inert anyway, i.e. the exclusion loses nothing.
+    // Nothing consumes A, so its stock has no conservation row to relax and
+    // dropping it loses nothing.
     const without = runNested(new Map());
     const with10A = runNested(new Map([['A', 10]]));
     expect(with10A.bestProbability).toBeCloseTo(without.bestProbability, 12);
@@ -203,10 +202,8 @@ describe('owned copies of a target', () => {
     const with4B = runNested(new Map([['B', 4]]));
     expect(with4B.jointProbability).toBeGreaterThan(without.jointProbability);
 
-    // B's own craft count comes from its craft variable p_B, and the stock
-    // enters B's row (sum_parents 2*p_A - p_B <= inv[B]) only on the
-    // consumption side: it lets A craft more without B crafting more. B stays
-    // capped by what its own ingredient supports, 2 C per craft.
+    // Owned B enters its row only on the consumption side: it lets A craft
+    // more without raising B's own craft count.
     const nested = with4B.perTarget.find(t => t.nodeId === 'B')!;
     const baseline = without.perTarget.find(t => t.nodeId === 'B')!;
     expect(nested.expectedCrafts).toBeLessThanOrEqual(with4B.finalYieldVector.get('C')! / 2 + 1e-9);

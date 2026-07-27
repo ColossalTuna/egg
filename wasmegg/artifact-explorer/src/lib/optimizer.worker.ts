@@ -1,13 +1,7 @@
 // Worker entry point for the mission-plan search.
 //
-// A single-target plan solves in well under 100ms, but the multi-target joint
-// search runs in seconds; running either on the main thread blocks paint, so
-// the search lives here and the UI stays responsive (and can render a real
-// progress state) while it runs.
-//
-// This imports optimizeFull directly rather than the lib barrel: the barrel
-// re-exports the loot dataset, which would put an 18MB copy of it in this
-// bundle for no reason (see optimizer-worker-protocol.ts).
+// Imports optimizeFull directly rather than the lib barrel: the barrel
+// re-exports the ~18MB loot dataset, which this bundle has no use for.
 
 import { optimizeFull } from './optimizer-core';
 import {
@@ -33,8 +27,7 @@ ctx.onmessage = (e: MessageEvent<OptimizerRequest>) => {
     });
     response = { id: req.id, ok: true, solutions: solutionsToWire([solution]) };
   } catch (err) {
-    // The client turns this back into a thrown error; without it a failed
-    // solve would simply never resolve and the UI would spin forever.
+    // Without this a failed solve never resolves and the UI spins forever.
     response = { id: req.id, ok: false, error: err instanceof Error ? err.message : String(err) };
   }
   ctx.postMessage(response);

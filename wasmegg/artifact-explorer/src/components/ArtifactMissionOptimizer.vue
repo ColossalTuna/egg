@@ -135,8 +135,8 @@ export default defineComponent({
   setup(props) {
     const { artifactIds } = toRefs(props);
 
-    // Persisted in the store so it survives this component unmounting when the
-    // selection empties and the route falls back home.
+    // In the store so it survives this component unmounting when the selection
+    // empties and the route falls back home.
     const waitTimeDays = computed(() => missionFilters.value.waitTimeDays);
     const maxWaitTimeSeconds = computed(() => parseDurationDays(waitTimeDays.value));
 
@@ -172,8 +172,7 @@ export default defineComponent({
     const computing = ref(false);
     const computeError = ref('');
     const computedResults = ref<OptimizerSolution[]>([]);
-    // budget the displayed plan was computed against; the live input can
-    // change before a manual recompute
+    // what the displayed plan was computed against, not the live input
     const lastComputedMaxWaitTimeSeconds = ref(0);
 
     const recipeDag = computed<ReturnType<typeof buildRecipeDag>>(() =>
@@ -189,12 +188,9 @@ export default defineComponent({
       computeBaseYield(playerInventory.value, artifactIds.value, recipeDag.value)
     );
 
-    // Everything the search needs, assembled reactively so the auto-compute
-    // effect below can track its inputs without running the solve itself.
-    // Launch-option enumeration happens here rather than in the worker: it is
-    // cheap, and it is the only step that needs the loot dataset, which the
-    // main bundle already loads for the mission views (see
-    // optimizer-worker-protocol.ts).
+    // Launch-option enumeration stays on the main thread: it is the only step
+    // needing the loot dataset, which this bundle already loads. See
+    // OPTIMIZER.md.
     const computeInputs = computed<OptimizerRequestInput | null>(() => {
       if (!timeBudgetValid.value) return null;
       const launchPeriodSeconds = EFFORT_LAUNCH_PERIOD_SECONDS[missionFilters.value.effort];
@@ -209,10 +205,8 @@ export default defineComponent({
       };
     });
 
-    // The solve runs in a worker (see optimizer.worker.ts), so a multi-second
-    // multi-target search never blocks paint and auto-compute can stay on for
-    // any number of targets. Created lazily so a page that never opens the
-    // planner doesn't pay for the worker bundle.
+    // Lazy so a page that never opens the planner doesn't pay for the worker
+    // bundle.
     let client: OptimizerClient | null = null;
     const optimizerClient = () => (client ??= createOptimizerClient());
 
@@ -231,25 +225,20 @@ export default defineComponent({
       computeError.value = '';
       try {
         const solutions = await optimizerClient().run(input);
-        // null means a newer request superseded this one; that request owns
-        // the results and the spinner, so leave both alone.
+        // null: a newer request owns the results and the spinner now.
         if (solutions === null) return;
-        // The inputs can also have gone invalid while the solve was in flight
-        // (clearing the time budget, say). Nothing supersedes the request in
-        // that case -- the watchEffect just empties the results -- so this
-        // handler has to drop them rather than restore a stale plan.
+        // Inputs went invalid mid-flight; nothing supersedes the request, so
+        // the stale plan has to be dropped here.
         if (!computeInputs.value) {
           computedResults.value = [];
           computing.value = false;
           return;
         }
-        // Inputs changed inside the debounce window, so the replacement solve
-        // is queued but hasn't posted yet -- nothing superseded this request at
-        // the worker. Drop the stale plan and leave the spinner to that solve.
+        // Replacement solve is queued but hasn't posted, so nothing superseded
+        // this at the worker. Leave the spinner to that solve.
         if (autoCompute.value && computeInputs.value !== input) return;
         lastComputedMaxWaitTimeSeconds.value = budget;
-        // The same presentation fill-in the synchronous optimize() applies;
-        // it needs artifact metadata the worker has no reason to carry.
+        // Needs artifact metadata the worker has no reason to carry.
         computedResults.value = finalizeSolutions(solutions, input.recipeDag);
         computing.value = false;
       } catch (err) {
@@ -259,26 +248,16 @@ export default defineComponent({
       }
     }
 
-    // Auto-compute coalesces bursts of input changes (dragging the effort
-    // slider, typing a time budget) into one solve. It's a plain debounce
-    // rather than the old immediate call because the search now runs
-    // asynchronously: without it every intermediate value would start a solve
-    // that the next keystroke immediately supersedes.
     const AUTO_COMPUTE_DEBOUNCE_MS = 250;
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
-    // Reading computeInputs.value here is what registers the dependency on
-    // every setting the solve consumes; the debounced callback must not be the
-    // thing that reads them, or the effect would only ever re-run on
-    // autoCompute itself.
+    // Reading computeInputs.value HERE is what registers the dependency; if
+    // only the debounced callback read it the effect would track autoCompute
+    // alone.
     watchEffect(() => {
       const input = computeInputs.value;
-      // Every exit from here has to cancel the queued solve first. A timer
-      // armed by the previous run would otherwise still fire: turning
-      // auto-compute off inside the debounce window would compute anyway, and
-      // runCompute clearing pendingCompute would leave the button reading
-      // "Compute" next to a plan the user's latest input has already
-      // invalidated.
+      // Every exit must cancel the queued solve first, or a timer armed by the
+      // previous run still fires.
       clearTimeout(debounceTimer);
       if (!autoCompute.value) {
         pendingCompute.value = true;
@@ -296,17 +275,11 @@ export default defineComponent({
       client?.terminate();
     });
 
-    // Name/icon lookup shared by every per-target label in the results UI,
-    // reusing the same artifact metadata source as the recipe-tree builders
-    // (optimizer-tree.ts) rather than inventing a second lookup.
     function artifactDisplay(nodeId: string): { name: string; iconUrl: string } {
       const props = getArtifactTierPropsFromId(nodeId);
       return { name: props.name, iconUrl: iconURL('egginc/' + props.icon_filename, 64) };
     }
 
-    // Per-target inventory trees; with a single target this is the one tree
-    // the panel has always shown, just reached through the same code path as
-    // the multi-target case.
     const inventoryTrees = computed(() =>
       artifactIds.value.map(nodeId => ({
         nodeId,
@@ -317,18 +290,8 @@ export default defineComponent({
 
     const solutionViews = computed(() =>
       computedResults.value.map(solution => {
-        // Built once per target so n=1 and n>=2 share the exact same
-        // per-target computation; the n=1 render path reads targets[0].
-        //
-        // Iterate solution.perTarget (the solution's own actual target list)
-        // rather than the live artifactIds: between the user changing their
-        // selection and the next completed optimize() run, computedResults
-        // is stale while artifactIds is live, so looking up live ids in the
-        // stale solution would either miss (falling back to the wrong
-        // target's data) or under/over-count targets vs what this solution
-        // actually describes. Deriving purely from `solution` keeps this
-        // view internally consistent no matter how out of sync the live
-        // selection currently is.
+        // Iterate solution.perTarget, never the live artifactIds: the solution
+        // is stale between a selection change and the next completed solve.
         const targets: TargetView[] = solution.perTarget.map(perTarget => {
           const nodeId = perTarget.nodeId;
           const display = artifactDisplay(nodeId);
@@ -348,7 +311,6 @@ export default defineComponent({
       })
     );
 
-    // Overlay only makes sense on top of a rendered solution.
     const dimSolution = computed(() => computing.value && solutionViews.value.length > 0);
 
     return {

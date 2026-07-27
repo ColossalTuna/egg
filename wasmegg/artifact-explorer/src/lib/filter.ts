@@ -26,13 +26,9 @@ export const legendaryArtifacts = artifactTiers
 export const artifactIds = artifacts.map(artifact => artifact.id);
 export const artifactIdToArtifact = new Map(artifacts.map(artifact => [artifact.id, artifact]));
 
-// The tank route's id list, restricted to ids that name a real artifact. The
-// param is hand-editable, so an id can parse fine and still resolve to nothing;
-// passing one on reaches getArtifactTierPropsFromId(), which throws. Both the
-// selector and the planner have to drop the same ids, or the URL and the Share
-// link end up describing different plans — hence one helper rather than the
-// filter written out twice. It lives here rather than in tank-ids.ts so that
-// stays a pure string routine with no dependency on artifact data.
+// The tank route's id list, restricted to ids naming a real artifact: the param
+// is hand-editable and an unknown id reaches getArtifactTierPropsFromId(),
+// which throws. Selector and planner must drop exactly the same ids.
 export function parseKnownTankIds(param: string | undefined | null): string[] {
   return parseTankIds(param).filter(id => artifactIdToArtifact.has(id));
 }

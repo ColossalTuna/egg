@@ -1,9 +1,6 @@
-// Brute-force side of the oracle: exhaustively search integer launch
-// allocations under the fuel budget and the three-slot packing model. The
-// objective is monotone in every count and the feasible region is
-// downward-closed, so some optimum is always maximal and enumerating only
-// maximal allocations is exact. The packing check is re-derived here,
-// independent of the production solver's packer.
+// Brute-force side of the oracle. The objective is monotone and the feasible
+// region downward-closed, so enumerating only MAXIMAL allocations is exact.
+// The packing check is re-derived here, independent of the production packer.
 
 import {
   evaluateAllocation,
@@ -269,24 +266,14 @@ export interface BruteForceJointResult {
   evaluatedCount: number;
 }
 
-// Same probability-space slop concept as RANKING_SLOP above, just applied to
-// evaluateAllocationJointFloat's jointProbability instead of the union
-// evaluator's score, so a float-precision near-tie among candidate
-// allocations cannot cost the true joint-objective optimum.
+// RANKING_SLOP's counterpart for the joint objective.
 const RANKING_SLOP_JOINT = 1e-6;
 const MAX_FINALISTS_JOINT = 8;
 
-// Ranks feasible/maximal allocations by the JOINT (AND, product-of-targets)
-// probability, which is the objective the solver actually maximizes at every
-// target count -- so this is the brute force the main optimality check uses,
-// for any number of targets. At n=1 the product has one factor and
-// evaluateAllocationJoint delegates to the exact-arithmetic union evaluator, so
-// nothing is given up by not routing single-target instances elsewhere.
-//
-// bruteForceBest below ranks by the union-style score instead. Its enumeration
-// (maximal-allocation walk, 3-slot packing) is identical to this one's,
-// duplicated rather than shared so the two ranking objectives can never
-// accidentally cross-contaminate each other's tuning.
+// Ranks maximal allocations by the JOINT probability, the objective the solver
+// maximizes at every target count. bruteForceBest below runs the same
+// enumeration against the union-style score; the duplication is deliberate, so
+// the two ranking objectives cannot cross-contaminate each other's tuning.
 export function bruteForceBestJoint(inst: OracleInstance): BruteForceJointResult {
   const n = inst.options.length;
   for (const opt of inst.options) {

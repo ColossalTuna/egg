@@ -175,46 +175,9 @@ export function evaluateAllocation(inst: OracleInstance, allocation: number[]): 
 }
 
 // ---------------------------------------------------------------------------
-// Joint (product) probability evaluator -- independent of value-function.ts's
-// tangent-line epigraph LP (compileJointInnerLp/JOINT_TANGENTS/EPIGRAPH_SHIFT).
-// The production algorithm approximates maximize sum_T g(score_T),
-// g(s) = log(1 - e^-s), with a concave-envelope LP relaxation over tangent
-// lines; this file instead solves the TRUE objective directly, with no LP
-// relaxation and no tangent lines, so it can catch bugs in that
-// approximation instead of repeating its logic.
-//
-// For exactly two targets, the achievable (score_0, score_1) pairs are the
-// linear image (allocation -> (Q_0*craft_t0, Q_1*craft_t1)) of the SAME
-// bounded craft-conservation polytope the union evaluator above already
-// solves -- a linear image of a (bounded, since the recipe DAG is acyclic)
-// polytope is itself a polytope, so its upper-right (Pareto) boundary is a
-// concave, piecewise-linear function of score_0. Maximizing
-// g(score_0) + g(score_1) over that boundary is therefore a 1-D concave
-// problem, solved here with NO notion of "splitting a shared ingredient"
-// (which would mishandle a case the generator genuinely produces: one
-// target itself consumed as an ingredient by the other's recipe, ~9% of
-// random-multi instances -- see the oracle PR notes). Instead:
-//
-//   1. trace the polytope's Pareto frontier by solving the ordinary LP
-//      "maximize w*Q_0*craft_t0 + (1-w)*Q_1*craft_t1" for a sweep of
-//      weights w, recursively bisecting whenever two neighboring weights
-//      land on different vertices, until no further distinct vertex turns
-//      up between them (a polytope has finitely many vertices, so this
-//      terminates well inside the depth/budget caps on any instance this
-//      generator produces -- the caps exist only to bound pathological float
-//      near-ties);
-//   2. golden-section search the true joint objective along each frontier
-//      EDGE -- the straight segment between two adjacent vertices' PRIMAL
-//      solutions, valid because a convex combination of two feasible
-//      allocations is itself feasible and score_0/score_1 are linear in the
-//      allocation -- which recovers the exact optimum even when it falls
-//      strictly inside an edge rather than exactly at a vertex.
-//
-// The frontier trace runs on the float simplex (cheap: used to rank many
-// candidate allocations); the winning edge's two weights are then re-solved
-// with the exact BigInt-rational simplex for the numbers actually asserted,
-// mirroring the float-ranks/exact-reports split used everywhere else in this
-// file.
+// Joint (product) probability evaluator. Solves the TRUE objective directly --
+// no LP relaxation, no tangent lines -- so it can catch bugs in production's
+// tangent-envelope approximation rather than repeating its logic.
 
 export interface OracleJointTargetResult {
   nodeId: string;
@@ -236,10 +199,8 @@ function directDropsFor(inst: OracleInstance, allocation: number[], target: stri
   return drops;
 }
 
-// g(s) = log(1 - e^-s). Deliberately re-derived here rather than imported
-// from value-function.ts, to keep this evaluator independent of production
-// code (the formula itself is elementary math, not part of the tangent-plane
-// machinery this file must avoid reusing).
+// Re-derived rather than imported, to keep this evaluator independent of
+// production code.
 function logHitProbability(s: number): number {
   return s > 0 ? Math.log(-Math.expm1(-s)) : -Infinity;
 }
@@ -309,9 +270,8 @@ function solveWeightedFloat(
   return { scores, primal };
 }
 
-// Marginal slope g'(s) of g(s) = log(1 - e^-s); grows like 1/s as s -> 0, so it
-// is capped to keep the linearized objective finite when a target's score is
-// driven to zero.
+// g'(s); grows like 1/s as s -> 0, so it is capped to keep the linearized
+// objective finite at zero score.
 function jointGPrime(s: number): number {
   const CAP = 1e12;
   return s <= 0 ? CAP : Math.min(1 / Math.expm1(s), CAP);
@@ -324,32 +284,9 @@ interface JointOptimum {
 }
 
 // Maximize the exact joint objective sum_i g(s_i), s_i = Q_i*craft_i + lambda_i,
-// over the craft-conservation polytope at a FIXED inventory (RHS b), via
-// Frank-Wolfe (conditional gradient) with an exact 1-D line search, for an
-// arbitrary number of targets. Each step linearizes the concave g at the
-// current scores -- weight_i = g'(s_i) -- and maximizes the resulting
-// weighted-sum craft LP with the oracle's own float simplex; the segment from
-// the current point to that LP vertex is an ascent direction, and a
-// golden-section line search along it (crafts, hence scores, are linear in the
-// segment parameter, so sum_i g(s_i) stays concave in it) lands on the
-// segment's optimum. Because the objective is concave the true objective is
-// non-decreasing each step and converges to the polytope's global optimum,
-// whatever the frontier's vertex arrangement. The dimension of the frontier
-// is the target count; Frank-Wolfe needs no vertex enumeration and so scales to
-// n >= 3 without the blind spots a weight-band trace would have.
-//
-// This replaces an earlier weight-bisection frontier trace that could silently
-// miss vertices whose weight-band sat off-center (a probe at the interval
-// midpoint reveals only the vertex active at that one weight), which made the
-// traced frontier -- and the joint optimum read off it -- an UNDER-estimate on
-// lopsided instances. Frank-Wolfe needs no vertex enumeration and so has no
-// such blind spot. It is still disparate from production: the simplex, the
-// polytope build, and the objective are all independent re-derivations here, so
-// an agreeing answer is genuine corroboration rather than shared code. Float
-// precision (~1e-12) is far tighter than the honesty tolerance (1e-6), so the
-// exact BigInt path the union evaluator uses is unnecessary for this objective
-// (whose optimum generally lies in the interior of a frontier edge, where the
-// old code's rational endpoints were interpolated at a float parameter anyway).
+// over the craft-conservation polytope at a fixed inventory, for any number of
+// targets. The simplex, polytope build and objective are all independent
+// re-derivations, so agreement with production is genuine corroboration.
 function optimizeJointFloat(
   template: LpTemplate,
   b: number[],
@@ -358,25 +295,10 @@ function optimizeJointFloat(
   lambdas: number[]
 ): JointOptimum {
   const n = idxs.length;
-  // Maximize via AWAY-STEP Frank-Wolfe over the craft polytope. Two problems
-  // force this over plain FW:
-  //
-  //  * Seeding. A weighted-sum craft LP is linear, so its optimum is a
-  //    one-target corner; for n >= 3 a corner seed leaves >= 2 targets at zero
-  //    crafts, where g(0) = -Infinity pins the line search. We seed at the
-  //    centroid of the n per-target max-craft vertices (each craftable target
-  //    positive), tracked as the initial active set with equal weights.
-  //  * The tail. Plain FW converges at O(1/k), and when the optimum lies in the
-  //    interior of a polytope face (a dependency chain where one target is
-  //    another's ingredient, so optimal x_child = x_parent is approached but is
-  //    not a vertex) the degenerate vertices the tableau simplex returns make it
-  //    zig-zag -- ~5e4 iterations to reach the 1e-6 honesty tolerance, far too
-  //    coarse for ground truth. Away steps (retreating from the worst active
-  //    vertex) restore effectively linear convergence.
-  //
-  // The active set carries each visited vertex's target-craft vector and its
-  // convex weight; the current point is their weighted sum. Only target crafts
-  // are tracked (scores, gradient and line search need nothing else).
+  // AWAY-STEP Frank-Wolfe, not plain FW: plain FW zig-zags to ~5e4 iterations
+  // when the optimum lies in the interior of a face. Seeded at the centroid of
+  // the per-target max-craft vertices, since a corner seed leaves n-1 targets
+  // at zero crafts where g(0) = -Infinity pins the line search.
   interface ActiveVertex {
     crafts: number[];
     weight: number;
@@ -410,14 +332,12 @@ function optimizeJointFloat(
     const { primal } = simplexMaximizeFloatFull(template.A, b, c);
     const fwVertex = idxs.map(idx => primal[idx]);
 
-    // FW duality gap <grad, fwVertex - x>: an upper bound on the objective's
-    // distance to the optimum, so a tiny gap certifies convergence.
+    // FW duality gap: an upper bound on distance to the optimum.
     const gDotX = dot(grad, crafts);
     const gap = dot(grad, fwVertex) - gDotX;
     if (gap < GAP_TOL) break;
 
-    // Away vertex: the active vertex the gradient likes least; retreating from
-    // it is the move plain FW cannot make.
+    // The active vertex the gradient likes least.
     let awayIdx = 0;
     let awayDotVal = Infinity;
     for (let k = 0; k < active.length; k++) {
@@ -492,8 +412,7 @@ function jointContext(inst: OracleInstance): {
   return { template, idxs, Qs, targets: inst.targets };
 }
 
-// Cheap ranking path (float simplex): plays the same role for the joint
-// objective that evaluateAllocationFloat plays for the union objective.
+// Cheap ranking path; evaluateAllocationFloat's counterpart.
 export function evaluateAllocationJointFloat(inst: OracleInstance, allocation: number[]): number {
   if (inst.targets.length === 1) {
     return 1 - Math.exp(-evaluateAllocationFloat(inst, allocation));
@@ -527,10 +446,8 @@ export function evaluateAllocationJoint(inst: OracleInstance, allocation: number
   const b = template.items.map(item => inv.get(item) ?? 0);
   const lambdas = targets.map(t => directDropsFor(inst, allocation, t));
 
-  // Frank-Wolfe converges to the true optimum in float to ~1e-12, which is far
-  // inside the honesty tolerance (1e-6); the joint optimum generally lands in
-  // the interior of a frontier edge, so there is no single vertex a BigInt
-  // solve could report exactly anyway (see optimizeJointFloat).
+  // Float FW reaches ~1e-12, far inside the 1e-6 honesty tolerance, and the
+  // optimum is usually interior to a face so no vertex is exactly reportable.
   const opt = optimizeJointFloat(template, b, idxs, Qs, lambdas);
   let jointProbability = 1;
   const perTarget: OracleJointTargetResult[] = targets.map((nodeId, i) => {

@@ -1,15 +1,6 @@
-// Inner crafting LP: given an inventory, maximize sum over targets T of
-// w_T * (crafts of T), subject to recipe conservation. Every node consumed by
-// some parent gets a conservation row, targets included. A final target (no
-// parents) has no row, so dropped copies of it don't count as crafts; a
-// target that is also an ingredient keeps its row and its drops feed the
-// parent recipe.
-//
-// Two LPs are built over that same conservation polytope. compileJointInnerLp
-// (below) carries the search's actual objective and is what the outer search
-// scores millions of candidate inventories against. compileInnerLp is the
-// plain weighted-sum version, used for the linearized subproblems that
-// refineJointCraftSplit's Frank-Wolfe iteration solves.
+// Inner crafting LPs over the recipe-conservation polytope. Every node consumed
+// by some parent gets a conservation row; a final target has none, so dropped
+// copies of it do not count as crafts. See OPTIMIZER.md.
 
 import type { RecipeDAG } from './types';
 import { solveLp } from './lp';
@@ -33,8 +24,7 @@ export interface InnerLp {
   solve(inventory: Map<string, number>): AlphaResult;
 }
 
-// `weights` is the per-target objective weight; targets without an entry get
-// weight 1 (callers that just want craftable counts omit it entirely).
+// Targets absent from `weights` get weight 1.
 export function compileInnerLp(
   recipeDag: RecipeDAG,
   desiredArtifactNodeIds: string[],
@@ -46,7 +36,6 @@ export function compileInnerLp(
   const targets = desiredArtifactNodeIds;
   const primary = targets[0];
 
-  // Non-leaf nodes become decision variables p_n.
   const nonLeafNodes: string[] = [];
   const varIndex = new Map<string, number>();
   for (const [id, node] of recipeDag) {
@@ -56,8 +45,8 @@ export function compileInnerLp(
     }
   }
 
-  // Objective weight per craftable target. A leaf target can't be crafted, so it
-  // contributes no objective term (its legendary chance is drops-only).
+  // A leaf target contributes no objective term; its legendary chance is
+  // drops-only.
   const weightByTarget = new Map<string, number>();
   for (const t of targets) {
     if (varIndex.has(t)) weightByTarget.set(t, weights?.get(t) ?? 1);
@@ -67,7 +56,6 @@ export function compileInnerLp(
     return makeTrivialLp(primary, targets, weightByTarget);
   }
 
-  // for each node, who consumes it and at what rate
   const parentsOf = new Map<string, { parent: string; q: number }[]>();
   for (const [parentId, parentNode] of recipeDag) {
     if (parentNode.isLeaf) continue;
@@ -169,8 +157,6 @@ export interface ProbabilityFields {
   dropProbability: number;
 }
 
-// Map a target's craftable count plus its legendary-drop rate into
-// probabilities:
 //   craft = 1 - (1 - pCraft)^alpha
 //   drop  = 1 - e^(-lambda)   (Poisson on direct legendary drops)
 //   best  = 1 - (1 - craft)(1 - drop)
@@ -202,39 +188,10 @@ export function alphaToProb(
   return { bestProbability, craftProbability: craftProbability, dropProbability };
 }
 
-// ---------------------------------------------------------------------------
-// Joint (product) objective support -- the search's objective at every target
-// count.
-//
-// Each target has a linear "score" S_T = Q_T*alpha_T + lambda_T, and
-// 1 - e^-S_T is its probability. What we want is P(all) = product_T
-// (1 - e^-score_T), i.e.
-//   log P(all) = sum_T g(score_T),  g(s) = log(1 - e^-s).
-// g is strictly increasing and concave. Strictly increasing is what makes this
-// the only objective the solver needs: with one target, maximizing g(score_1)
-// is identical in argmax to maximizing score_1 directly, so a plain
-// weighted-sum search over a single target is this objective with one term
-// rather than a separate mode.
-//
-// g's concavity lets us bound it from above by an "epigraph" of tangent
-// lines: g(s) <= alpha_k + beta_k*s for every tangent point s_k, since a
-// concave function always lies on or under each of its tangent lines, with
-// equality at s_k. That turns "maximize sum_T g(score_T)" into a linear
-// program: introduce one epigraph variable z_T per target with rows
-// z_T <= alpha_k + beta_k*score_T for every breakpoint k, then maximize
-// sum_T z_T. The LP drives each z_T up to min_k(...), the tightest bound the
-// chosen breakpoints allow -- an upper envelope of the true g, so this always
-// slightly OVER-estimates the true joint objective. That's fine for search
-// ranking (concavity/monotonicity is all the ternary scans and dominance
-// pruning need) as long as the FINAL reported probability is computed exactly
-// (via alphaToProb per target, then multiplied), never via this
-// approximation.
-// Spaced to roughly equalize the envelope's probability-space slack across
-// s in [0.05, 40]; g is nearly flat above ~4, so three points cover the tail.
-// Every row here is re-solved millions of times, so the count is deliberately
-// small — see optimizer-perf.spec.ts.
+// Tangent points for the epigraph relaxation of g(s) = log(1 - e^-s). The
+// envelope OVER-estimates g: safe for search ranking only, never for reporting.
 export const JOINT_TANGENT_BREAKPOINTS: readonly number[] = [
-  0.05, 0.12, 0.23, 0.38, 0.58, 0.85, 1.2, 1.7, 2.4, 3.6, 7, 30,
+  0.05, 0.1, 0.2, 0.3, 0.45, 0.65, 0.9, 1.2, 1.6, 2.1, 2.7, 3.4, 4.2, 5.2, 6.5, 8, 10, 13, 17, 22, 28, 35,
 ];
 
 export interface Tangent {
@@ -242,31 +199,21 @@ export interface Tangent {
   beta: number;
 }
 
-// beta_k = g'(s_k) = 1/(e^s_k - 1); alpha_k = g(s_k) - beta_k*s_k, so the line
-// alpha_k + beta_k*s is tangent to g at s_k.
+// beta_k = g'(s_k) = 1/(e^s_k - 1); alpha_k = g(s_k) - beta_k*s_k.
 export const JOINT_TANGENTS: readonly Tangent[] = JOINT_TANGENT_BREAKPOINTS.map(s => {
   const beta = 1 / Math.expm1(s);
   const g = Math.log(-Math.expm1(-s));
   return { alpha: g - beta * s, beta };
 });
 
-// The tangent epigraph variables z_T can be negative (g(s) < 0 for s below
-// ln(2)), but this file's LP solver assumes x >= 0. Shifting every epigraph
-// row's RHS up by this constant keeps z_T comfortably positive without
-// changing the argmax; solveScore/solve subtract targets.length * shift back
-// out of the objective before returning, and callers building their own
-// epigraph rows (the joint outer LP relaxation in optimizer-core.ts) must do
-// the same.
+// z_T can be negative (g(s) < 0 below s = ln 2) but lp.ts assumes x >= 0.
+// Anyone building epigraph rows must subtract nTargets * this from the result.
 export const EPIGRAPH_SHIFT = 50;
 
-// Exact g(s) = log(1 - e^-s) = log P(hit at least once | score s). Used only
-// for the FINAL reported numbers and for tests -- never inside the search.
 export function exactLogHitProbability(s: number): number {
   return s > 0 ? Math.log(-Math.expm1(-s)) : -Infinity;
 }
 
-// The tangent-envelope over-estimate of g(s) described above. Exposed for
-// tests that check the approximation's accuracy and over-estimate direction.
 export function tangentLogHitProbability(s: number): number {
   let best = Infinity;
   for (const t of JOINT_TANGENTS) {
@@ -287,23 +234,16 @@ export interface JointInnerLp {
   readonly varIndex: ReadonlyMap<string, number>;
   readonly targets: readonly string[];
 
-  // Hot path: b is the inventory RHS (constraintNodes order); lambda is the
-  // per-target direct-legendary offset (targets order). Returns the
-  // tangent-approximated sum_T g(Q_T*craft_T + lambda_T), an over-estimate of
-  // the true joint log-probability objective -- safe for search ranking only.
+  // b is the inventory RHS (constraintNodes order), lambda the per-target
+  // direct-legendary offset (targets order). Returns the tangent OVER-estimate
+  // of sum_T g(Q_T*craft_T + lambda_T), for ranking only.
   solveScore(b: Float64Array, lambda: Float64Array): number;
 
-  // Full solve at a fixed inventory: recovers the per-target craft split (for
-  // final reporting) alongside the crafted count of every non-leaf node.
   solve(inventory: Map<string, number>, lambda: Map<string, number>): JointAlphaResult;
 }
 
-// Builds the craft-conservation LP shared by the search's hot eval path and its
-// final reporting solve, augmented with one epigraph variable z_T per target and
-// the tangent rows described above. lambda enters *inside* each tangent
-// expression (Q_T*craft_T + lambda_T) rather than being added outside the LP as
-// one pooled scalar -- the product objective needs each target's direct
-// legendary drops attributed to that target's own g term.
+// The craft-conservation LP with one epigraph variable z_T per target. lambda
+// enters inside each tangent expression, never as one pooled scalar outside.
 export function compileJointInnerLp(
   recipeDag: RecipeDAG,
   desiredArtifactNodeIds: string[],
@@ -363,8 +303,8 @@ export function compileJointInnerLp(
   }
 
   // One row per (target, tangent breakpoint): z_T - beta_k*Q_T*craft_T <=
-  // alpha_k + EPIGRAPH_SHIFT + beta_k*lambda_T (lambda term folded into b at
-  // solve time, since it varies per call; the row coefficients are static).
+  // alpha_k + EPIGRAPH_SHIFT + beta_k*lambda_T, the lambda term folded into b
+  // at solve time.
   const rowTargetIdx: number[] = [];
   const rowTangentIdx: number[] = [];
   for (let ti = 0; ti < nt; ti++) {
@@ -430,9 +370,8 @@ export function compileJointInnerLp(
   };
 }
 
-// argmax over t in [0, 1] of a concave (hence unimodal) function. Golden-section
-// search; robust to phi returning -Infinity on part of the interval (comparisons
-// against a finite value simply steer away from it).
+// argmax over t in [0, 1] of a concave function. Robust to phi returning
+// -Infinity on part of the interval.
 function goldenSectionArgmax01(phi: (t: number) => number, iters = 100): number {
   const GOLDEN = (Math.sqrt(5) - 1) / 2;
   let a = 0;
@@ -459,30 +398,9 @@ function goldenSectionArgmax01(phi: (t: number) => number, iters = 100): number 
   return (a + b) / 2;
 }
 
-// Recover the per-target craft split that maximizes the EXACT concave joint
-// objective sum_T g(Q_T*craft_T + lambda_T), g(s) = log(1 - e^-s), at a FIXED
-// inventory, subject to the recipe's craft-conservation polytope.
-//
-// The hot search loop ranks candidate inventories with compileJointInnerLp's
-// fixed-grid tangent envelope of g -- fast, but the grid starts at s=0.05 and
-// its nearest-tangent approximation of g is poor for s < 0.05, so the split it
-// recovers is biased whenever a target lands on a tiny craft count. That is
-// tolerable for ranking, but the FINAL reported split must be exact. This runs
-// ONCE per returned solution (never in the search loop) and is free to be
-// slower.
-//
-// Method: Frank-Wolfe (conditional gradient) with an exact 1-D line search.
-// From the current feasible split we linearize g at each target's current score
-// -- weight_T = g'(score_T) -- and maximize the resulting weighted-sum craft LP
-// (the ordinary compileInnerLp, whose polytope is identical to the joint LP's
-// conservation rows). Its optimum is a vertex of the polytope; the segment from
-// the current point to that vertex is an ascent direction for the true concave
-// objective, and an exact golden-section line search along it lands on the
-// best point of the segment. Because g is concave, each iterate's TRUE objective
-// is non-decreasing, and the iteration converges to the polytope's global
-// optimum (for n=2 the effective problem is 1-D and it converges in a handful of
-// iterations). Seeding from the tangent-LP split guarantees the result never
-// scores below the previous behavior.
+// Recover the per-target craft split maximizing the EXACT objective
+// sum_T g(Q_T*craft_T + lambda_T) at a fixed inventory, by Frank-Wolfe with an
+// exact line search. Runs once per returned solution, never in the search loop.
 export function refineJointCraftSplit(
   recipeDag: RecipeDAG,
   targets: readonly string[],
@@ -491,10 +409,8 @@ export function refineJointCraftSplit(
   lambda: ReadonlyMap<string, number>,
   seed: JointAlphaResult
 ): JointAlphaResult {
-  // Only non-leaf targets with a positive craft weight participate in the
-  // split: a leaf (uncraftable) target, or one with Q=0, has a score that does
-  // not depend on the craft allocation, so it contributes a constant to the
-  // objective and its seed value is reported unchanged.
+  // A leaf or Q=0 target's score does not depend on the craft allocation, so
+  // it sits out the split and its seed value is reported unchanged.
   const craftTargets = targets.filter(t => !(recipeDag.get(t)?.isLeaf ?? true) && (QByTarget.get(t) ?? 0) > 0);
   if (craftTargets.length === 0) {
     return { craftByTarget: new Map(seed.craftByTarget), primalByNode: new Map(seed.primalByNode) };
@@ -516,12 +432,8 @@ export function refineJointCraftSplit(
   const MAX_ITERS = 100;
 
   for (let iter = 0; iter < MAX_ITERS; iter++) {
-    // Linearize g at the current scores: since score_T = Q_T*craft_T + lambda_T,
-    // d/d(craft_T) g(score_T) = g'(score_T)*Q_T by the chain rule, so the FW
-    // subproblem is the weighted-sum craft LP with weight_T = g'(score_T)*Q_T
-    // (dropping the Q_T factor would linearize against the wrong gradient and
-    // risk the line search stalling on a non-optimal split whenever targets
-    // have different Q values).
+    // weight_T = g'(score_T)*Q_T; the Q_T factor is the chain rule and dropping
+    // it linearizes against the wrong gradient when targets differ in Q.
     const weights = new Map<string, number>();
     for (const t of craftTargets) {
       const s = Q(t) * (currentCraft.get(t) ?? 0) + lam(t);
@@ -531,7 +443,6 @@ export function refineJointCraftSplit(
     const nonLeafNodes = lp.nonLeafNodes;
     const vertex = lp.solve(inventory);
 
-    // True-objective scores at the two segment endpoints (linear in t).
     const s0 = craftTargets.map(t => Q(t) * (currentCraft.get(t) ?? 0) + lam(t));
     const s1 = craftTargets.map(t => Q(t) * (vertex.craftByTarget.get(t) ?? 0) + lam(t));
     const phi = (t: number) => {
@@ -543,24 +454,16 @@ export function refineJointCraftSplit(
       }
       return sum;
     };
-    // Golden section only ever converges *toward* an endpoint, so when the
-    // segment optimum is an endpoint it stops a few ULPs short. That matters
-    // because the endpoints are the common case, not a corner: whenever one
-    // target's gradient dominates -- always, when there is only one craftable
-    // target, since more of it is unambiguously better -- the answer is the FW
-    // vertex itself. Probe both endpoints and prefer them on ties so the
-    // reported craft counts are the LP's exact vertex rather than a rounded
-    // approach to it.
+    // Golden section only converges *toward* an endpoint, stopping a few ULPs
+    // short, and endpoints are the common case. Probe them and prefer on ties.
     const tInterior = goldenSectionArgmax01(phi);
     const fInterior = phi(tInterior);
     let tStar = tInterior;
     if (phi(1) >= fInterior) tStar = 1;
     else if (phi(0) >= fInterior) tStar = 0;
 
-    // Interpolate craft counts and the full per-node primal along the segment
-    // (a convex combination of two feasible points stays feasible). At an
-    // endpoint take that endpoint's value verbatim: a + 1*(b - a) is not
-    // exactly b in floating point.
+    // At an endpoint take that endpoint verbatim: a + 1*(b - a) is not exactly
+    // b in floating point.
     const lerp = (a: number, b: number) => (tStar === 1 ? b : tStar === 0 ? a : a + tStar * (b - a));
     let maxMove = 0;
     const newCraft = new Map<string, number>();
@@ -582,8 +485,6 @@ export function refineJointCraftSplit(
     if (maxMove < TIGHT || tStar < 1e-12) break;
   }
 
-  // Report the refined craftable targets over the seed's other entries (leaf /
-  // Q=0 targets keep their seed craft counts).
   const craftByTarget = new Map(seed.craftByTarget);
   for (const t of craftTargets) craftByTarget.set(t, currentCraft.get(t) ?? 0);
   return { craftByTarget, primalByNode: currentPrimal };

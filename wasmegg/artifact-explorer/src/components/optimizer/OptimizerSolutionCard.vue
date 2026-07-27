@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-1 text-sm">
-    <!-- n=1: unchanged from before multi-target support existed. -->
+    <!-- n=1 -->
     <template v-if="solution.perTarget.length <= 1">
       <div class="text-lg font-semibold text-green-700">
         <span v-tippy="chanceTooltip" class="cursor-help border-b border-dotted border-green-400/60">
@@ -30,7 +30,7 @@
       </div>
     </template>
 
-    <!-- n>=2: joint headline plus one sub-block per target. -->
+    <!-- n>=2: joint headline plus one sub-block per target -->
     <template v-else>
       <div class="text-lg font-semibold text-green-700">
         <span v-tippy="jointTooltip" class="cursor-help border-b border-dotted border-green-400/60">
@@ -89,8 +89,7 @@
       <span v-tippy="idleTooltip" class="cursor-help border-b border-dotted border-gray-400/60">Idle</span>
       : {{ formatDuration(idleTimeSeconds, true) }}
     </div>
-    <!-- Expected crafts is inherently per-target, so for n>=2 it moved into
-         each target's sub-block above instead of appearing here. -->
+    <!-- for n>=2 this lives in each target's sub-block above -->
     <div v-if="solution.perTarget.length <= 1" class="text-gray-600">
       Expected crafts: {{ solution.expectedCrafts.toFixed(1) }}
     </div>
@@ -147,15 +146,11 @@ export default defineComponent({
     solution: { type: Object as PropType<OptimizerSolution>, required: true },
     maxWaitTimeSeconds: { type: Number, required: true },
     hasInventory: { type: Boolean, required: true },
-    // One entry per selected target (length 1 when only one target is
-    // selected); drives both render branches.
     targets: { type: Array as PropType<TargetView[]>, required: true },
   },
   setup(props) {
-    // The n=1 branch's view of the plan. perTarget -- and so targets -- can be
-    // empty (optimizer-core guards the same case when deriving its own primary
-    // readouts), and `perTarget.length <= 1` routes that here, so this branch
-    // must not dereference a target that isn't there.
+    // targets can be empty and `length <= 1` routes that here, so this must
+    // never dereference targets[0].
     const primary = computed<Omit<TargetView, 'nodeId' | 'name' | 'iconUrl' | 'perTarget'>>(
       () =>
         props.targets[0] ?? {

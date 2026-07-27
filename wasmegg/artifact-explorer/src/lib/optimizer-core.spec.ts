@@ -94,18 +94,10 @@ describe('optimizeFull', () => {
   });
 
   it('does not prune the only source of a direct legendary drop', () => {
-    // optDropper costs more and yields fewer ingredients than optBulk, so it
-    // looks dominated on the crafting side alone — but it is the only option
-    // that drops the target's legendary directly. Dominance has to compare the
-    // legendary vector too, or the sole drop source disappears before the
-    // search ever considers it.
-    // optBulk is free, slightly faster and supplies more B, so it dominates
-    // optDropper on every dimension a purely ingredient-based check looks at.
-    // But crafting is weak here (11 B per A at a 4% craft chance), so
-    // optDropper's direct drops are worth far more than the ingredients spent
-    // to afford them: the plan that buys drops with the whole fuel budget and
-    // fills the rest with optBulk reaches ~0.669, against ~0.580 for optBulk
-    // alone. Prune optDropper and the pair scan never sees that trade.
+    // optBulk dominates optDropper on every ingredient-side dimension, but
+    // optDropper is the only direct source of the target's legendary. A
+    // dominance check that ignored legendary vectors would prune it, costing
+    // the ~0.669 mixed plan in favour of optBulk's ~0.580.
     const dag: RecipeDAG = new Map([
       ['A', makeNode('A', false, [['B', 11]], 0.04)],
       ['B', makeNode('B', true)],
@@ -375,9 +367,8 @@ describe('optimizeFull', () => {
   });
 
   it('treats a NaN or negative budget as zero (no launches)', () => {
-    // An empty time budget field upstream turns into NaN; the search must
-    // degrade to the deterministic no-launch baseline, not leak NaN into
-    // the scans and the joint LP.
+    // An empty input field upstream arrives as NaN; degrade to the no-launch
+    // baseline rather than leak it into the scans.
     const opts = [makeOpt(10, 10, [['B', 1]]), makeOpt(0, 3, [['B', 1]])];
     for (const timeCapacity of [NaN, -5, Infinity]) {
       const sol = optimizeFull({

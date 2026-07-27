@@ -1,39 +1,5 @@
-// Outer search for the Path of Virtue optimizer: pick integer counts of each
-// launch option to maximize the chance of the desired legendaries under a fuel
-// budget R and a per-slot time horizon S. The game runs three independent
-// mission slots, so a plan is realizable only if its mission durations pack
-// into 3 bins of capacity S.
-//
-// Objective, for any number of desired targets:
-//
-//   score_T = Q_T * (crafts of T) + lambda_T,   Q_T = -log(1 - pCraftLegendary_T)
-//   F       = sum_T g(score_T),                 g(s) = log(1 - e^-s)
-//
-// lambda_T is T's direct legendary drop rate, so 1 - e^(-score_T) is exactly
-// P(at least one legendary T), and e^F is exactly P(every target). Maximizing F
-// therefore maximizes the joint probability the UI reports.
-//
-// There is no separate single-target objective. g is strictly increasing, so
-// with one target argmax F = argmax score_1 — maximizing a plain weighted-sum
-// score is this same problem with one term, not a different one. Everything
-// below (dominance pruning, the LP relaxation, the ternary scans, greedy
-// repair) needs only that F is concave and non-decreasing in inventory, which
-// holds for every target count: each score_T is concave and non-decreasing, g
-// is concave and non-decreasing, a non-decreasing concave function of such an
-// argument stays concave and non-decreasing, and a sum of those keeps both
-// properties. None of that machinery cares how many terms it is climbing.
-//
-// F is a log-probability, so F <= 0 and a *relative* gap on F would be
-// meaningless. Every convergence test here is instead stated in probability
-// space, where P = e^F: see relativeProbGap.
-//
-// One consequence worth knowing: g flattens as score_T grows (g'(s) = 1/(e^s -
-// 1)), so once a target is all but certain the search stops distinguishing
-// plans that differ only in how much further they overshoot it. That is the
-// objective behaving correctly — at P_T = 0.999 the next craft buys ~nothing,
-// and with several targets that budget belongs to whichever one is still
-// short — but it does mean near-saturated instances settle for any plan inside
-// the epsilon band rather than the score-maximal one.
+// Outer search for the Path of Virtue optimizer. See OPTIMIZER.md for the
+// objective, the tangent relaxation, and the search structure.
 
 import type { LaunchOption, LaunchSolution, OptimizerSolution, RecipeDAG, SlotSummary } from './types';
 import { ei } from 'lib';
@@ -64,8 +30,6 @@ interface OptimizeArgs {
 
 type EvalFn = (multipliers: ReadonlyArray<readonly [number, number]>) => number;
 
-// Budget-independent state, built once and reused across the relaxed and
-// floor solves.
 interface EvalContext {
   options: LaunchOption[];
   recipeDag: RecipeDAG;
@@ -90,9 +54,6 @@ interface PackResult {
   score: number;
 }
 
-// Minimal shapes packAndFill/escalatePacking actually touch, so an EvalContext
-// satisfies them structurally without those helpers depending on the search
-// bookkeeping.
 interface SearchContext {
   options: LaunchOption[];
   evalScoreAt: EvalFn;
@@ -101,11 +62,8 @@ interface SearchResult {
   support: Set<number>;
 }
 
-// The relative probability shortfall of settling for `best` when `upper` has
-// been certified: 1 - P_best/P_upper = 1 - e^(best - upper). Comparing this
-// against epsilon asks the only question a caller cares about — how much of the
-// achievable chance is being given up — and, unlike a relative gap on F itself,
-// it needs no sign assumption on the objective.
+// Relative shortfall in probability space, 1 - e^(best - upper). Gaps on F
+// itself are meaningless: F is a log-probability and always <= 0.
 function relativeProbGap(upper: number, best: number): number {
   if (!(upper > -Infinity) || !(best > -Infinity)) return 1;
   return -Math.expm1(Math.min(0, best - upper));
@@ -117,8 +75,6 @@ function buildEvalContext(
   desiredArtifactNodeIds: string[],
   baseYield: Map<string, number>
 ): EvalContext {
-  // Q_T weights the inner LP's craft objective so a craft of a target with
-  // better legendary odds counts for more.
   const targets = desiredArtifactNodeIds;
   const QByTarget = new Map<string, number>();
   for (const t of targets) {
@@ -128,9 +84,8 @@ function buildEvalContext(
 
   const innerLp = compileJointInnerLp(recipeDag, targets, QByTarget);
 
-  // The inner LP only sees inventory through its b vector, so the base yield
-  // and each option's yield vector are preindexed down to constraint rows
-  // here; yields to nodes without a conservation row can't affect the score.
+  // Preindexed to constraint rows: yields to nodes without a conservation row
+  // cannot affect the score.
   const nRows = innerLp.constraintNodes.length;
   const rowIdxByNode = new Map<string, number>();
   for (let i = 0; i < nRows; i++) {
@@ -146,9 +101,7 @@ function buildEvalContext(
 
   const optYieldRows: Int32Array[] = new Array(options.length);
   const optYieldRates: Float64Array[] = new Array(options.length);
-  // Per-target legendary rate, in `targets` order. Unlike crafting ingredients
-  // these are never pooled into one scalar: each target's drops belong inside
-  // its own g(score_T) term.
+  // Per-target legendary rate, in `targets` order; never pooled into a scalar.
   const optLegRates: Float64Array[] = new Array(options.length);
   for (let i = 0; i < options.length; i++) {
     const rows: number[] = [];
@@ -172,23 +125,13 @@ function buildEvalContext(
   const bEval = new Float64Array(nRows);
   const lambdaEval = new Float64Array(targets.length);
 
-  // The pair and triple scans are nested ternary searches over multiplicities,
-  // so they re-probe the same allocation many times — both within one scan
-  // (the ternary bracket revisits interior points) and across overlapping
-  // tuples that share an option. Each miss costs a full LP solve, which
-  // dominates runtime, so caching on the allocation is worth the key
-  // construction. Bounded because the key space is only loosely tied to
-  // instance size.
   const MAX_EVAL_CACHE = 200_000;
   const evalCache = new Map<string, number>();
   const keyPairs: [number, number][] = [];
 
   const evalScoreAt: EvalFn = multipliers => {
-    // Canonical (option-sorted) key: the score depends on the allocation as a
-    // set, but callers hand it over in whatever order they hold it — the scans
-    // emit a fixed option order while repairAlloc spreads a Map, whose
-    // iteration order follows insertion. Without the sort the same allocation
-    // keys differently depending on who asked, and re-solves the LP.
+    // The sort is load-bearing: callers pass the same allocation in different
+    // orders, and an unsorted key would miss the cache on every one of them.
     keyPairs.length = 0;
     for (const [idx, k] of multipliers) {
       if (k <= 0) continue;
@@ -237,13 +180,13 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
     epsilon = DEFAULT_EPSILON,
   } = args;
 
-  // Clamp NaN/negative budgets (e.g. an empty input field upstream) to zero
-  // rather than let NaN comparisons leak into the search.
+  // An empty input field upstream arrives as NaN; clamp before it reaches the
+  // comparisons in the scans.
   const R = Number.isFinite(rawR) && rawR > 0 ? rawR : 0;
   const S = Number.isFinite(rawS) && rawS > 0 ? rawS : 0;
 
-  // Only missions that fit a single slot's horizon can ever run; filtering
-  // here also keeps the 3S relaxation's upper bound valid.
+  // Filtering unfittable missions here is also what keeps the 3S relaxation's
+  // upper bound valid.
   const feasibleOptions = options.filter(o => o.actualTime > ZERO_TOL && o.actualTime <= S);
 
   const ctx = buildEvalContext(feasibleOptions, recipeDag, desiredArtifactNodeIds, baseYield);
@@ -254,8 +197,7 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
   let U = ctx.baseScore;
 
   if (feasibleOptions.length > 0 && S > 0) {
-    // Relaxed solve over 3S aggregate time: an upper bound U plus a candidate
-    // allocation that may not be 3-bin packable.
+    // Relaxed solve over 3S aggregate time: may not be 3-bin packable.
     const relaxed = coreSearch(ctx, R, NUM_SLOTS * S, epsilon);
     U = Math.max(U, relaxed.U);
 
@@ -264,9 +206,8 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
     const floorAlloc = new Map<number, number>();
     for (const [i, k] of floor.bestAlloc) floorAlloc.set(i, k * NUM_SLOTS);
 
-    // Three packable candidates: the repaired relaxed optimum, the repaired
-    // floor, and a greedy build from empty slots. All fill from the full
-    // option list so dual-filtered budget-fillers are re-admitted.
+    // All three fill from the full option list, re-admitting dual-filtered
+    // budget-fillers.
     const candidates = [
       packAndFill(relaxed.bestAlloc, ctx, R, S),
       packAndFill(floorAlloc, ctx, R, S),
@@ -280,7 +221,6 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
       }
     }
 
-    // Escalate only when the packable best still trails the upper bound.
     if (relativeProbGap(U, bestScore) > epsilon) {
       const escalated = escalatePacking(relaxed, floor, ctx, R, S);
       if (escalated && escalated.score > bestScore + ZERO_TOL) {
@@ -293,9 +233,8 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
   return assembleFullSolution(ctx, bestAlloc, bestSlots, baseYield, desiredArtifactNodeIds, recipeDag);
 }
 
-// Single-time-budget integer search: LP relaxation + dominance/dual pruning +
-// pair/triple ternary scans + greedy repair. The caller decides whether S is
-// 3S (relaxed) or S (floor).
+// Single-time-budget integer search. The caller decides whether S is 3S
+// (relaxed) or S (floor).
 function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): CoreResult {
   const { options, evalScoreAt, baseScore, innerLp, baseYield, targets, recipeDag, QByTarget } = ctx;
 
@@ -309,19 +248,8 @@ function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): Co
     }
   };
 
-  // Dominance pruning: j dominates i when it costs no more on either budget
-  // and yields at least as much of everything, strictly better somewhere.
-  // Comparing yields pointwise (rather than by solo score) keeps complementary
-  // options alive — the only good source of some ingredient can't be pruned
-  // just because its standalone score is poor.
-  //
-  // This runs before the standalone pass, not after: a dominator costs no more
-  // fuel and no more time and yields at least as much of everything, so it
-  // admits at least the dominated option's multiplicity at a score at least as
-  // high. A dominated option therefore can't be the best standalone seed, and
-  // every later reader of scoreAlone/kAlone (the triple pool, the dual filter)
-  // already looks only at survivors — so scoring the dominated ones would be
-  // pure waste, and one LP solve per option is a large share of the budget.
+  // Dominance pruning runs before the standalone pass: a dominated option can
+  // never be the best standalone seed, and one LP solve per option is dear.
   const survives = new Uint8Array(options.length);
   for (let i = 0; i < options.length; i++) survives[i] = 1;
 
@@ -342,8 +270,7 @@ function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): Co
     if (survives[i]) allSurvivors.push(i);
   }
 
-  // Single-option sweep. Also records each option's solo score, which the
-  // triple fallback uses for its top-K ranking.
+  // Single-option sweep; scoreAlone feeds the triple scan's top-K ranking.
   const scoreAlone = new Float64Array(options.length).fill(-Infinity);
   const kAlone = new Int32Array(options.length);
   for (const idx of allSurvivors) {
@@ -361,29 +288,16 @@ function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): Co
     tryUpdateAllocations(a, new Map([[idx, k_i]]));
   }
 
-  // LP relaxation: an upper bound on F, plus the support set.
   const lp = solveRelaxationLp(allSurvivors, options, innerLp, R, S, baseYield, targets, recipeDag, QByTarget);
   const lpSupport = new Set<number>(lp.support);
 
-  // Dual filter: an option's reduced cost at the LP optimum bounds how much F
-  // the relaxation would give up if forced to include it. Since P = e^F,
-  // surrendering dF of objective costs a relative 1 - e^-dF of the probability,
-  // so allowing at most half the epsilon budget to go that way inverts to a
-  // fixed allowance on F. Drop options where even the solo-max multiplicity
-  // would exceed it.
-  //
-  // This is deliberately aggressive (it tends to cut the survivor set down to
-  // the LP support, which keeps the pair/triple scans fast) and it does discard
-  // cheap budget-filler options — the greedy repair at the end re-admits those
-  // from the full list.
+  // Dual filter. Deliberately aggressive: it discards cheap budget-fillers,
+  // which repairAlloc later re-admits from the full option list.
   const lossBudget = -Math.log(1 - 0.5 * epsilon);
   for (let i = 0; i < options.length; i++) {
     if (!survives[i]) continue;
     if (lpSupport.has(i)) continue;
     const opt = options[i];
-    // Reduced cost of forcing this option into the relaxation: its legendary
-    // drops relieve the epigraph rows, its yields relieve the conservation
-    // rows, and it consumes fuel and slot time.
     let rc = 0;
     for (const [t, dt] of lp.legendaryDuals) {
       if (dt === 0) continue;
@@ -403,22 +317,14 @@ function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): Co
 
   const survivorsAfter = allSurvivors.filter(i => survives[i]);
 
-  // Pairwise scans over everything the two prunings left.
   for (let a = 0; a < survivorsAfter.length; a++) {
     for (let b = a + 1; b < survivorsAfter.length; b++) {
       pairwiseScan(survivorsAfter[a], survivorsAfter[b], options, R, S, evalScoreAt, tryUpdateAllocations);
     }
   }
 
-  // If the gap is still large, try triples. The triple scan's nested ternary
-  // search costs an order of magnitude more probes per tuple than the pairwise
-  // scan, so its candidate pool is capped where the pair scan's is not: the LP
-  // support plus the top-K options by solo score. The support goes first —
-  // complementary options with poor standalone scores live there, and with many
-  // near-duplicate missions the solo ranking would otherwise fill up with
-  // clones of the best standalone option and crowd them out. repairAlloc
-  // afterwards still scans every option, so a good budget-filler left out of
-  // this pool is never permanently lost, only left for repair to find.
+  // Triples only if the gap is still wide. LP support is ranked ahead of the
+  // solo top-K: complementary options score poorly alone but belong here.
   if (relativeProbGap(lp.F, bestScore) > epsilon) {
     const bySingle = survivorsAfter
       .filter(i => isFinite(scoreAlone[i]) && scoreAlone[i] > -Infinity)
@@ -444,9 +350,7 @@ function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): Co
 
   bestScore = repairAlloc(bestAlloc, bestScore, options, R, S, evalScoreAt);
 
-  // Repair again from the floor-rounded LP solution (still feasible, and its
-  // neighborhood is where the integer optimum usually lives). Keep whichever
-  // start ends up better.
+  // Repair again from the floor-rounded LP solution, keeping the better start.
   const lpRounded = new Map<number, number>();
   for (let s = 0; s < allSurvivors.length; s++) {
     const k = Math.floor(lp.x[s]);
@@ -463,8 +367,7 @@ function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): Co
 }
 
 // Turn a (possibly unpackable) allocation into a realizable plan: best-fit-
-// decreasing pack into the three slots, drop the spillover, then greedily fill
-// each slot's remaining time within the leftover fuel.
+// decreasing pack into the three slots, drop the spillover, then greedily fill.
 function packAndFill(
   startAlloc: Map<number, number>,
   ctx: SearchContext,
@@ -488,8 +391,6 @@ function packAndFill(
     }
   }
 
-  // Missions that fit no slot's remaining time, or that the fuel budget can
-  // no longer afford, are dropped.
   const order = missionOpt.map((_, idx) => idx).sort((a, b) => missionDur[b] - missionDur[a]);
   const slotLoad = new Array<number>(NUM_SLOTS).fill(0);
   const slotRawLoad = new Array<number>(NUM_SLOTS).fill(0);
@@ -519,8 +420,6 @@ function packAndFill(
 
   let score = evalOf(ctx, alloc);
 
-  // Fill from the LP-relevant options plus whatever the start allocation
-  // already carries; scanning every option per round is too slow.
   const fillList: number[] = [];
   if (fillOptions) {
     const seen = new Set<number>();
@@ -540,9 +439,8 @@ function packAndFill(
     for (let i = 0; i < options.length; i++) fillList.push(i);
   }
 
-  // Score is non-decreasing in inventory, so the best add of an option is as
-  // many as fit the emptiest slot (and the fuel); each accepted add consumes
-  // most of a slot's remaining time, so the loop ends in a few rounds.
+  // Score is non-decreasing in inventory, so the best add of an option is
+  // always its max fitting multiplicity.
   for (;;) {
     let bestAddScore = score;
     let bestOpt = -1;
@@ -613,8 +511,7 @@ function evalOf(ctx: SearchContext, alloc: Map<number, number>): number {
 }
 
 // Seed one slot full of each LP-support option and re-fill the rest, exploring
-// per-slot specializations the balanced relaxation misses. Bounded to a few
-// starts so it can never dominate the latency budget.
+// per-slot specializations the balanced relaxation misses.
 function escalatePacking(
   relaxed: SearchResult,
   floor: SearchResult,
@@ -627,8 +524,8 @@ function escalatePacking(
   let starts = 0;
   for (const i of support) {
     const d = ctx.options[i].actualTime;
-    // Budget only usable seeds: an option that can't fit a single copy produces
-    // no start at all, so counting it would starve the seeds that can.
+    // Skip before the seed budget is charged: an unfittable option produces no
+    // start at all, so counting it would starve the seeds that can.
     if (d <= ZERO_TOL || d > S + ZERO_TOL) continue;
     if (starts++ >= 8) break;
     const seed = new Map<number, number>([[i, Math.floor(S / d)]]);
@@ -660,20 +557,8 @@ function assembleFullSolution(
   const makespan = busiest?.loadSeconds ?? 0;
   const running = busiest?.rawLoadSeconds ?? 0;
 
-  // Recover the per-target craft split at the final chosen inventory. The
-  // search ranked candidates with the fixed-grid tangent envelope
-  // (ctx.innerLp); its recovered split is only tangent-optimal, and the grid's
-  // coarseness below s=0.05 biases it whenever a target lands on a tiny craft
-  // count — so that split would systematically under-report the probability. We
-  // therefore take the tangent-LP split only as a seed and refine it to the
-  // split that maximizes the EXACT concave objective
-  // sum_T g(Q_T*craft_T + lambda_T) at this fixed inventory, via Frank-Wolfe
-  // with an exact line search (see refineJointCraftSplit). That refinement is
-  // monotone non-decreasing in the true objective and converges to the polytope
-  // optimum, so the per-target probabilities alphaToProb then computes are
-  // exact (to convergence tolerance) for this inventory — not merely an exact
-  // conversion of an approximate split. This runs once per returned solution,
-  // never in the hot search loop.
+  // The tangent-LP split is only a seed: reported numbers must come off the
+  // exact objective, never the search's envelope. See OPTIMIZER.md.
   const seedSolve = ctx.innerLp.solve(finalYieldVector, totalLegendary);
   const finalSolve = refineJointCraftSplit(
     recipeDag,
@@ -696,10 +581,8 @@ function assembleFullSolution(
     expectedCrafts: 0,
   };
 
-  // P(all targets). With a single target this is just that target's own
-  // probability, which is what the single-target readouts show. With no targets
-  // the empty product would read as a certain 100%, which is worse than useless
-  // in the UI — nothing was asked for, so nothing is achieved.
+  // No targets yields 0, not the empty product's 1: nothing was asked for, so
+  // nothing is achieved.
   let jointProbability = perTarget.length > 0 ? 1 : 0;
   for (const t of perTarget) jointProbability *= t.bestProbability;
 
@@ -759,23 +642,8 @@ function assembleSolution(baseYield: Map<string, number>, bestAlloc: Map<number,
 }
 
 // j dominates i when it costs no more on either budget and yields at least as
-// much of everything, strictly better somewhere.
-//
-// "Everything" includes each target's direct legendary drops, compared per
-// target rather than pooled into a total. The objective values a target's drops
-// inside its own g(score_T) term, so an option dropping more of target A's
-// legendary and less of target B's is no dominator of its opposite. Pooling
-// them is wrong with a single target too, where it collapses to discarding the
-// comparison altogether: the sole source of that target's direct drops would be
-// prunable by a cheaper option supplying more crafting ingredients and no
-// legendaries at all.
-//
-// Only the search targets are compared, though: they are the only nodes whose
-// legendary rate reaches the objective (optLegRates, and the tangent rows that
-// price it). Demanding j match i on a non-target ingredient's legendary rate
-// rejects dominations nothing downstream can distinguish, and every survivor
-// costs twice — once in the O(n^2) pairwise scan, once as a column of the
-// relaxation LP.
+// much of everything, strictly better somewhere. Legendary drops are compared
+// per target and never pooled; non-target legendaries are ignored entirely.
 function dominates(j: LaunchOption, i: LaunchOption, targetSet: Set<string>): boolean {
   if (j.actualFuel > i.actualFuel + ZERO_TOL) return false;
   if (j.actualTime > i.actualTime + ZERO_TOL) return false;
@@ -803,12 +671,8 @@ function dominates(j: LaunchOption, i: LaunchOption, targetSet: Set<string>): bo
   return strictCost || strict;
 }
 
-// Greedy repair: starting from an allocation, keep adding the best-scoring
-// max-fitting batch from the full option list (including pruned options)
-// until nothing improves. Score is non-decreasing in inventory, so the best
-// add of an option is always its max fitting multiplicity, and each
-// accepted add leaves less budget than one batch of that option costs —
-// the loop terminates after a handful of rounds. Mutates alloc in place.
+// Greedy repair over the FULL option list, pruned options included. Mutates
+// alloc in place.
 function repairAlloc(
   alloc: Map<number, number>,
   score: number,
@@ -852,8 +716,7 @@ function repairAlloc(
 }
 
 // Scan the (k_i, k_j) lattice with ternary search on k_j (score is concave in
-// k_j for a fixed pair). Works for any mix of zero- and positive-fuel options:
-// a zero fuel cost just makes the fuel bound infinite, leaving the time bound.
+// k_j for a fixed pair).
 function pairwiseScan(
   iIdx: number,
   jIdx: number,
@@ -975,9 +838,8 @@ function tripleScan(
   }
 }
 
-// Ternary search over an integer interval for the max of an approximately
-// concave function. Extra fields returned by the probe ride along with the
-// winning result.
+// Ternary search over an integer interval. Extra fields returned by the probe
+// ride along with the winning result.
 function ternaryMaxOver<E extends Record<string, number>>(
   lo: number,
   hi: number,
@@ -1033,19 +895,13 @@ interface RelaxationResult {
   dualR: number; // fuel budget shadow price
   dualS: number; // slot-time budget shadow price
   nodeDuals: Map<string, number>; // per conservation row, keyed by node id
-  // Per target, sum_k y_{T,k} * beta_k over that target's tangent rows. An
-  // option's direct legendary drops for T enter every one of those rows with
-  // coefficient -beta_k, so this collapses them into the single multiplier the
-  // reduced cost needs.
+  // Per target, sum_k y_{T,k} * beta_k over that target's tangent rows.
   legendaryDuals: Map<string, number>;
 }
 
-// The outer LP relaxation: option counts and craft variables, plus one epigraph
-// variable z_T per target carrying the same tangent rows as
-// compileJointInnerLp — except that here lambda_T is itself a linear
-// combination of the option-count variables (via each option's
-// legendaryYieldVector) rather than a precomputed constant, so this LP is built
-// directly instead of reusing that fixed matrix.
+// The outer LP relaxation. Built directly rather than reusing
+// compileJointInnerLp's matrix because here lambda_T is a linear combination
+// of the option-count variables, not a precomputed constant.
 function solveRelaxationLp(
   survivors: number[],
   options: LaunchOption[],
@@ -1091,11 +947,8 @@ function solveRelaxationLp(
   A.push(sRow);
   bArr.push(S);
 
-  // Conservation rows, one per consumed node n:
-  //   sum_parents q * p_parent - (p_n if non-leaf) - sum_i x_i * yield_i[n] <= base_yield[n]
-  //
-  // Row order for the dual vector: rows 0/1 are R/S, then one conservation row
-  // per entry below, then the per-target tangent block.
+  // Row order, which the dual extraction below depends on: rows 0/1 are R/S,
+  // then one conservation row per consumed node, then the per-target tangents.
   const parentsOf = new Map<string, { parent: string; q: number }[]>();
   for (const [pid, pnode] of recipeDag) {
     if (pnode.isLeaf) continue;
