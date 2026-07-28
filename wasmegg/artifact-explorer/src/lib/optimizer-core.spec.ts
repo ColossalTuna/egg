@@ -93,6 +93,31 @@ describe('optimizeFull', () => {
     expect(sol.choiceHistory.find(c => c.targetAfxId === opt1.targetAfxId)).toBeDefined();
   });
 
+  it('does not prune the only source of a direct legendary drop', () => {
+    // optBulk dominates optDropper on every ingredient-side dimension, but
+    // optDropper is the only direct source of the target's legendary. A
+    // dominance check that ignored legendary vectors would prune it, costing
+    // the ~0.669 mixed plan in favour of optBulk's ~0.580.
+    const dag: RecipeDAG = new Map([
+      ['A', makeNode('A', false, [['B', 11]], 0.04)],
+      ['B', makeNode('B', true)],
+    ]);
+    const optBulk = makeOpt(0, 6.14, [['B', 2.69]], [], Name.LUNAR_TOTEM);
+    const optDropper = makeOpt(3.49, 6.27, [['B', 1.95]], [['A', 0.05]], Name.TUNGSTEN_ANKH);
+    const sol = optimizeFull({
+      options: [optBulk, optDropper],
+      recipeDag: dag,
+      desiredArtifactNodeIds: ['A'],
+      fuelCapacity: 18.56,
+      timeCapacity: 179.54,
+      baseYield: new Map(),
+    });
+
+    expect(sol.choiceHistory.find(c => c.targetAfxId === optDropper.targetAfxId)).toBeDefined();
+    expect(sol.dropProbability).toBeGreaterThan(0);
+    expect(sol.bestProbability).toBeGreaterThan(0.65);
+  });
+
   it('allocates complementary options together', () => {
     // A needs both B and C; one option yields each, neither dominates.
     // The budget should be split between them.
@@ -342,9 +367,8 @@ describe('optimizeFull', () => {
   });
 
   it('treats a NaN or negative budget as zero (no launches)', () => {
-    // An empty time budget field upstream turns into NaN; the search must
-    // degrade to the deterministic no-launch baseline, not leak NaN into
-    // the scans and the joint LP.
+    // An empty input field upstream arrives as NaN; degrade to the no-launch
+    // baseline rather than leak it into the scans.
     const opts = [makeOpt(10, 10, [['B', 1]]), makeOpt(0, 3, [['B', 1]])];
     for (const timeCapacity of [NaN, -5, Infinity]) {
       const sol = optimizeFull({
