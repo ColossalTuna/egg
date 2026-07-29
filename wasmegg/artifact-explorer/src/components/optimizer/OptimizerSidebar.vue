@@ -37,7 +37,7 @@
         <div>
           <div class="flex items-center justify-between">
             <label class="text-sm text-gray-600">Effort</label>
-            <span class="text-xs font-medium text-gray-700">{{ effortMeta[missionFilters.effort].label }}</span>
+            <span class="text-sm font-bold text-gray-900">{{ effortMeta[missionFilters.effort].label }}</span>
           </div>
           <div
             ref="effortTrack"
