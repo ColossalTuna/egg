@@ -35,7 +35,7 @@
         </div>
 
         <div>
-          <label class="text-sm text-gray-600">Effort</label>
+          <span class="text-sm text-gray-600">Effort</span>
           <div
             ref="effortTrack"
             role="slider"
