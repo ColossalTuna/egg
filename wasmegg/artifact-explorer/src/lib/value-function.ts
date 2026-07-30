@@ -21,8 +21,8 @@ export interface InnerLp {
   readonly targets: readonly string[];
   readonly weightByTarget: ReadonlyMap<string, number>;
 
-  // `weights` re-aims the objective without recompiling the polytope; targets
-  // absent from it get weight 1, as at compile time.
+  // `weights` re-aims the objective without recompiling the polytope. It is a
+  // partial override: targets absent from it keep their compiled weight.
   solve(inventory: Map<string, number>, weights?: ReadonlyMap<string, number>): AlphaResult;
 }
 
@@ -151,7 +151,10 @@ export function compileInnerLp(
         // against the identity of `c`, so rewriting the existing one would be
         // silently ignored and the previous objective reused.
         c = new Float64Array(nVars);
-        for (const t of weightByTarget.keys()) c[varIndex.get(t)!] = reweights.get(t) ?? 1;
+        // A partial map overrides only the targets it names; the rest keep the
+        // weight they were compiled with, so successive partial reweights of
+        // one LP cannot silently drag the others back to a default.
+        for (const [t, w] of weightByTarget) c[varIndex.get(t)!] = reweights.get(t) ?? w;
       }
       for (let i = 0; i < nCons; i++) {
         const v = inventory.get(constraintNodes[i]);
