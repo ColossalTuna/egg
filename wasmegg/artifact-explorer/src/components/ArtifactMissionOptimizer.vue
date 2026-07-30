@@ -33,10 +33,7 @@
               role="status"
               class="flex items-center gap-2 text-sm text-gray-500"
             >
-              <svg class="animate-spin h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
+              <optimizer-spinner class="h-4 w-4 text-gray-400" />
               Computing the best ship set…
             </p>
             <p v-else-if="computeError" class="text-sm text-red-600">Could not compute a plan: {{ computeError }}</p>
@@ -49,10 +46,7 @@
             </p>
           </div>
           <div v-if="dimSolution" role="status" class="absolute inset-0 flex items-start justify-center pt-8">
-            <svg class="animate-spin h-8 w-8 text-gray-500" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
+            <optimizer-spinner class="h-8 w-8 text-gray-500" />
             <span class="sr-only">Computing the best ship set…</span>
           </div>
         </div>
@@ -68,13 +62,12 @@
            panel as a direct child of the layout's spacing container, exactly
            as it did before there was anything to label. -->
       <template v-for="target in inventoryTrees" :key="'inventory-' + target.nodeId">
-        <div
+        <optimizer-target-label
           v-if="inventoryTrees.length > 1 && target.tree && playerInventory"
-          class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1"
-        >
-          <img :src="target.iconUrl" class="h-4 w-4 flex-shrink-0" alt="" />
-          <span>{{ target.name }}</span>
-        </div>
+          class="text-sm mb-1"
+          :name="target.name"
+          :icon-url="target.iconUrl"
+        />
         <optimizer-inventory-panel :tree="target.tree" :has-inventory="!!playerInventory" />
       </template>
 
@@ -86,14 +79,7 @@
 <script lang="ts">
 import { computed, defineComponent, onUnmounted, PropType, ref, toRefs, watch, watchEffect } from 'vue';
 
-import {
-  getArtifactTierPropsFromId,
-  getSavedPlayerID,
-  iconURL,
-  parseDurationDays,
-  requestFirstContact,
-  savePlayerID,
-} from 'lib';
+import { getSavedPlayerID, parseDurationDays, requestFirstContact, savePlayerID } from 'lib';
 
 import {
   autoCompute,
@@ -114,7 +100,7 @@ import {
   computeCraftChainTree,
   computeInventoryTree,
   computeMissionLegendaryRows,
-  finalizeSolutions,
+  artifactDisplay,
   lambdaFromDropProbability,
   legendaryCraftProbabilityOf,
   legendaryDataIsSparse,
@@ -126,9 +112,17 @@ import { createOptimizerClient, type OptimizerClient, type OptimizerRequestInput
 import OptimizerSidebar from './optimizer/OptimizerSidebar.vue';
 import OptimizerInventoryPanel from './optimizer/OptimizerInventoryPanel.vue';
 import OptimizerSolutionCard from './optimizer/OptimizerSolutionCard.vue';
+import OptimizerSpinner from './optimizer/OptimizerSpinner.vue';
+import OptimizerTargetLabel from './optimizer/OptimizerTargetLabel.vue';
 
 export default defineComponent({
-  components: { OptimizerSidebar, OptimizerInventoryPanel, OptimizerSolutionCard },
+  components: {
+    OptimizerSidebar,
+    OptimizerInventoryPanel,
+    OptimizerSolutionCard,
+    OptimizerSpinner,
+    OptimizerTargetLabel,
+  },
   props: {
     artifactIds: { type: Array as PropType<string[]>, required: true },
   },
@@ -190,13 +184,19 @@ export default defineComponent({
 
     // Launch-option enumeration stays on the main thread: it is the only step
     // needing the loot dataset, which this bundle already loads. See
-    // OPTIMIZER.md.
-    const computeInputs = computed<OptimizerRequestInput | null>(() => {
-      if (!timeBudgetValid.value) return null;
+    // OPTIMIZER.md. It gets its own computed so that retuning the time budget
+    // or the fuel tank reuses the cached enumeration rather than re-walking
+    // that dataset on every keystroke.
+    const launchOptions = computed(() => {
       const launchPeriodSeconds = EFFORT_LAUNCH_PERIOD_SECONDS[missionFilters.value.effort];
       const maxGemCost = missionFilters.value.maxGemCostEnabled ? missionFilters.value.maxGemCost : undefined;
+      return enumerateLaunchOptions(effectiveConfig.value, recipeDag.value, launchPeriodSeconds, maxGemCost);
+    });
+
+    const computeInputs = computed<OptimizerRequestInput | null>(() => {
+      if (!timeBudgetValid.value) return null;
       return {
-        options: enumerateLaunchOptions(effectiveConfig.value, recipeDag.value, launchPeriodSeconds, maxGemCost),
+        options: launchOptions.value,
         recipeDag: recipeDag.value,
         desiredArtifactNodeIds: [...artifactIds.value],
         fuelCapacity: effectiveFuelTankCapacity.value,
@@ -238,8 +238,7 @@ export default defineComponent({
         // this at the worker. Leave the spinner to that solve.
         if (autoCompute.value && computeInputs.value !== input) return;
         lastComputedMaxWaitTimeSeconds.value = budget;
-        // Needs artifact metadata the worker has no reason to carry.
-        computedResults.value = finalizeSolutions(solutions, input.recipeDag);
+        computedResults.value = solutions;
         computing.value = false;
       } catch (err) {
         computeError.value = err instanceof Error ? err.message : String(err);
@@ -251,19 +250,21 @@ export default defineComponent({
     const AUTO_COMPUTE_DEBOUNCE_MS = 250;
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
-    // Reading computeInputs.value HERE is what registers the dependency; if
-    // only the debounced callback read it the effect would track autoCompute
-    // alone.
     watchEffect(() => {
-      const input = computeInputs.value;
       // Every exit must cancel the queued solve first, or a timer armed by the
       // previous run still fires.
       clearTimeout(debounceTimer);
+      // Checked before computeInputs is read, so a manual-compute page does no
+      // solver work at all; flipping this back on re-runs the effect, which
+      // then reads (and so re-tracks) the inputs.
       if (!autoCompute.value) {
         pendingCompute.value = true;
         return;
       }
-      if (!input) {
+      // Reading computeInputs.value HERE is what registers the dependency; if
+      // only the debounced callback read it the effect would track autoCompute
+      // alone.
+      if (!computeInputs.value) {
         computedResults.value = [];
         return;
       }
@@ -274,11 +275,6 @@ export default defineComponent({
       clearTimeout(debounceTimer);
       client?.terminate();
     });
-
-    function artifactDisplay(nodeId: string): { name: string; iconUrl: string } {
-      const props = getArtifactTierPropsFromId(nodeId);
-      return { name: props.name, iconUrl: iconURL('egginc/' + props.icon_filename, 64) };
-    }
 
     const inventoryTrees = computed(() =>
       artifactIds.value.map(nodeId => ({
@@ -294,11 +290,9 @@ export default defineComponent({
         // is stale between a selection change and the next completed solve.
         const targets: TargetView[] = solution.perTarget.map(perTarget => {
           const nodeId = perTarget.nodeId;
-          const display = artifactDisplay(nodeId);
           return {
             nodeId,
-            name: display.name,
-            iconUrl: display.iconUrl,
+            ...artifactDisplay(nodeId),
             perTarget,
             pCraft: legendaryCraftProbabilityOf(solution, nodeId),
             lambda: lambdaFromDropProbability(perTarget.dropProbability),

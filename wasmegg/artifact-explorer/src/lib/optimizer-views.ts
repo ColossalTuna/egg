@@ -1,9 +1,21 @@
 // Flat display helpers derived from an OptimizerSolution; the recipe-tree
 // builders live in optimizer-tree.ts.
 
+import { getArtifactTierPropsFromId, iconURL } from 'lib';
 import type { ei, MissionType } from 'lib';
 import type { CraftChainMetrics, RecipeTreeNode } from './optimizer-tree';
-import type { OptimizerSolution, TargetProbability } from './types';
+import type { DropRow, LaunchSolution, OptimizerSolution, RecipeDAG, TargetProbability } from './types';
+
+export interface ArtifactDisplay {
+  name: string;
+  iconUrl: string;
+}
+
+// The one place the artifact icon path convention lives.
+export function artifactDisplay(nodeId: string, iconSize = 64): ArtifactDisplay {
+  const props = getArtifactTierPropsFromId(nodeId);
+  return { name: props.name, iconUrl: iconURL('egginc/' + props.icon_filename, iconSize) };
+}
 
 export interface MissionLegendaryRow {
   ship: MissionType;
@@ -45,4 +57,53 @@ export function computeMissionLegendaryRows(solution: OptimizerSolution, rootId:
 
 export function legendaryCraftProbabilityOf(solution: OptimizerSolution, rootId: string): number {
   return solution.recipeDag.get(rootId)?.legendaryCraftProbability ?? 0;
+}
+
+function computeExpectedDrops(solution: OptimizerSolution, dag: RecipeDAG): DropRow[] {
+  const totals = new Map<string, number>();
+
+  for (const choice of solution.choiceHistory) {
+    for (const [item, rate] of choice.supplyVector) {
+      totals.set(item, (totals.get(item) ?? 0) + rate * choice.numShipsLaunched);
+    }
+  }
+
+  const rows: DropRow[] = [];
+  for (const [itemId, expected] of totals) {
+    if (expected < 0.05) continue;
+    rows.push({
+      itemId,
+      ...artifactDisplay(itemId),
+      expected,
+      relevant: dag.has(itemId),
+    });
+  }
+  rows.sort((a, b) => {
+    if (a.relevant !== b.relevant) return a.relevant ? -1 : 1;
+    return b.expected - a.expected;
+  });
+  return rows;
+}
+
+function computeFuelByEgg(solution: OptimizerSolution): Map<ei.Egg, number> {
+  const totals = new Map<ei.Egg, number>();
+
+  for (const choice of solution.choiceHistory) {
+    for (const [egg, rate] of choice.actualFuelByEgg) {
+      totals.set(egg, (totals.get(egg) ?? 0) + rate * choice.numShipsLaunched);
+    }
+  }
+
+  return totals;
+}
+
+// Presentation-only fields, applied on whichever thread produced the solution
+// so the worker and synchronous paths hand back identical objects.
+export function finalizeSolutions(solutions: OptimizerSolution[], dag: RecipeDAG): OptimizerSolution[] {
+  for (const solution of solutions) {
+    solution.choiceHistory.sort((a: LaunchSolution, b: LaunchSolution) => a.ship.shipType - b.ship.shipType);
+    solution.expectedDrops = computeExpectedDrops(solution, dag);
+    solution.fuelByEgg = computeFuelByEgg(solution);
+  }
+  return solutions;
 }

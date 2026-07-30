@@ -164,7 +164,22 @@ export function countFeasible(inst: OracleInstance, cap: number): number | null 
 const RANKING_SLOP = 1e-7;
 const MAX_FINALISTS = 8;
 
-export function bruteForceBest(inst: OracleInstance): BruteForceResult {
+interface FinalistSearch {
+  finalists: number[][];
+  feasibleCount: number;
+  evaluatedCount: number;
+}
+
+// Walks every maximal, budget-feasible allocation and keeps the best handful
+// under `rank`. The ranking objective, its slop and its finalist cap stay
+// parameters: the two callers tune those independently, and it is only the
+// packing enumeration -- which they need to agree on exactly -- that is shared.
+function enumerateFinalists(
+  inst: OracleInstance,
+  rank: (allocation: number[]) => number,
+  slop: number,
+  maxFinalists: number
+): FinalistSearch {
   const n = inst.options.length;
   // With a zero-cost option no allocation is ever maximal and the result would
   // silently collapse to bestProbability = 0; fail loudly instead.
@@ -206,14 +221,14 @@ export function bruteForceBest(inst: OracleInstance): BruteForceResult {
       if (!isMaximal(fuelLeft)) {
         return;
       }
-      const score = evaluateAllocationFloat(inst, allocation);
+      const score = rank(allocation);
       evaluatedCount++;
-      if (score > bestFloat + RANKING_SLOP) {
+      if (score > bestFloat + slop) {
         bestFloat = score;
         finalists = [allocation.slice()];
-      } else if (score > bestFloat - RANKING_SLOP) {
+      } else if (score > bestFloat - slop) {
         bestFloat = Math.max(bestFloat, score);
-        if (finalists.length < MAX_FINALISTS) {
+        if (finalists.length < maxFinalists) {
           finalists.push(allocation.slice());
         }
       }
@@ -239,6 +254,18 @@ export function bruteForceBest(inst: OracleInstance): BruteForceResult {
   };
 
   walk(0, inst.fuelCapacity);
+
+  return { finalists, feasibleCount, evaluatedCount };
+}
+
+export function bruteForceBest(inst: OracleInstance): BruteForceResult {
+  const n = inst.options.length;
+  const { finalists, feasibleCount, evaluatedCount } = enumerateFinalists(
+    inst,
+    allocation => evaluateAllocationFloat(inst, allocation),
+    RANKING_SLOP,
+    MAX_FINALISTS
+  );
 
   const best: BruteForceResult = {
     bestScore: -Infinity,
@@ -271,80 +298,17 @@ const RANKING_SLOP_JOINT = 1e-6;
 const MAX_FINALISTS_JOINT = 8;
 
 // Ranks maximal allocations by the JOINT probability, the objective the solver
-// maximizes at every target count. bruteForceBest below runs the same
-// enumeration against the union-style score; the duplication is deliberate, so
-// the two ranking objectives cannot cross-contaminate each other's tuning.
+// maximizes at every target count. bruteForceBest runs the same enumeration
+// against the union-style score, with its own slop and finalist cap so the two
+// rankings cannot cross-contaminate each other's tuning.
 export function bruteForceBestJoint(inst: OracleInstance): BruteForceJointResult {
   const n = inst.options.length;
-  for (const opt of inst.options) {
-    if (opt.actualFuel <= 0 && opt.actualTime <= 0) {
-      throw new Error('option with zero fuel and time cost admits unbounded launches; instance is ill-posed');
-    }
-  }
-
-  const { durations, durIdxByOption } = durationModel(inst);
-  const durCounts = new Array<number>(durations.length).fill(0);
-  const S = inst.timeCapacity;
-
-  const allocation = new Array<number>(n).fill(0);
-  let feasibleCount = 0;
-  let evaluatedCount = 0;
-  let bestFloat = -Infinity;
-  let finalists: number[][] = [];
-
-  const isMaximal = (fuelLeft: number): boolean => {
-    for (let i = 0; i < n; i++) {
-      const opt = inst.options[i];
-      if (opt.actualTime <= 0) continue;
-      if (opt.actualFuel > fuelLeft + EPS) continue;
-      const dj = durIdxByOption[i];
-      durCounts[dj] += 1;
-      const canAdd = packableInto3Bins(durCounts, durations, S);
-      durCounts[dj] -= 1;
-      if (canAdd) return false;
-    }
-    return true;
-  };
-
-  const walk = (i: number, fuelLeft: number) => {
-    if (i === n) {
-      feasibleCount++;
-      if (!isMaximal(fuelLeft)) {
-        return;
-      }
-      const jointProbability = evaluateAllocationJointFloat(inst, allocation);
-      evaluatedCount++;
-      if (jointProbability > bestFloat + RANKING_SLOP_JOINT) {
-        bestFloat = jointProbability;
-        finalists = [allocation.slice()];
-      } else if (jointProbability > bestFloat - RANKING_SLOP_JOINT) {
-        bestFloat = Math.max(bestFloat, jointProbability);
-        if (finalists.length < MAX_FINALISTS_JOINT) {
-          finalists.push(allocation.slice());
-        }
-      }
-      return;
-    }
-    const opt = inst.options[i];
-    const dj = durIdxByOption[i];
-    const base = durCounts[dj];
-    const maxK = Math.min(
-      opt.actualFuel > 0 ? Math.floor(fuelLeft / opt.actualFuel) : Infinity,
-      maxByPacking(opt.actualTime, S)
-    );
-    for (let k = 0; k <= maxK; k++) {
-      durCounts[dj] = base + k;
-      if (k > 0 && !packableInto3Bins(durCounts, durations, S)) {
-        break;
-      }
-      allocation[i] = k;
-      walk(i + 1, fuelLeft - k * opt.actualFuel);
-    }
-    durCounts[dj] = base;
-    allocation[i] = 0;
-  };
-
-  walk(0, inst.fuelCapacity);
+  const { finalists, feasibleCount, evaluatedCount } = enumerateFinalists(
+    inst,
+    allocation => evaluateAllocationJointFloat(inst, allocation),
+    RANKING_SLOP_JOINT,
+    MAX_FINALISTS_JOINT
+  );
 
   const best: BruteForceJointResult = {
     bestJointProbability: 0,

@@ -9,11 +9,6 @@ export interface SimplexFloatResult {
   primal: number[]; // one entry per column of c, in its order
 }
 
-export interface SimplexResult {
-  objective: Frac;
-  primal: Frac[];
-}
-
 // Float twin of simplexMaximize for cheap candidate ranking.
 export function simplexMaximizeFloatFull(A: number[][], b: number[], c: number[]): SimplexFloatResult {
   const EPS = 1e-9;
@@ -94,7 +89,7 @@ export function simplexMaximizeFloat(A: number[][], b: number[], c: number[]): n
   return simplexMaximizeFloatFull(A, b, c).objective;
 }
 
-export function simplexMaximizeFull(A: Frac[][], b: Frac[], c: Frac[]): SimplexResult {
+export function simplexMaximize(A: Frac[][], b: Frac[], c: Frac[]): Frac {
   const m = A.length;
   const n = c.length;
   for (const bi of b) {
@@ -141,11 +136,7 @@ export function simplexMaximizeFull(A: Frac[][], b: Frac[], c: Frac[]): SimplexR
       }
     }
     if (enter === -1) {
-      const primal: Frac[] = new Array(n).fill(Frac.ZERO);
-      for (let i = 0; i < m; i++) {
-        if (basis[i] < n) primal[basis[i]] = T[i][width - 1];
-      }
-      return { objective: T[m][width - 1], primal }; // objective value accumulated in rhs
+      return T[m][width - 1]; // objective value accumulated in rhs
     }
     // Ratio test; Bland tie-break on lowest basis variable index.
     let leave = -1;
@@ -177,8 +168,4 @@ export function simplexMaximizeFull(A: Frac[][], b: Frac[], c: Frac[]): SimplexR
     }
     basis[leave] = enter;
   }
-}
-
-export function simplexMaximize(A: Frac[][], b: Frac[], c: Frac[]): Frac {
-  return simplexMaximizeFull(A, b, c).objective;
 }

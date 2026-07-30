@@ -21,7 +21,7 @@
 
     <div class="px-4 sm:px-0">
       <ArtifactMissionOptimizer :artifact-ids="artifactIds">
-        <template v-for="artifact in artifacts" :key="artifact.id">
+        <template v-for="{ artifact, recursiveIngredients } in artifactSections" :key="artifact.id">
           <template v-if="artifact.recipe">
             <div class="px-4 py-4 sm:px-6 space-y-2">
               <div class="text-sm font-medium text-gray-500">Crafting recipe:</div>
@@ -84,7 +84,7 @@
             <hr />
           </template>
 
-          <template v-if="recursiveIngredientsByArtifact.get(artifact.id)?.length">
+          <template v-if="recursiveIngredients.length">
             <div class="px-4 py-4 sm:px-6 space-y-2">
               <div class="flex items-center space-x-1">
                 <span class="text-sm font-medium text-gray-500">Recursive ingredients</span>
@@ -95,7 +95,7 @@
                 />
               </div>
               <ul class="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2 xl:grid-cols-3">
-                <li v-for="ingredient in recursiveIngredientsByArtifact.get(artifact.id)" :key="ingredient.id">
+                <li v-for="ingredient in recursiveIngredients" :key="ingredient.id">
                   <artifact-name :artifact="ingredient" :show-tier="true" />
                 </li>
               </ul>
@@ -178,15 +178,13 @@ export default defineComponent({
     const artifactIds = computed(() => parseKnownTankIds(rawParam.value));
     const serializedArtifactIds = computed(() => serializeTankIds(artifactIds.value));
     const artifacts = computed(() => artifactIds.value.map(id => id2artifact(id)));
-    // Keep this deep-linkable-single-artifact-compatible: with one id this is
-    // just that artifact's recursive ingredients, same as before.
-    const recursiveIngredientsByArtifact = computed(() => {
-      const map = new Map<string, ReturnType<typeof id2artifact>[]>();
-      for (const artifact of artifacts.value) {
-        map.set(artifact.id, recursiveIngredientsOf(artifact));
-      }
-      return map;
-    });
+    // Paired with its artifact rather than kept in a side Map, so the template
+    // reads each list once instead of looking it up per use. Keep this
+    // deep-linkable-single-artifact-compatible: with one id this is just that
+    // artifact's recursive ingredients, same as before.
+    const artifactSections = computed(() =>
+      artifacts.value.map(artifact => ({ artifact, recursiveIngredients: recursiveIngredientsOf(artifact) }))
+    );
 
     // If every id in the URL was unknown, there's nothing left to plan for.
     // Elsewhere in the app (Main.vue), zero selected artifacts simply means
@@ -203,7 +201,7 @@ export default defineComponent({
       artifactIds,
       serializedArtifactIds,
       artifacts,
-      recursiveIngredientsByArtifact,
+      artifactSections,
       craftingPriceFormulaImage,
       iconURL,
     };

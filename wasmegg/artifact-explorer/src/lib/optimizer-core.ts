@@ -39,6 +39,9 @@ interface EvalContext {
   innerLp: JointInnerLp;
   evalScoreAt: EvalFn; // returns the tangent-approximated F, not a probability
   baseScore: number;
+  // Options surviving pairwise dominance. Budget-independent, so it is built
+  // once here and shared by the relaxed and floor solves.
+  allSurvivors: number[];
 }
 
 interface CoreResult {
@@ -127,27 +130,42 @@ function buildEvalContext(
 
   const MAX_EVAL_CACHE = 200_000;
   const evalCache = new Map<string, number>();
-  const keyPairs: [number, number][] = [];
+  // Reused scratch for the cache key: an allocation names option indices, so it
+  // can never hold more entries than there are options. Keeping these as typed
+  // arrays avoids a per-entry tuple on every call, cache hit or miss.
+  const keyIdx = new Int32Array(options.length);
+  const keyMul = new Float64Array(options.length);
 
   const evalScoreAt: EvalFn = multipliers => {
-    // The sort is load-bearing: callers pass the same allocation in different
-    // orders, and an unsorted key would miss the cache on every one of them.
-    keyPairs.length = 0;
+    // The ordering is load-bearing: callers pass the same allocation in
+    // different orders, and an unsorted key would miss the cache on every one
+    // of them. Insertion sort — allocations hold a handful of entries, and it
+    // beats Array.sort's comparator closure at this size.
+    let n = 0;
     for (const [idx, k] of multipliers) {
       if (k <= 0) continue;
-      keyPairs.push([idx, k]);
+      let j = n - 1;
+      while (j >= 0 && keyIdx[j] > idx) {
+        keyIdx[j + 1] = keyIdx[j];
+        keyMul[j + 1] = keyMul[j];
+        j--;
+      }
+      keyIdx[j + 1] = idx;
+      keyMul[j + 1] = k;
+      n++;
     }
-    keyPairs.sort((a, b) => a[0] - b[0]);
     let key = '';
-    for (const [idx, k] of keyPairs) {
-      key += idx + ':' + k + ',';
+    for (let e = 0; e < n; e++) {
+      key += keyIdx[e] + ':' + keyMul[e] + ',';
     }
     const cached = evalCache.get(key);
     if (cached !== undefined) return cached;
 
     bEval.set(bBase);
     lambdaEval.fill(0);
-    for (const [idx, k] of keyPairs) {
+    for (let e = 0; e < n; e++) {
+      const idx = keyIdx[e];
+      const k = keyMul[e];
       const rows = optYieldRows[idx];
       const rates = optYieldRates[idx];
       for (let j = 0; j < rows.length; j++) {
@@ -166,7 +184,24 @@ function buildEvalContext(
 
   const baseScore = innerLp.solveScore(bBase, new Float64Array(targets.length));
 
-  return { options, recipeDag, targets, baseYield, QByTarget, innerLp, evalScoreAt, baseScore };
+  const survives = new Uint8Array(options.length).fill(1);
+  const targetSet = new Set(targets);
+  for (let i = 0; i < options.length; i++) {
+    if (!survives[i]) continue;
+    for (let j = 0; j < options.length; j++) {
+      if (i === j || !survives[j]) continue;
+      if (dominates(options[j], options[i], targetSet)) {
+        survives[i] = 0;
+        break;
+      }
+    }
+  }
+  const allSurvivors: number[] = [];
+  for (let i = 0; i < options.length; i++) {
+    if (survives[i]) allSurvivors.push(i);
+  }
+
+  return { options, recipeDag, targets, baseYield, QByTarget, innerLp, evalScoreAt, baseScore, allSurvivors };
 }
 
 export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
@@ -236,7 +271,7 @@ export function optimizeFull(args: OptimizeArgs): OptimizerSolution {
 // Single-time-budget integer search. The caller decides whether S is 3S
 // (relaxed) or S (floor).
 function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): CoreResult {
-  const { options, evalScoreAt, baseScore, innerLp, baseYield, targets, recipeDag, QByTarget } = ctx;
+  const { options, evalScoreAt, baseScore, innerLp, baseYield, targets, QByTarget, allSurvivors } = ctx;
 
   let bestScore = baseScore;
   let bestAlloc: Map<number, number> = new Map();
@@ -248,25 +283,10 @@ function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): Co
     }
   };
 
+  // Local, because the dual filter below prunes against THIS budget; the
+  // shared dominance result in ctx must stay intact for the other solve.
   const survives = new Uint8Array(options.length);
-  for (let i = 0; i < options.length; i++) survives[i] = 1;
-
-  const targetSet = new Set(targets);
-  for (let i = 0; i < options.length; i++) {
-    if (!survives[i]) continue;
-    for (let j = 0; j < options.length; j++) {
-      if (i === j || !survives[j]) continue;
-      if (dominates(options[j], options[i], targetSet)) {
-        survives[i] = 0;
-        break;
-      }
-    }
-  }
-
-  const allSurvivors: number[] = [];
-  for (let i = 0; i < options.length; i++) {
-    if (survives[i]) allSurvivors.push(i);
-  }
+  for (const i of allSurvivors) survives[i] = 1;
 
   // Single-option sweep; scoreAlone feeds the triple scan's top-K ranking.
   const scoreAlone = new Float64Array(options.length).fill(-Infinity);
@@ -286,7 +306,7 @@ function coreSearch(ctx: EvalContext, R: number, S: number, epsilon: number): Co
     tryUpdateAllocations(a, new Map([[idx, k_i]]));
   }
 
-  const lp = solveRelaxationLp(allSurvivors, options, innerLp, R, S, baseYield, targets, recipeDag, QByTarget);
+  const lp = solveRelaxationLp(allSurvivors, options, innerLp, R, S, baseYield, targets, QByTarget);
   const lpSupport = new Set<number>(lp.support);
 
   // Dual filter. Deliberately aggressive: it discards cheap budget-fillers,
@@ -639,34 +659,46 @@ function assembleSolution(baseYield: Map<string, number>, bestAlloc: Map<number,
   return { finalYieldVector, totalLegendary, fuelUsed, fuelByEgg, choiceHistory };
 }
 
+const YIELD_WORSE = -1;
+const YIELD_TIED = 0;
+const YIELD_STRICT = 1;
+
+// Compares j's yields against i's over the keys of both. `only`, when given,
+// restricts the comparison to those keys (legendary rows are per target).
+// Returns YIELD_WORSE as soon as j falls short anywhere, so callers can bail.
+function compareYields(
+  jv: ReadonlyMap<string, number>,
+  iv: ReadonlyMap<string, number>,
+  only: Set<string> | null
+): number {
+  let strict = false;
+  for (const [n, vi] of iv) {
+    if (only && !only.has(n)) continue;
+    const vj = jv.get(n) ?? 0;
+    if (vj < vi - ZERO_TOL) return YIELD_WORSE;
+    if (vj > vi + ZERO_TOL) strict = true;
+  }
+  if (strict) return YIELD_STRICT;
+  // j producing something i lacks entirely also counts as strict
+  for (const [n, vj] of jv) {
+    if (only && !only.has(n)) continue;
+    if (vj > ZERO_TOL && !iv.has(n)) return YIELD_STRICT;
+  }
+  return YIELD_TIED;
+}
+
 // j dominates i when it costs no more on either budget and yields at least as
 // much of everything, strictly better somewhere. Legendary drops are compared
 // per target and never pooled; non-target legendaries are ignored entirely.
 function dominates(j: LaunchOption, i: LaunchOption, targetSet: Set<string>): boolean {
   if (j.actualFuel > i.actualFuel + ZERO_TOL) return false;
   if (j.actualTime > i.actualTime + ZERO_TOL) return false;
-  let strictYield = false;
-  for (const [n, vi] of i.yieldVector) {
-    const vj = j.yieldVector.get(n) ?? 0;
-    if (vj < vi - ZERO_TOL) return false;
-    if (vj > vi + ZERO_TOL) strictYield = true;
-  }
-  // j producing an ingredient i lacks entirely also counts as strict
-  for (const [n, vj] of j.yieldVector) {
-    if (vj > ZERO_TOL && !i.yieldVector.has(n)) strictYield = true;
-  }
-  for (const [t, li] of i.legendaryYieldVector) {
-    if (!targetSet.has(t)) continue;
-    const lj = j.legendaryYieldVector.get(t) ?? 0;
-    if (lj < li - ZERO_TOL) return false;
-    if (lj > li + ZERO_TOL) strictYield = true;
-  }
-  for (const [t, lj] of j.legendaryYieldVector) {
-    if (!targetSet.has(t)) continue;
-    if (lj > ZERO_TOL && !i.legendaryYieldVector.has(t)) strictYield = true;
-  }
+  const yields = compareYields(j.yieldVector, i.yieldVector, null);
+  if (yields === YIELD_WORSE) return false;
+  const legendary = compareYields(j.legendaryYieldVector, i.legendaryYieldVector, targetSet);
+  if (legendary === YIELD_WORSE) return false;
   const strictCost = j.actualFuel < i.actualFuel - ZERO_TOL || j.actualTime < i.actualTime - ZERO_TOL;
-  return strictCost || strictYield;
+  return strictCost || yields === YIELD_STRICT || legendary === YIELD_STRICT;
 }
 
 // Greedy repair over the FULL option list, pruned options included. Mutates
@@ -908,7 +940,6 @@ function solveRelaxationLp(
   S: number,
   baseYield: Map<string, number>,
   targets: string[],
-  recipeDag: RecipeDAG,
   QByTarget: Map<string, number>
 ): RelaxationResult {
   const nx = survivors.length;
@@ -947,50 +978,39 @@ function solveRelaxationLp(
 
   // Row order, which the dual extraction below depends on: rows 0/1 are R/S,
   // then one conservation row per consumed node, then the per-target tangents.
-  const parentsOf = new Map<string, { parent: string; q: number }[]>();
-  for (const [pid, pnode] of recipeDag) {
-    if (pnode.isLeaf) continue;
-    for (const child of pnode.children) {
-      let arr = parentsOf.get(child.nodeId);
-      if (!arr) {
-        arr = [];
-        parentsOf.set(child.nodeId, arr);
-      }
-      arr.push({ parent: pid, q: child.quantity });
-    }
-  }
-
-  const constraintRowNode: string[] = [];
-  for (const nodeId of recipeDag.keys()) {
-    const parents = parentsOf.get(nodeId);
-    if (!parents || parents.length === 0) continue;
-    const row = new Float64Array(totalVars);
-    for (const { parent, q } of parents) {
-      const pIdx = innerLp.varIndex.get(parent);
-      if (pIdx !== undefined) row[nx + pIdx] += q;
-    }
-    const myIdx = innerLp.varIndex.get(nodeId);
-    if (myIdx !== undefined) row[nx + myIdx] -= 1;
+  // The conservation block is the inner LP's own polytope, widened by the nx
+  // option columns, so the two can never disagree on the parent relation.
+  const constraintRowNode = innerLp.polytope.constraintNodes;
+  const conservationRows = innerLp.polytope.buildRows(totalVars, nx);
+  for (let r = 0; r < constraintRowNode.length; r++) {
+    const nodeId = constraintRowNode[r];
+    const row = conservationRows[r];
     for (let s = 0; s < nx; s++) {
       const v = options[survivors[s]].yieldVector.get(nodeId) ?? 0;
       if (v) row[s] -= v;
     }
     A.push(row);
     bArr.push(baseYield.get(nodeId) ?? 0);
-    constraintRowNode.push(nodeId);
   }
 
+  const nTangents = JOINT_TANGENTS.length;
+  const legRates = new Float64Array(nx);
   for (let ti = 0; ti < nt; ti++) {
     const t = targets[ti];
     const q = QByTarget.get(t) ?? 0;
     const pIdx = innerLp.varIndex.get(t);
-    for (let k = 0; k < JOINT_TANGENTS.length; k++) {
+    // Hoisted out of the tangent loop: the per-option legendary rate for this
+    // target is the same at every breakpoint.
+    for (let s = 0; s < nx; s++) {
+      legRates[s] = options[survivors[s]].legendaryYieldVector.get(t) ?? 0;
+    }
+    for (let k = 0; k < nTangents; k++) {
+      const beta = JOINT_TANGENTS[k].beta;
       const row = new Float64Array(totalVars);
       row[zBase + ti] = 1;
-      if (pIdx !== undefined && q !== 0) row[nx + pIdx] = -JOINT_TANGENTS[k].beta * q;
+      if (pIdx !== undefined && q !== 0) row[nx + pIdx] = -beta * q;
       for (let s = 0; s < nx; s++) {
-        const lv = options[survivors[s]].legendaryYieldVector.get(t) ?? 0;
-        if (lv) row[s] -= JOINT_TANGENTS[k].beta * lv;
+        if (legRates[s]) row[s] -= beta * legRates[s];
       }
       A.push(row);
       bArr.push(JOINT_TANGENTS[k].alpha + EPIGRAPH_SHIFT);

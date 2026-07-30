@@ -5,12 +5,12 @@ export * from './optimizer-views';
 export * from './optimizer-tree';
 export * from './tank-ids';
 
-import type { DAGNode, LaunchSolution, OptimizerConfig, OptimizerSolution, DropRow, RecipeDAG } from './types';
+import type { DAGNode, OptimizerConfig, OptimizerSolution, RecipeDAG } from './types';
 import { enumerateLaunchOptions, generateRecipeDag } from './phases';
 import { optimizeFull } from './optimizer-core';
+import { buildConservationPolytope } from './value-function';
+import { finalizeSolutions } from './optimizer-views';
 import { ei, getArtifactTierPropsFromId, getCraftingInfoFromLevel, Inventory, InventoryItem, ShipsConfig } from 'lib';
-
-import { iconURL } from 'lib';
 
 // An undefined previousCraftsOverride means "read each target's own crafted
 // count from the save"; a defined one applies to every target.
@@ -56,13 +56,10 @@ export function computeBaseYield(
   const baseYield = new Map<string, number>();
 
   if (playerInventory) {
-    // Must match compileInnerLp's parent relation exactly.
-    const hasParent = new Set<string>();
-    for (const node of recipeDag.values()) {
-      if (node.isLeaf) continue;
-      for (const child of node.children) hasParent.add(child.nodeId);
-    }
-    const unconsumedTargets = new Set(desiredArtifactNodeIds.filter(id => !hasParent.has(id)));
+    // The nodes carrying a conservation row are exactly the consumed ones, so
+    // this reads the LP's own parent relation instead of re-deriving it.
+    const consumed = new Set(buildConservationPolytope(recipeDag).constraintNodes);
+    const unconsumedTargets = new Set(desiredArtifactNodeIds.filter(id => !consumed.has(id)));
 
     for (const nodeId of recipeDag.keys()) {
       if (unconsumedTargets.has(nodeId)) continue;
@@ -74,57 +71,6 @@ export function computeBaseYield(
   }
 
   return baseYield;
-}
-
-function computeExpectedDrops(solution: OptimizerSolution, dag: Map<string, DAGNode>): DropRow[] {
-  const totals = new Map<string, number>();
-
-  for (const choice of solution.choiceHistory) {
-    for (const [item, rate] of choice.supplyVector) {
-      totals.set(item, (totals.get(item) ?? 0) + rate * choice.numShipsLaunched);
-    }
-  }
-
-  const rows: DropRow[] = [];
-  for (const [itemId, expected] of totals) {
-    if (expected < 0.05) continue;
-    const props = getArtifactTierPropsFromId(itemId);
-    rows.push({
-      itemId,
-      name: props.name,
-      iconUrl: iconURL('egginc/' + props.icon_filename, 64),
-      expected,
-      relevant: dag.has(itemId),
-    });
-  }
-  rows.sort((a, b) => {
-    if (a.relevant !== b.relevant) return a.relevant ? -1 : 1;
-    return b.expected - a.expected;
-  });
-  return rows;
-}
-
-function computeFuelByEgg(solution: OptimizerSolution): Map<ei.Egg, number> {
-  const totals = new Map();
-
-  for (const choice of solution.choiceHistory) {
-    for (const [egg, rate] of choice.actualFuelByEgg) {
-      totals.set(egg, (totals.get(egg) ?? 0) + rate * choice.numShipsLaunched);
-    }
-  }
-
-  return totals;
-}
-
-// Presentation-only fields. The worker path applies this on the main thread
-// afterwards, so both it and optimize() below produce identical solutions.
-export function finalizeSolutions(solutions: OptimizerSolution[], dag: RecipeDAG): OptimizerSolution[] {
-  for (const solution of solutions) {
-    solution.choiceHistory.sort((a: LaunchSolution, b: LaunchSolution) => a.ship.shipType - b.ship.shipType);
-    solution.expectedDrops = computeExpectedDrops(solution, dag);
-    solution.fuelByEgg = computeFuelByEgg(solution);
-  }
-  return solutions;
 }
 
 // Returns an array though today it's always one solution.

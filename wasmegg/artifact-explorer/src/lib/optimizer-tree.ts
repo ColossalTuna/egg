@@ -3,7 +3,8 @@
 // which is what keeps the tree finite over a cyclic DAG.
 
 import type { Inventory } from 'lib';
-import { getArtifactTierPropsFromId, iconURL } from 'lib';
+import { getArtifactTierPropsFromId } from 'lib';
+import { artifactDisplay } from './optimizer-views';
 import type { OptimizerSolution, RecipeDAG } from './types';
 
 export interface RecipeTreeNode<M> {
@@ -68,7 +69,6 @@ export function buildRecipeTree<M>(
 
   function build(nodeId: string, depth: number, qtyPerParentCraft: number, parentId: string | null): RecipeTreeNode<M> {
     const node = dag.get(nodeId)!;
-    const props = getArtifactTierPropsFromId(nodeId);
     const isCanonical =
       depth === canonical.minDepth.get(nodeId) && parentId === (canonical.canonicalParent.get(nodeId) ?? null);
     const isDuplicate = !isCanonical;
@@ -84,8 +84,7 @@ export function buildRecipeTree<M>(
 
     return {
       nodeId,
-      name: props.name,
-      iconUrl: iconURL('egginc/' + props.icon_filename, 64),
+      ...artifactDisplay(nodeId),
       depth,
       qtyPerParentCraft,
       isLeaf: node.isLeaf,

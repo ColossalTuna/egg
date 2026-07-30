@@ -6,6 +6,7 @@ import {
   type OptimizerRequest,
   type OptimizerResponse,
 } from './optimizer-worker-protocol';
+import { finalizeSolutions } from './optimizer-views';
 import type { LaunchOption, OptimizerSolution, RecipeDAG } from './types';
 
 export interface OptimizerRequestInput {
@@ -27,7 +28,13 @@ export interface OptimizerClient {
 export function createOptimizerClient(): OptimizerClient {
   let nextId = 1;
   let latestId = 0;
-  const pending = new Map<number, { resolve(v: OptimizerSolution[] | null): void; reject(e: Error): void }>();
+  // The DAG is held per request so the reply can be finalized here: callers
+  // get the same fully-populated solutions that the synchronous optimize()
+  // returns, rather than having to remember to finalize themselves.
+  const pending = new Map<
+    number,
+    { resolve(v: OptimizerSolution[] | null): void; reject(e: Error): void; recipeDag: RecipeDAG }
+  >();
 
   // Request ids keep counting across workers, so a reply can never be mistaken
   // for one destined to a different generation of the same client.
@@ -48,7 +55,7 @@ export function createOptimizerClient(): OptimizerClient {
         entry.resolve(null); // superseded
         return;
       }
-      if (res.ok) entry.resolve(solutionsFromWire(res.solutions));
+      if (res.ok) entry.resolve(finalizeSolutions(solutionsFromWire(res.solutions), entry.recipeDag));
       else entry.reject(new Error(res.error));
     };
     w.onerror = e => {
@@ -73,7 +80,7 @@ export function createOptimizerClient(): OptimizerClient {
       latestId = id;
       const request: OptimizerRequest = { ...input, id, options: optionsToWire(input.options) };
       return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
+        pending.set(id, { resolve, reject, recipeDag: input.recipeDag });
         w.postMessage(request);
       });
     },

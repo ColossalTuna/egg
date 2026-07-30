@@ -21,7 +21,85 @@ export interface InnerLp {
   readonly targets: readonly string[];
   readonly weightByTarget: ReadonlyMap<string, number>;
 
-  solve(inventory: Map<string, number>): AlphaResult;
+  // `weights` re-aims the objective without recompiling the polytope; targets
+  // absent from it get weight 1, as at compile time.
+  solve(inventory: Map<string, number>, weights?: ReadonlyMap<string, number>): AlphaResult;
+}
+
+export interface ParentEdge {
+  parent: string;
+  q: number;
+}
+
+// The recipe-conservation polytope, shared by every LP built over the DAG.
+// Owning it in one place is what keeps `compileInnerLp`, `compileJointInnerLp`,
+// `solveRelaxationLp` and `computeBaseYield` agreeing on which nodes are
+// consumed; they used to derive it separately and were coupled only by comment.
+export interface ConservationPolytope {
+  readonly nonLeafNodes: readonly string[]; // decision variable order
+  readonly constraintNodes: readonly string[]; // constraint row order
+  readonly varIndex: ReadonlyMap<string, number>;
+  readonly parentsOf: ReadonlyMap<string, ParentEdge[]>;
+
+  // One row per constraint node, in `constraintNodes` order:
+  //   sum_parents q * p_parent - (p_n if non-leaf) <= inventory[n]
+  // `width` may exceed the variable count so callers can append their own
+  // columns; `varOffset` shifts the node columns for callers that prepend some.
+  buildRows(width?: number, varOffset?: number): Float64Array[];
+}
+
+export function buildConservationPolytope(recipeDag: RecipeDAG): ConservationPolytope {
+  const nonLeafNodes: string[] = [];
+  const varIndex = new Map<string, number>();
+  for (const [id, node] of recipeDag) {
+    if (!node.isLeaf) {
+      varIndex.set(id, nonLeafNodes.length);
+      nonLeafNodes.push(id);
+    }
+  }
+
+  const parentsOf = new Map<string, ParentEdge[]>();
+  for (const [parentId, parentNode] of recipeDag) {
+    if (parentNode.isLeaf) continue;
+    for (const child of parentNode.children) {
+      let parents = parentsOf.get(child.nodeId);
+      if (!parents) {
+        parents = [];
+        parentsOf.set(child.nodeId, parents);
+      }
+      parents.push({ parent: parentId, q: child.quantity });
+    }
+  }
+
+  const constraintNodes: string[] = [];
+  for (const id of recipeDag.keys()) {
+    const parents = parentsOf.get(id);
+    if (!parents || parents.length === 0) continue;
+    constraintNodes.push(id);
+  }
+
+  return {
+    nonLeafNodes,
+    constraintNodes,
+    varIndex,
+    parentsOf,
+
+    buildRows(width = nonLeafNodes.length, varOffset = 0): Float64Array[] {
+      const rows: Float64Array[] = new Array(constraintNodes.length);
+      for (let i = 0; i < constraintNodes.length; i++) {
+        const id = constraintNodes[i];
+        const row = new Float64Array(width);
+        for (const { parent, q } of parentsOf.get(id) ?? []) {
+          const idx = varIndex.get(parent);
+          if (idx !== undefined) row[varOffset + idx] += q;
+        }
+        const self = varIndex.get(id);
+        if (self !== undefined) row[varOffset + self] -= 1;
+        rows[i] = row;
+      }
+      return rows;
+    },
+  };
 }
 
 // Targets absent from `weights` get weight 1.
@@ -36,14 +114,7 @@ export function compileInnerLp(
   const targets = desiredArtifactNodeIds;
   const primary = targets[0];
 
-  const nonLeafNodes: string[] = [];
-  const varIndex = new Map<string, number>();
-  for (const [id, node] of recipeDag) {
-    if (!node.isLeaf) {
-      varIndex.set(id, nonLeafNodes.length);
-      nonLeafNodes.push(id);
-    }
-  }
+  const { nonLeafNodes, constraintNodes, varIndex, buildRows } = buildConservationPolytope(recipeDag);
 
   // A leaf target contributes no objective term; its legendary chance is
   // drops-only.
@@ -56,46 +127,13 @@ export function compileInnerLp(
     return makeTrivialLp(primary, targets, weightByTarget);
   }
 
-  const parentsOf = new Map<string, { parent: string; q: number }[]>();
-  for (const [parentId, parentNode] of recipeDag) {
-    if (parentNode.isLeaf) continue;
-    for (const child of parentNode.children) {
-      let parents = parentsOf.get(child.nodeId);
-      if (!parents) {
-        parents = [];
-        parentsOf.set(child.nodeId, parents);
-      }
-      parents.push({ parent: parentId, q: child.quantity });
-    }
-  }
-
-  // One constraint per consumed node:
-  //   sum_parents q * p_parent - (p_n if non-leaf) <= inventory[n]
-  const constraintNodes: string[] = [];
-  for (const id of recipeDag.keys()) {
-    const parents = parentsOf.get(id);
-    if (!parents || parents.length === 0) continue;
-    constraintNodes.push(id);
-  }
-
   const nVars = nonLeafNodes.length;
   const nCons = constraintNodes.length;
 
-  const c = new Float64Array(nVars);
+  let c = new Float64Array(nVars);
   for (const [t, w] of weightByTarget) c[varIndex.get(t)!] = w;
 
-  const A: Float64Array[] = new Array(nCons);
-  for (let i = 0; i < nCons; i++) {
-    const id = constraintNodes[i];
-    const row = new Float64Array(nVars);
-    const parents = parentsOf.get(id) ?? [];
-    for (const { parent, q } of parents) {
-      const idx = varIndex.get(parent);
-      if (idx !== undefined) row[idx] += q;
-    }
-    if (varIndex.has(id)) row[varIndex.get(id)!] -= 1;
-    A[i] = row;
-  }
+  const A = buildRows();
 
   const bScratch = new Float64Array(nCons);
 
@@ -107,7 +145,14 @@ export function compileInnerLp(
     targets,
     weightByTarget,
 
-    solve(inventory: Map<string, number>): AlphaResult {
+    solve(inventory: Map<string, number>, reweights?: ReadonlyMap<string, number>): AlphaResult {
+      if (reweights) {
+        // A FRESH array, never a mutation in place: solveLp caches its tableau
+        // against the identity of `c`, so rewriting the existing one would be
+        // silently ignored and the previous objective reused.
+        c = new Float64Array(nVars);
+        for (const t of weightByTarget.keys()) c[varIndex.get(t)!] = reweights.get(t) ?? 1;
+      }
       for (let i = 0; i < nCons; i++) {
         const v = inventory.get(constraintNodes[i]);
         bScratch[i] = v !== undefined && v > 0 ? v : 0;
@@ -145,6 +190,7 @@ function makeTrivialLp(primary: string, targets: readonly string[], weightByTarg
     targets,
     weightByTarget,
     solve(inventory: Map<string, number>): AlphaResult {
+      // No craftable target, so the objective weights cannot change anything.
       const v = inventory.get(primary) ?? 0;
       return { alpha: v > 0 ? v : 0, score: 0, craftByTarget: new Map(), duals: new Map(), primalByNode: new Map() };
     },
@@ -233,6 +279,9 @@ export interface JointInnerLp {
   readonly constraintNodes: readonly string[]; // conservation rows only, in b's row order
   readonly varIndex: ReadonlyMap<string, number>;
   readonly targets: readonly string[];
+  // Exposed so the outer relaxation reuses this exact polytope rather than
+  // re-deriving one that has to match it.
+  readonly polytope: ConservationPolytope;
 
   // b is the inventory RHS (constraintNodes order), lambda the per-target
   // direct-legendary offset (targets order). Returns the tangent OVER-estimate
@@ -252,83 +301,43 @@ export function compileJointInnerLp(
   const targets = desiredArtifactNodeIds;
   const nt = targets.length;
 
-  const nonLeafNodes: string[] = [];
-  const varIndex = new Map<string, number>();
-  for (const [id, node] of recipeDag) {
-    if (!node.isLeaf) {
-      varIndex.set(id, nonLeafNodes.length);
-      nonLeafNodes.push(id);
-    }
-  }
-
-  const parentsOf = new Map<string, { parent: string; q: number }[]>();
-  for (const [parentId, parentNode] of recipeDag) {
-    if (parentNode.isLeaf) continue;
-    for (const child of parentNode.children) {
-      let parents = parentsOf.get(child.nodeId);
-      if (!parents) {
-        parents = [];
-        parentsOf.set(child.nodeId, parents);
-      }
-      parents.push({ parent: parentId, q: child.quantity });
-    }
-  }
-
-  const constraintNodes: string[] = [];
-  for (const id of recipeDag.keys()) {
-    const parents = parentsOf.get(id);
-    if (!parents || parents.length === 0) continue;
-    constraintNodes.push(id);
-  }
+  const polytope = buildConservationPolytope(recipeDag);
+  const { nonLeafNodes, constraintNodes, varIndex } = polytope;
 
   const nVars = nonLeafNodes.length;
   const nCons = constraintNodes.length;
   const totalVars = nVars + nt;
   const zBase = nVars;
+  const nTangents = JOINT_TANGENTS.length;
 
   const c = new Float64Array(totalVars);
   for (let i = 0; i < nt; i++) c[zBase + i] = 1;
 
-  const A: Float64Array[] = [];
-  for (let i = 0; i < nCons; i++) {
-    const id = constraintNodes[i];
-    const row = new Float64Array(totalVars);
-    const parents = parentsOf.get(id) ?? [];
-    for (const { parent, q } of parents) {
-      const idx = varIndex.get(parent);
-      if (idx !== undefined) row[idx] += q;
-    }
-    if (varIndex.has(id)) row[varIndex.get(id)!] -= 1;
-    A.push(row);
-  }
+  const A = polytope.buildRows(totalVars);
 
-  // One row per (target, tangent breakpoint): z_T - beta_k*Q_T*craft_T <=
-  // alpha_k + EPIGRAPH_SHIFT + beta_k*lambda_T, the lambda term folded into b
-  // at solve time.
-  const rowTargetIdx: number[] = [];
-  const rowTangentIdx: number[] = [];
+  // One row per (target, tangent breakpoint), in `ti`-major order: z_T -
+  // beta_k*Q_T*craft_T <= alpha_k + EPIGRAPH_SHIFT + beta_k*lambda_T, the
+  // lambda term folded into b at solve time.
   for (let ti = 0; ti < nt; ti++) {
     const t = targets[ti];
     const q = QByTarget.get(t) ?? 0;
     const pIdx = varIndex.get(t);
-    for (let k = 0; k < JOINT_TANGENTS.length; k++) {
+    for (let k = 0; k < nTangents; k++) {
       const row = new Float64Array(totalVars);
       row[zBase + ti] = 1;
       if (pIdx !== undefined && q !== 0) row[pIdx] = -JOINT_TANGENTS[k].beta * q;
       A.push(row);
-      rowTargetIdx.push(ti);
-      rowTangentIdx.push(k);
     }
   }
 
-  const nRows = A.length;
-  const bScratch = new Float64Array(nRows);
+  const bScratch = new Float64Array(A.length);
 
   function fillEpigraphB(lambda: Float64Array) {
-    for (let r = 0; r < rowTargetIdx.length; r++) {
-      const ti = rowTargetIdx[r];
-      const k = rowTangentIdx[r];
-      bScratch[nCons + r] = JOINT_TANGENTS[k].alpha + EPIGRAPH_SHIFT + JOINT_TANGENTS[k].beta * lambda[ti];
+    for (let ti = 0; ti < nt; ti++) {
+      const base = nCons + ti * nTangents;
+      for (let k = 0; k < nTangents; k++) {
+        bScratch[base + k] = JOINT_TANGENTS[k].alpha + EPIGRAPH_SHIFT + JOINT_TANGENTS[k].beta * lambda[ti];
+      }
     }
   }
 
@@ -337,6 +346,7 @@ export function compileJointInnerLp(
     constraintNodes,
     varIndex,
     targets,
+    polytope,
 
     solveScore(b: Float64Array, lambda: Float64Array): number {
       for (let i = 0; i < nCons; i++) bScratch[i] = b[i] ?? 0;
@@ -371,8 +381,9 @@ export function compileJointInnerLp(
 }
 
 // argmax over t in [0, 1] of a concave function. Robust to phi returning
-// -Infinity on part of the interval.
-function goldenSectionArgmaxZeroToOne(phi: (t: number) => number, iters = 100): number {
+// -Infinity on part of the interval. 60 iterations shrink the bracket below
+// double precision on [0, 1]; more is pure cost.
+function goldenSectionArgmaxZeroToOne(phi: (t: number) => number, iters = 60): number {
   const GOLDEN = (Math.sqrt(5) - 1) / 2;
   let a = 0;
   let b = 1;
@@ -420,7 +431,6 @@ export function refineJointCraftSplit(
   const lam = (t: string) => lambda.get(t) ?? 0;
   const G_PRIME_CAP = 1e12; // guards g'(s) -> Infinity as s -> 0
   const gPrime = (s: number) => (s <= 0 ? G_PRIME_CAP : Math.min(1 / Math.expm1(s), G_PRIME_CAP));
-  const g = (s: number) => (s > 0 ? Math.log(-Math.expm1(-s)) : -Infinity);
 
   let currentPrimal = new Map(seed.primalByNode);
   let currentCraft = new Map<string, number>();
@@ -431,6 +441,11 @@ export function refineJointCraftSplit(
   const TIGHT = 1e-11; // convergence when no target's score moves more than this
   const MAX_ITERS = 100;
 
+  // Only the objective changes between iterations, so the polytope is compiled
+  // once and re-aimed via `solve`'s weights argument.
+  const lp = compileInnerLp(recipeDag, craftTargets, undefined);
+  const nonLeafNodes = lp.nonLeafNodes;
+
   for (let iter = 0; iter < MAX_ITERS; iter++) {
     // weight_T = g'(score_T)*Q_T; the Q_T factor is the chain rule and dropping
     // it linearizes against the wrong gradient when targets differ in Q.
@@ -439,16 +454,14 @@ export function refineJointCraftSplit(
       const s = Q(t) * (currentCraft.get(t) ?? 0) + lam(t);
       weights.set(t, gPrime(s) * Q(t));
     }
-    const lp = compileInnerLp(recipeDag, [...craftTargets], weights);
-    const nonLeafNodes = lp.nonLeafNodes;
-    const vertex = lp.solve(inventory);
+    const vertex = lp.solve(inventory, weights);
 
     const s0 = craftTargets.map(t => Q(t) * (currentCraft.get(t) ?? 0) + lam(t));
     const s1 = craftTargets.map(t => Q(t) * (vertex.craftByTarget.get(t) ?? 0) + lam(t));
     const phi = (t: number) => {
       let sum = 0;
       for (let i = 0; i < craftTargets.length; i++) {
-        const gv = g(s0[i] + t * (s1[i] - s0[i]));
+        const gv = exactLogHitProbability(s0[i] + t * (s1[i] - s0[i]));
         if (gv === -Infinity) return -Infinity;
         sum += gv;
       }

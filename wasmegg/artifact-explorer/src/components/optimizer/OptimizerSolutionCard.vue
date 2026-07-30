@@ -2,20 +2,17 @@
   <div class="space-y-1 text-sm">
     <div v-if="multi" class="text-lg font-semibold text-green-700">
       <span v-tippy="jointTooltip" class="cursor-help border-b border-dotted border-green-400/60">
-        Joint chance of getting all {{ rows.length }} artifacts
+        Joint chance of getting all {{ targets.length }} artifacts
       </span>
       : {{ (solution.jointProbability * 100).toFixed(2) }}%
     </div>
 
     <div
-      v-for="row in rows"
+      v-for="row in targets"
       :key="'target-' + row.nodeId"
       :class="multi ? 'mt-2 pl-2 border-l-2 border-green-100' : ''"
     >
-      <div v-if="multi" class="flex items-center gap-1.5 font-medium text-gray-700">
-        <img :src="row.iconUrl" class="h-4 w-4 flex-shrink-0" alt="" />
-        <span>{{ row.name }}</span>
-      </div>
+      <optimizer-target-label v-if="multi" :name="row.name" :icon-url="row.iconUrl" />
       <div :class="multi ? 'text-sm text-green-700 pl-3' : 'text-lg font-semibold text-green-700'">
         <span v-tippy="chanceTooltip" class="cursor-help border-b border-dotted border-green-400/60">
           Chance of a legendary
@@ -66,7 +63,7 @@
     <optimizer-expected-drops :drops="solution.expectedDrops" />
 
     <optimizer-probability-breakdown
-      v-for="row in rows"
+      v-for="row in targets"
       :key="'breakdown-' + row.nodeId"
       :heading="multi ? row.name : ''"
       :best-probability="row.perTarget.bestProbability"
@@ -91,9 +88,16 @@ import BaseIcon from 'ui/components/BaseIcon.vue';
 import OptimizerChoiceList from './OptimizerChoiceList.vue';
 import OptimizerExpectedDrops from './OptimizerExpectedDrops.vue';
 import OptimizerProbabilityBreakdown from './OptimizerProbabilityBreakdown.vue';
+import OptimizerTargetLabel from './OptimizerTargetLabel.vue';
 
 export default defineComponent({
-  components: { BaseIcon, OptimizerChoiceList, OptimizerExpectedDrops, OptimizerProbabilityBreakdown },
+  components: {
+    BaseIcon,
+    OptimizerChoiceList,
+    OptimizerExpectedDrops,
+    OptimizerProbabilityBreakdown,
+    OptimizerTargetLabel,
+  },
   props: {
     solution: { type: Object as PropType<OptimizerSolution>, required: true },
     maxWaitTimeSeconds: { type: Number, required: true },
@@ -102,32 +106,7 @@ export default defineComponent({
   },
   setup(props) {
     // One row per target for any count, so the markup below needs no n=1 arm.
-    // targets can be empty, in which case the solution's own top-level fields
-    // (which mirror perTarget[0]) stand in for the single row.
-    const rows = computed<TargetView[]>(() =>
-      props.targets.length > 0
-        ? props.targets
-        : [
-            {
-              nodeId: '',
-              name: '',
-              iconUrl: '',
-              pCraft: 0,
-              lambda: 0,
-              craftChainTree: null,
-              missionLegendarySources: [],
-              dropDataIsSparse: false,
-              perTarget: {
-                nodeId: '',
-                bestProbability: props.solution.bestProbability,
-                craftProbability: props.solution.craftProbability,
-                dropProbability: props.solution.dropProbability,
-                expectedCrafts: props.solution.expectedCrafts,
-              },
-            },
-          ]
-    );
-    const multi = computed(() => rows.value.length > 1);
+    const multi = computed(() => props.targets.length > 1);
     const sparseTooltip =
       'Drop data is sparse: no mission has 5+ recorded legendary observations of this artifact, so the displayed rate may be off by several multiples.';
     const chanceTooltip =
@@ -152,7 +131,6 @@ export default defineComponent({
       dropTooltip,
       idleTooltip,
       idleTimeSeconds,
-      rows,
       multi,
     };
   },

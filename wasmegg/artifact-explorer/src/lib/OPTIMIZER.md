@@ -112,7 +112,8 @@ objective `sum_T g(Q_T*craft_T + lambda_T)` at the final chosen inventory, over
 the recipe's craft-conservation polytope, by **Frank-Wolfe with an exact line
 search**: linearize `g` at the current scores (`weight_T = g'(score_T) * Q_T`,
 by the chain rule), maximize the resulting weighted-sum craft LP — the ordinary
-`compileInnerLp`, whose polytope is identical — and golden-section search along
+`compileInnerLp`, compiled once and re-aimed through `solve`'s weights
+argument, its polytope being the same one — and golden-section search along
 the segment from the current point to that vertex. Each iterate's true objective
 is non-decreasing and the iteration converges to the polytope optimum. This runs
 once per returned solution, never in the search loop.
@@ -193,8 +194,10 @@ superseded (or torn-down) request resolves with `null`, which callers read as
 "no result is coming, leave state alone".
 
 Presentation-only fields (`expectedDrops`, `fuelByEgg`, sorted `choiceHistory`)
-are filled in by `finalizeSolutions` on the main thread, so the worker path and
-the synchronous `optimize()` produce identical solutions.
+are filled in by `finalizeSolutions` on the main thread. The client applies it
+to every reply before resolving, so the worker path and the synchronous
+`optimize()` hand back identical solutions and no caller has to remember the
+step.
 
 ## Previous crafts
 
@@ -233,15 +236,15 @@ own legendary. With a single target every share is 1.
 | File | Role |
 | --- | --- |
 | `optimizer-core.ts` | The outer search: pruning, LP relaxation, pair/triple scans, packing, repair. `optimizeFull` is the entry point. |
-| `value-function.ts` | Inner crafting LP, the tangent epigraph construction, `alphaToProb`, and `refineJointCraftSplit`. |
+| `value-function.ts` | `buildConservationPolytope` (the recipe-conservation rows every LP here is built on), the inner crafting LPs, the tangent epigraph construction, `alphaToProb`, and `refineJointCraftSplit`. |
 | `lp.ts` | Small dense-tableau simplex with Bland's rule, tuned for many small re-solves. |
 | `phases.ts` | Recipe DAG construction and launch-option enumeration from loot data. |
-| `index.ts` | Pipeline glue: `buildRecipeDag`, `computeBaseYield`, `finalizeSolutions`, synchronous `optimize`. |
+| `index.ts` | Pipeline glue: `buildRecipeDag`, `computeBaseYield`, synchronous `optimize`. |
 | `optimizer.worker.ts` | Worker entry point; runs `optimizeFull` only. |
 | `optimizer-worker-protocol.ts` | Wire types and `MissionType` narrow/reconstruct across structured clone. |
-| `optimizer-client.ts` | Main-thread worker lifecycle, request numbering, supersession. |
+| `optimizer-client.ts` | Main-thread worker lifecycle, request numbering, supersession, and finalization of replies. |
 | `optimizer-tree.ts` | Recipe-tree builders for the inventory and craft-chain panels. |
-| `optimizer-views.ts` | Flat presentation helpers derived from a solution. |
+| `optimizer-views.ts` | Flat presentation helpers derived from a solution, including `artifactDisplay` and `finalizeSolutions`. |
 | `types.ts` | Shared types for all of the above. |
 | `../oracle/` | Brute-force correctness harness; see its own README. |
 | `../components/ArtifactMissionOptimizer.vue` | Top-level planner: assembles inputs, drives the worker, debounces auto-compute. |
