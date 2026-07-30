@@ -130,8 +130,11 @@ export function compileInnerLp(
   const nVars = nonLeafNodes.length;
   const nCons = constraintNodes.length;
 
-  let c = new Float64Array(nVars);
-  for (const [t, w] of weightByTarget) c[varIndex.get(t)!] = w;
+  // The compiled objective. Never mutated after this point: `solve` hands it to
+  // solveLp by identity for unweighted calls, and builds a separate array when
+  // it is re-aimed, so no call can leave its objective behind for the next one.
+  const compiledC = new Float64Array(nVars);
+  for (const [t, w] of weightByTarget) compiledC[varIndex.get(t)!] = w;
 
   const A = buildRows();
 
@@ -146,6 +149,9 @@ export function compileInnerLp(
     weightByTarget,
 
     solve(inventory: Map<string, number>, reweights?: ReadonlyMap<string, number>): AlphaResult {
+      // Scoped to the call, so an unweighted solve always gets the compiled
+      // objective no matter what earlier calls asked for.
+      let c = compiledC;
       if (reweights) {
         // A FRESH array, never a mutation in place: solveLp caches its tableau
         // against the identity of `c`, so rewriting the existing one would be

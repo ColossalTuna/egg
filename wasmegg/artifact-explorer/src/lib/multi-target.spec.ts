@@ -104,6 +104,43 @@ describe('multi-sink weighted objective LP', () => {
     expect(rootFirst.bestProbability).toBeGreaterThan(0.99);
     expect(rootFirst.choiceHistory.some(c => c.targetAfxId === optB.targetAfxId)).toBe(true);
   });
+
+  it('re-aims a compiled LP without letting one solve set the next one up', () => {
+    // One LP, solved three times. The reweighted call in the middle must not
+    // change what either unweighted call optimizes, and must leave the target
+    // it omits on the weight the LP was compiled with.
+    const dag: RecipeDAG = new Map([
+      ['A', makeNode('A', false, [['B', 1]])],
+      ['B', makeNode('B', false, [['C', 1]])],
+      ['C', makeNode('C', true)],
+    ]);
+    // Distinct from each other and from 1, so a weight that got lost is visible
+    // in the score rather than coinciding with the default.
+    const w = new Map([
+      ['A', 2],
+      ['B', 3],
+    ]);
+    const inventory = new Map([['C', 10]]);
+    const lp = compileInnerLp(dag, ['A', 'B'], w);
+
+    const compiled = lp.solve(inventory);
+    const cA = compiled.craftByTarget.get('A')!;
+    const cB = compiled.craftByTarget.get('B')!;
+    expect(cA).toBeGreaterThan(0);
+    expect(compiled.score).toBeCloseTo(2 * cA + 3 * cB, 9);
+
+    // Partial override: A is re-aimed, B keeps its compiled 3 rather than
+    // falling back to 1.
+    const reweighted = lp.solve(inventory, new Map([['A', 5]]));
+    const rA = reweighted.craftByTarget.get('A')!;
+    const rB = reweighted.craftByTarget.get('B')!;
+    expect(reweighted.score).toBeCloseTo(5 * rA + 3 * rB, 9);
+    expect(reweighted.score).toBeGreaterThan(compiled.score);
+
+    // The reweight was scoped to that call, so this matches the first solve.
+    const again = lp.solve(inventory);
+    expect(again.score).toBeCloseTo(compiled.score, 9);
+  });
 });
 
 // Real totem ids, because computeBaseYield resolves each node through

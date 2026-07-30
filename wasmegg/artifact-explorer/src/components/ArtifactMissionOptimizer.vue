@@ -184,9 +184,7 @@ export default defineComponent({
 
     // Launch-option enumeration stays on the main thread: it is the only step
     // needing the loot dataset, which this bundle already loads. See
-    // OPTIMIZER.md. It gets its own computed so that retuning the time budget
-    // or the fuel tank reuses the cached enumeration rather than re-walking
-    // that dataset on every keystroke.
+    // OPTIMIZER.md.
     const launchOptions = computed(() => {
       const launchPeriodSeconds = EFFORT_LAUNCH_PERIOD_SECONDS[missionFilters.value.effort];
       const maxGemCost = missionFilters.value.maxGemCostEnabled ? missionFilters.value.maxGemCost : undefined;
@@ -254,16 +252,10 @@ export default defineComponent({
       // Every exit must cancel the queued solve first, or a timer armed by the
       // previous run still fires.
       clearTimeout(debounceTimer);
-      // Checked before computeInputs is read, so a manual-compute page does no
-      // solver work at all; flipping this back on re-runs the effect, which
-      // then reads (and so re-tracks) the inputs.
       if (!autoCompute.value) {
         pendingCompute.value = true;
         return;
       }
-      // Reading computeInputs.value HERE is what registers the dependency; if
-      // only the debounced callback read it the effect would track autoCompute
-      // alone.
       if (!computeInputs.value) {
         computedResults.value = [];
         return;

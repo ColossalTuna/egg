@@ -130,42 +130,27 @@ function buildEvalContext(
 
   const MAX_EVAL_CACHE = 200_000;
   const evalCache = new Map<string, number>();
-  // Reused scratch for the cache key: an allocation names option indices, so it
-  // can never hold more entries than there are options. Keeping these as typed
-  // arrays avoids a per-entry tuple on every call, cache hit or miss.
-  const keyIdx = new Int32Array(options.length);
-  const keyMul = new Float64Array(options.length);
+  const keyPairs: [number, number][] = [];
 
   const evalScoreAt: EvalFn = multipliers => {
-    // The ordering is load-bearing: callers pass the same allocation in
-    // different orders, and an unsorted key would miss the cache on every one
-    // of them. Insertion sort — allocations hold a handful of entries, and it
-    // beats Array.sort's comparator closure at this size.
-    let n = 0;
+    // The sort is load-bearing: callers pass the same allocation in different
+    // orders, and an unsorted key would miss the cache on every one of them.
+    keyPairs.length = 0;
     for (const [idx, k] of multipliers) {
       if (k <= 0) continue;
-      let j = n - 1;
-      while (j >= 0 && keyIdx[j] > idx) {
-        keyIdx[j + 1] = keyIdx[j];
-        keyMul[j + 1] = keyMul[j];
-        j--;
-      }
-      keyIdx[j + 1] = idx;
-      keyMul[j + 1] = k;
-      n++;
+      keyPairs.push([idx, k]);
     }
+    keyPairs.sort((a, b) => a[0] - b[0]);
     let key = '';
-    for (let e = 0; e < n; e++) {
-      key += keyIdx[e] + ':' + keyMul[e] + ',';
+    for (const [idx, k] of keyPairs) {
+      key += idx + ':' + k + ',';
     }
     const cached = evalCache.get(key);
     if (cached !== undefined) return cached;
 
     bEval.set(bBase);
     lambdaEval.fill(0);
-    for (let e = 0; e < n; e++) {
-      const idx = keyIdx[e];
-      const k = keyMul[e];
+    for (const [idx, k] of keyPairs) {
       const rows = optYieldRows[idx];
       const rates = optYieldRates[idx];
       for (let j = 0; j < rows.length; j++) {
