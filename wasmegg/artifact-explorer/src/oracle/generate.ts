@@ -61,8 +61,10 @@ function sample<T>(rng: Rng, items: T[], count: number): T[] {
 }
 
 // Real artifacts that can actually come out legendary from a craft.
+// Exported for the invariant harness, which samples the same target space but
+// builds production-sized instances rather than enumerable ones.
 let candidateTargetsMemo: string[] | null = null;
-function candidateTargets(): string[] {
+export function candidateTargets(): string[] {
   if (candidateTargetsMemo === null) {
     candidateTargetsMemo = artifactTiers
       .filter(tier => tier.craftable)
