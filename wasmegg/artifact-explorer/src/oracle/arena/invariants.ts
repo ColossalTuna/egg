@@ -25,6 +25,7 @@
 
 import { ei, spaceshipList } from 'lib';
 import { EFFORT_LAUNCH_PERIOD_SECONDS, EFFORT_LEVELS } from '@/store/schema';
+import type { RecipeDAG } from '../../lib/types';
 import type { Planner } from './contract';
 import {
   budgetsOf,
@@ -83,10 +84,16 @@ export interface Violation {
   nats?: number;
 }
 
-// Fixed-point below 1e-6 renders every near-hopeless instance as "0.000000%",
-// which makes a violation line unreadable exactly where the numbers are most
-// suspect. Switch to exponential there.
-const pct = (x: number) => (x < 1e-8 ? `${(x * 100).toExponential(3)}%` : `${(x * 100).toFixed(6)}%`);
+// `toFixed(6)` on a percentage runs out of digits at 0.000001%, i.e. a
+// probability of 1e-8: anything below that renders as "0.000000%", which makes a
+// violation line unreadable exactly where the numbers are most suspect. So the
+// switch to exponential sits at that probability, and the same constant is what
+// the predicate tests. (The percentage and the probability differ by the factor
+// of 100 between them; the constant below is in probability, like every other
+// number this file compares.)
+const PCT_FIXED_FLOOR = 1e-8;
+const pct = (x: number) =>
+  x < PCT_FIXED_FLOOR ? `${(x * 100).toExponential(3)}%` : `${(x * 100).toFixed(6)}%`;
 const gap = (from: number, to: number) => `${(lg(to) - lg(from)).toFixed(4)} nats`;
 
 export interface CheckContext {
@@ -163,23 +170,62 @@ export function checkA3Menu(c: CheckContext) {
   }
 }
 
+// The nodes some recipe in the DAG actually eats. Stocking anything else is
+// unrepresentable in the model — `computeBaseYield` drops it for exactly this
+// reason — so a "lopsided inventory" test has to draw its single item from here
+// or it risks asserting monotonicity over a no-op.
+function consumedNodeIds(dag: RecipeDAG): string[] {
+  const consumed = new Set<string>();
+  for (const node of dag.values()) {
+    if (node.isLeaf) continue;
+    for (const child of node.children) consumed.add(child.nodeId);
+  }
+  return [...consumed].sort();
+}
+
 export function checkA4Inventory(c: CheckContext) {
   const bare = solve(c);
-  // Stock every non-target node in the DAG; owned copies can only relax the
-  // crafting conservation rows.
-  const stocked = new Map<string, number>();
+
+  // Two shapes of inventory, because they fail differently.
+  //
+  // Uniform: stock every non-target node. A solver that handles inventory at
+  // all passes this, since it lifts the floor under every conservation row at
+  // once and rarely changes which plan is best.
+  //
+  // Lopsided: stock exactly one consumed component and nothing else. This is
+  // the discriminating case — it does not raise the computation floor
+  // uniformly, it makes one branch of the recipe cheaper than its siblings, so
+  // a solver that models inventory as a global slack (or that only re-plans
+  // when *every* row moved) can pass the uniform case and fail here. Both are
+  // still pure relaxations of the conservation rows, so neither may lower the
+  // judged joint.
+  const consumed = consumedNodeIds(bare.problem.dag);
+
+  const uniform = new Map<string, number>();
   for (const id of bare.problem.dag.keys()) {
     if (c.inst.targets.includes(id)) continue;
-    stocked.set(id, 25);
+    uniform.set(id, 25);
   }
-  const rich = solve(c, { baseYield: stocked }).joint;
-  if (dropped(bare.joint, rich)) {
-    c.out.push({
-      invariant: 'A4-inventory',
-      instance: c.inst.label,
-      detail: `owning ingredients gives ${pct(rich)}, worse than owning nothing at ${pct(bare.joint)} (${gap(bare.joint, rich)})`,
-      nats: lg(rich) - lg(bare.joint),
-    });
+
+  const axis: { label: string; over: SolveOverrides }[] = [];
+  if (consumed.length > 0) {
+    // Deterministic pick from a sorted list, varied across the sweep by the
+    // instance seed so the sample covers more than one node shape.
+    const solo = consumed[c.inst.seed % consumed.length];
+    axis.push({ label: `owning 25x ${solo} alone`, over: { baseYield: new Map([[solo, 25]]) } });
+  }
+  axis.push({ label: 'owning 25x of every ingredient', over: { baseYield: uniform } });
+
+  for (const step of axis) {
+    const p = solve(c, step.over).joint;
+    if (dropped(bare.joint, p)) {
+      c.out.push({
+        invariant: 'A4-inventory',
+        instance: c.inst.label,
+        detail: `${step.label} gives ${pct(p)}, worse than owning nothing at ${pct(bare.joint)} (${gap(bare.joint, p)})`,
+        nats: lg(p) - lg(bare.joint),
+      });
+    }
   }
 }
 
@@ -207,11 +253,23 @@ export function checkA6Capacity(c: CheckContext) {
   );
 }
 
+// Doubling from the floor, capped at the game's max, with 29 spliced in so the
+// top pair is a single level apart.
+//
+// Even spacing (the 1/10/20/30 this used to be) is too generous: the craft-rarity
+// multiplier moves a lot across ten levels, so a solver only has to be monotone
+// at a coarse resolution to pass, and one that quantises or rounds crafting level
+// into buckets never gets caught. The geometric prefix keeps the low end — where
+// the multiplier moves fastest per level — densely sampled, and 29 -> 30 is the
+// tightest increment the parameter admits, so passing it means monotone in the
+// level itself rather than in some bucketing of it.
+const A7_CRAFTING_LEVELS = [1, 2, 4, 8, 16, 29, 30];
+
 export function checkA7CraftingLevel(c: CheckContext) {
   monotone(
     'A7-crafting',
     c,
-    [1, 10, 20, 30].map(lvl => ({ label: `crafting=${lvl}`, over: { craftingLevel: lvl } }))
+    A7_CRAFTING_LEVELS.map(lvl => ({ label: `crafting=${lvl}`, over: { craftingLevel: lvl } }))
   );
 }
 
@@ -238,7 +296,23 @@ export function checkA8Targets(c: CheckContext) {
 // B. Invariance. Relabelings and rescalings must not move the answer.
 // ---------------------------------------------------------------------------
 
-// Local PRNG so shuffles do not depend on anything the solver touches.
+// Local seeded PRNG (mulberry32, the same generator `../generate.ts` uses for
+// instance construction), not `Math.random`.
+//
+// Not for randomness quality — a Fisher-Yates shuffle of a menu does not need a
+// good generator. For reproducibility, which the arena depends on twice over:
+//
+//  - B5-determinism asserts the *planner* returns the same plan for the same
+//    problem. If the perturbations the other B checks feed it were themselves
+//    unrepeatable, a B1 failure would be a permutation nobody can reconstruct,
+//    and "run it again" would neither confirm nor clear it.
+//  - A sweep writes its violations to `results/` and they get compared across
+//    runs and across candidates. With `Math.random` the menu order would differ
+//    per run and per solver, so two scorecards would not be measuring the same
+//    perturbation and a diff between them would mean nothing.
+//
+// Seeded from the instance seed and the shuffle index, so the whole sweep is a
+// pure function of `ARENA_SEED_BASE`.
 function rngFor(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -289,6 +363,31 @@ export function checkB2TargetOrder(c: CheckContext) {
   }
 }
 
+// B3 is a units check, and it is the only one in the file.
+//
+// Multiplying every fuel cost *and* the tank by the same k is a change of unit,
+// nothing else: the feasible set is literally the same set of allocations, and
+// the objective never mentions fuel. So any k-dependence is a solver reading an
+// absolute fuel figure as if it meant something. Concretely, what this catches:
+//
+//  - an absolute epsilon on the fuel row (`slack > 1e-6`, `cost < 1`), which
+//    silently prunes or admits different options once fuel figures move by 4x.
+//    Real fuel runs from ~1e3 to ~1e18 across the instance space, so a constant
+//    that looks safe on one instance is nonsense on another;
+//  - a hardcoded scaling/conditioning factor, or an LP handed raw 1e18
+//    coefficients without normalisation, where the simplex tolerance starts
+//    deciding feasibility;
+//  - a heuristic ranking options by a fuel figure compared against a literal
+//    rather than against the budget.
+//
+// Nothing else here can see that. A1-fuel moves the tank while the costs stay
+// put, which is a genuine relaxation and a monotonicity question; B3 moves both
+// together, so the answer must not move at all. A solver can pass every A check
+// and still be quietly unit-dependent.
+//
+// The incumbent passes exactly, not within tolerance, because it normalises fuel
+// to a budget of 1 before modelling (see `solvers/highs/SPEC.md`) — which is the
+// property this invariant exists to keep true of future candidates too.
 export function checkB3FuelScale(c: CheckContext) {
   const base = solve(c).joint;
   // Powers of two so the rescale is exact in binary floating point and a
@@ -314,6 +413,17 @@ export function checkB3FuelScale(c: CheckContext) {
   }
 }
 
+// There is no B4, and there never was one — `git log -p` on this file shows the
+// numbering landing with the gap already in it. It is not a retired check whose
+// coverage went missing.
+//
+// The slot is left empty rather than closed up because the ids are the arena's
+// public vocabulary: they are what `results/*.json` keys violations by, what the
+// scorecard tables in `ARENA.md` are written against, and what
+// `solvers/highs/SPEC.md` cites when it argues which invariants the model holds
+// structurally. Renumbering B5 -> B4 and B6 -> B5 would silently re-point every
+// one of those at a different check, which is a worse outcome than a gap in a
+// sequence. New invariances take the next free number (B7); B4 stays vacant.
 export function checkB5Determinism(c: CheckContext, repeats = 3) {
   const first = solve(c);
   const sig = signature(first);
@@ -335,17 +445,17 @@ export function checkB6DuplicateOption(c: CheckContext) {
   const base = solve(c);
   if (base.problem.options.length === 0) return;
   const target = base.problem.options[Math.floor(base.problem.options.length / 2)];
-  const p = solve(c, {
+  const duplicated = solve(c, {
     // A second copy of a mission already on the menu is the same choice; it
     // must not change what the plan achieves.
     transformOptions: options => [...options, { ...target, id: `${target.id}::dup` }],
-  }).joint;
-  if (differs(base.joint, p, REBUILT_NATS)) {
+  });
+  if (differs(base.joint, duplicated.joint, REBUILT_NATS)) {
     c.out.push({
       invariant: 'B6-duplicate',
       instance: c.inst.label,
-      detail: `duplicating ${target.ship.name} -> ${target.target ?? 'untargeted'} gives ${pct(p)} vs ${pct(base.joint)} (${gap(base.joint, p)})`,
-      nats: lg(p) - lg(base.joint),
+      detail: `duplicating ${target.ship.name} -> ${target.target ?? 'untargeted'} gives ${pct(duplicated.joint)} vs ${pct(base.joint)} (${gap(base.joint, duplicated.joint)})`,
+      nats: lg(duplicated.joint) - lg(base.joint),
     });
   }
 }
@@ -468,6 +578,30 @@ export function checkM1M2SoloDominance(c: CheckContext) {
 //
 // This is the regression guard for the ALL-of objective: if the joint search
 // ever collapses onto one target, this construction beats it.
+//
+// It is the only check in the file that can catch that, and the reason is the
+// direction of the bound. M3 is the file's one *lower* bound on the joint
+// objective — it fails when the answer is too small. Everything nearby fails for
+// the opposite reason or for a different reason entirely:
+//
+//  - M1/M2 are upper bounds. They fail when the joint claims more than the solos
+//    can justify. A solver that abandons three of four targets and returns
+//    ~0 satisfies both trivially — it never claims anything.
+//  - A8-targets is monotonicity under dropping a target, not a bound on the
+//    answer. A uniformly collapsed solver is still monotone, so A8 stays green.
+//  - D1/D2 also fail on "too small", but only for a plan the k-opt neighbourhood
+//    can reach: at most two lines (four for D2) moved by at most two missions.
+//    The union of per-target plans is usually nowhere near that ball — it can
+//    differ from the returned plan on every line at once — so a solver stuck in
+//    a wide local optimum is locally optimal and still loses to M3.
+//
+// The `continue` on an infeasible union is what keeps this sound rather than
+// what weakens it: the concatenation argument above guarantees feasibility only
+// when each sub-plan really did stay inside its slice, and a sub-solve that
+// overran (or an option the joint menu lacks, skipped above) can push the union
+// over. Judging one of those would report a violation against a plan the solver
+// was never allowed to return. Feasible unions are the common case; skipping the
+// rest costs coverage on an instance, never correctness.
 export function checkM3UnionLowerBound(c: CheckContext) {
   const n = c.inst.targets.length;
   if (n < 2) return;

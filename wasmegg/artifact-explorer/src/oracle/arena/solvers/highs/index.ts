@@ -1,27 +1,31 @@
-// highs: the production candidate, and the one the app actually runs.
+// highs: the shipped planner, entered into the arena as a candidate.
 //
-// Methodology (SPEC.md): state the whole plan as a mixed-integer program —
-// missions per slot, crafts as continuous flow over the conservation polytope,
-// one row per slot so packing is a constraint rather than a repair — and let a
-// real branch-and-bound solver do the integer search. The objective's concave
-// log is handled by outer approximation, refined against the judged value of
-// each incumbent (`oa.ts`).
+// This file is a shim and nothing else. The solver it wraps lives in
+// `src/lib/solver/` because it is production code — the MILP formulation
+// (`milp.ts`), the outer-approximation loop (`oa.ts`), the problem model
+// (`model.ts`), the judge-equivalent evaluator (`evaluator.ts`) and the
+// WebAssembly binding (`highs.ts`). `src/lib/optimizer-core.ts` calls the same
+// `solveWith` with the same loaded module, so the planner users run and the
+// planner the harness measures are one code path, and a change to it is proved
+// against the invariants before it ships. See `SPEC.md` for the method.
 //
-// This module and `src/lib/optimizer-core.ts` call the same `solveWith` with the
-// same loaded solver, and that identity is the point: a change to the shipped
-// planner is a change to this entry, and has to survive the invariant checks
-// before it is believed. The dependency runs one way only — production imports
-// the candidate, never the reverse — so nothing here reads `src/lib` or the
-// harness. The problem model and the evaluator come from `solvers/common`.
+// So this entry is DELIBERATELY not independent of `src/lib`, and it is the
+// only file under `solvers/` that is allowed to be. Every other candidate must
+// re-derive its own machinery from `PlanProblem` alone — a candidate that
+// called into the incumbent's LP, packer or search would be measuring the
+// incumbent's method wearing a different hat. `independence.spec.ts` encodes
+// that exception by name and narrowly: this file may import `src/lib/solver/*`
+// and nothing else out of `src/lib`, and like every candidate it still may not
+// touch the judge, the feasibility rule or the checks.
 //
 // The wasm module is awaited at import time because `Planner` is synchronous.
 // That makes importing the registry load 3.4MB, which is fine in a test process
 // and is exactly why the app goes through `loadHighs()` itself instead.
 
+import { loadHighs } from '@/lib/solver/highs';
+import { solveWith } from '@/lib/solver/oa';
 import type { ArenaSolver, PlanProblem, PlanResult } from '../../contract';
 import { memoizePlanner } from '../common/memo';
-import { loadHighs } from './highs';
-import { solveWith } from './oa';
 
 const solve = await loadHighs();
 

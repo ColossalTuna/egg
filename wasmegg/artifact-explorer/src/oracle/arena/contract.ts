@@ -9,53 +9,24 @@
 // annealer, a DP, a learned policy or a lookup table without the harness
 // changing by a line.
 //
+// `PlanProblem` / `PlanResult` / `PlanReport` are *defined* in
+// `src/lib/solver/types.ts` and re-exported here. They describe what a plan is,
+// which is a property of the application and not of its test harness, and the
+// shipped planner has to name them without importing anything under
+// `src/oracle/`. Nothing else about this seam changes: every arena file still
+// imports them from here, and `independence.spec.ts` pins the direction of the
+// dependency.
+//
 // See ARENA.md for the rules a candidate has to follow.
 
-import type { LaunchOption, RecipeDAG } from '../../lib/types';
+export type { PlanProblem, PlanReport, PlanResult } from '@/lib/solver/types';
+
+import type { PlanProblem, PlanResult } from '@/lib/solver/types';
 
 // Every plan is packed into this many concurrent mission slots, each holding
 // `timeCapacity` seconds of flight. It is a property of the game, not of any
 // solver, so it lives here rather than in an implementation.
 export const NUM_SLOTS = 3;
-
-export interface PlanProblem {
-  // Menu of launches available, already enumerated from the player's ships,
-  // research and effort level. `allocation` is indexed against this array, in
-  // this order. Options may repeat, may be shuffled, and may include entries no
-  // sane plan would use — the harness perturbs this deliberately.
-  readonly options: readonly LaunchOption[];
-  // Recipe graph for the targets, carrying per-node craft chances and the
-  // ingredient conservation structure.
-  readonly dag: RecipeDAG;
-  // Desired artifact node ids. The objective is P(at least one legendary of
-  // EVERY one of these) — the product over targets, not the max or the sum.
-  readonly targets: readonly string[];
-  // Total fuel across the whole plan.
-  readonly fuelCapacity: number;
-  // Seconds available *per slot*. A plan is feasible when its missions
-  // partition into `NUM_SLOTS` slots each loaded to at most this.
-  readonly timeCapacity: number;
-  readonly slots: number;
-  // Copies of each node the player already owns, folded in before crafting.
-  readonly baseYield: ReadonlyMap<string, number>;
-}
-
-// Optional self-report. Supplying it opts a candidate into C2-honesty and
-// C3-joint-product, which check that what a solver claims matches what its own
-// allocation is actually worth. Omitting it is legal and costs nothing but
-// those two checks.
-export interface PlanReport {
-  jointProbability: number;
-  perTarget: number[]; // parallel to problem.targets
-}
-
-export interface PlanResult {
-  // Missions launched per option, parallel to `problem.options`. Non-negative
-  // integers. Must be feasible: fuel within capacity, and packable into
-  // `slots` slots of `timeCapacity`.
-  allocation: number[];
-  reported?: PlanReport;
-}
 
 export type Planner = (problem: PlanProblem) => PlanResult;
 

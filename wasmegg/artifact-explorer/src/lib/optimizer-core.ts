@@ -2,10 +2,11 @@
 // assembly of a renderable solution around whatever plan the planner returned.
 //
 // The planner itself is not here. It is a mixed-integer program handed to HiGHS
-// (`src/oracle/arena/solvers/highs/`), the same module the invariant arena
-// scores — so the planner users run and the planner the harness measures are one
-// code path, and a change to it is proved before it ships. See OPTIMIZER.md for
-// the objective and ARENA.md for what "proved" means.
+// (`./solver/`), the same module the invariant arena enters as its one candidate
+// (`src/oracle/arena/solvers/highs/index.ts` is a shim around it) — so the
+// planner users run and the planner the harness measures are one code path, and
+// a change to it is proved before it ships. See OPTIMIZER.md for the objective
+// and ARENA.md for what "proved" means.
 //
 // What lives here is everything either side of the search: `buildEvalContext`
 // compiles the tangent-epigraph LP and the yield structure the objective is
@@ -18,9 +19,9 @@ import type { LaunchOption, LaunchSolution, OptimizerSolution, RecipeDAG, SlotSu
 import { ei } from 'lib';
 import { alphaToProb, compileJointInnerLp, JointInnerLp, refineJointCraftSplit } from './value-function';
 import { packWitness } from './packing';
-import { loadHighs } from '@/oracle/arena/solvers/highs/highs';
-import { solveWith } from '@/oracle/arena/solvers/highs/oa';
-import type { PlanProblem } from '@/oracle/arena/contract';
+import { loadHighs } from './solver/highs';
+import { solveWith } from './solver/oa';
+import type { PlanProblem } from './solver/types';
 
 // Three mission slots, as the game gives.
 export const NUM_SLOTS = 3;

@@ -1,13 +1,14 @@
-// Shared preprocessing for the re-derived arena candidates: restricted recipe
-// DAG, normalized budgets, filtered and duplicate-merged option groups.
+// Preprocessing for the planner: restricted recipe DAG, normalized budgets,
+// filtered and duplicate-merged option groups.
 //
 // This is the *problem model*, not a search: it turns a `PlanProblem` into the
-// dense arrays the evaluator and any search over it need. It is shared by
-// the retired `astar-*` entries, which differed in what they searched, not in
-// what the objective is. Nothing here imports the harness or `src/lib` values.
+// dense arrays the evaluator and any search over it need. It was shared by
+// several candidates while the arena was a bake-off — they differed in what they
+// searched, not in what the objective is — and it is kept separate from `oa.ts`
+// for that reason. Nothing here imports the harness or the judge.
 
-import type { LaunchOption, RecipeDAG } from '../../../../lib/types';
-import type { PlanProblem } from '../../contract';
+import type { LaunchOption, RecipeDAG } from '../types';
+import type { PlanProblem } from './types';
 
 const GROUP_CAP = 1e9;
 

@@ -26,7 +26,7 @@
 
 import highsLoader from 'highs';
 import wasmUrl from 'highs/runtime?url';
-import { INF, SOLVER_OPTIONS, type MilpModel, type MilpSolution, type MilpSolve } from './solver';
+import { INF, SOLVER_OPTIONS, type MilpModel, type MilpSolution, type MilpSolve } from './types';
 
 // Asset resolution, and the reason this module is loaded rather than imported.
 //

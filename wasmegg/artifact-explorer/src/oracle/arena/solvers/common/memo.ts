@@ -7,7 +7,7 @@
 // changes no output — only wall clock. The key is built from nothing outside
 // `PlanProblem`, so this cannot leak instance identity into a solver.
 
-import type { LaunchOption } from '../../../../lib/types';
+import type { LaunchOption } from '@/lib/types';
 import type { PlanProblem, PlanResult, Planner } from '../../contract';
 
 const PLAN_CACHE_MAX = 128;

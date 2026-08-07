@@ -9,14 +9,14 @@
 // the true one, and the bound tightens monotonically as cuts accumulate.
 //
 // What the loop returns is not the last iterate but the best *judged* one:
-// every incumbent is scored by `common/evaluator`, the same re-derivation of the
+// every incumbent is scored by `./evaluator`, the same re-derivation of the
 // objective the other candidates use, and the winner is kept. So the linearized
 // model steers, and the real objective decides — the OA never gets to grade
 // itself.
 
-import type { PlanProblem, PlanResult } from '../../contract';
-import { EXACT_PRECISION, STEERING_PRECISION, evaluateCounts } from '../common/evaluator';
-import { buildModel, type Model } from '../common/model';
+import type { MilpLimits, MilpSolve, PlanProblem, PlanResult } from './types';
+import { EXACT_PRECISION, STEERING_PRECISION, evaluateCounts } from './evaluator';
+import { buildModel, type Model } from './model';
 import {
   buildOaMilp,
   buildScaleLp,
@@ -28,7 +28,6 @@ import {
   type Layout,
   type Tangent,
 } from './milp';
-import type { MilpLimits, MilpSolve } from './solver';
 
 // The two levers on cost, and both are deterministic. The obvious third — a
 // wall-clock budget — is deliberately absent: the arena requires one allocation
@@ -65,7 +64,7 @@ export interface Tuning {
 //
 // The default is `{2, 5}`: the cheap end of the two-round plateau, chosen for
 // the instances real players are expected to bring rather than for the arena's
-// uniform-random tail. See SPEC.md section 7.
+// uniform-random tail. See `src/oracle/arena/solvers/highs/SPEC.md` section 7.
 export const DEFAULT_TUNING: Tuning = { maxRounds: 2, maxNodes: 5 };
 
 const MIP_REL_GAP = 1e-6;

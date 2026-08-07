@@ -1,6 +1,6 @@
 // The mixed-integer program handed to HiGHS.
 //
-// Two models are built from the same core (SPEC.md sections 3 and 4):
+// Two models are built from the same core (`src/oracle/arena/solvers/highs/SPEC.md` sections 3 and 4):
 //
 //   scaleLp(t)   continuous, maximize s_t alone. Gives theta_t, the largest
 //                score target t can reach at all, which is what every score is
@@ -21,9 +21,9 @@
 //     allocation it is given; so does this model, in the same LP, at the same
 //     time as it chooses the missions.
 
-import type { Model } from '../common/model';
-import { logHit } from '../common/evaluator';
-import { INF, type MilpModel } from './solver';
+import type { Model } from './model';
+import { logHit } from './evaluator';
+import { INF, type MilpModel } from './types';
 
 // Q = -log(1 - p) is +Infinity when a craft is certain. Infinity cannot enter a
 // matrix, so certainty is proxied by a rate large enough that a single craft

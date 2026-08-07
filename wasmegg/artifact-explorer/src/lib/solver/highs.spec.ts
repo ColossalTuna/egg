@@ -13,7 +13,7 @@
 // models chosen to exercise the writer's branches.
 
 import { describe, expect, it } from 'vitest';
-import { INF, type MilpModel, type MilpSolve } from './solver';
+import { INF, type MilpModel, type MilpSolve } from './types';
 import { loadHighs } from './highs';
 
 const solve: MilpSolve = await loadHighs();

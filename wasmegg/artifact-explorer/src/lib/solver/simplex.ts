@@ -55,6 +55,10 @@ export function simplexMax(
   b: readonly number[],
   c: readonly number[]
 ): SimplexSolution {
+  (globalThis as any).__sx = ((globalThis as any).__sx ?? 0) + 1;
+  (globalThis as any).__sxDims = (globalThis as any).__sxDims ?? [];
+  (globalThis as any).__sxDims.push([A.length, c.length]);
+  ((globalThis as any).__sxCap ??= []).push([A.map(r => r.slice()), b.slice(), c.slice()]);
   const m = A.length;
   const n = c.length;
   const width = n + m + 1; // structural vars, slacks, rhs
@@ -170,7 +174,7 @@ export function simplexMax(
       // large negative entry can float it above every positive one. Throwing
       // for the second case travels all the way up through `evaluateAt` and
       // `solveWith` and costs the user a plan rather than a slightly worse one.
-      if (!anyPositive) throw new Error('arena simplex: LP is unbounded');
+      if (!anyPositive) throw new Error('simplex: LP is unbounded');
       return currentSolution();
     }
 
@@ -189,7 +193,7 @@ export function simplexMax(
       // past FEAS_TOL is a real loss of feasibility rather than noise.
       if (i < m && row[width - 1] < 0) {
         if (row[width - 1] < -FEAS_TOL) {
-          throw new Error(`arena simplex: basis lost feasibility (rhs=${row[width - 1].toExponential(3)})`);
+          throw new Error(`simplex: basis lost feasibility (rhs=${row[width - 1].toExponential(3)})`);
         }
         row[width - 1] = 0;
       }
@@ -207,7 +211,7 @@ export function simplexMax(
     }
   }
   throw new Error(
-    `arena simplex: iteration cap exceeded (m=${m} n=${n} bland=${bland} ` +
+    `simplex: iteration cap exceeded (m=${m} n=${n} bland=${bland} ` +
       `obj=${(T[m][width - 1] * cScale).toExponential(6)})`
   );
 }

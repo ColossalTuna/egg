@@ -1,10 +1,72 @@
+// The solver's type surface: what a plan is, and what the MILP backend behind
+// it trades in.
+//
+// Two seams live here, and they are owned by `src/lib` rather than by any test
+// harness. The invariant arena (`src/oracle/arena/`) re-exports the plan types
+// from its own `contract.ts` so the arena's public seam reads the same as ever;
+// the dependency runs one way only — the arena imports production, production
+// never imports the arena.
+//
+// ---------------------------------------------------------------------------
+// The plan seam.
+// ---------------------------------------------------------------------------
+//
+// Everything a planner is allowed to see is in `PlanProblem`, and everything a
+// caller gets back is in `PlanResult`. `allocation` is a claim, not a
+// certificate: the app re-derives its value through `optimizer-core`, and the
+// arena scores it with an independent judge. Nothing downstream trusts a number
+// a planner reports about itself.
+
+import type { LaunchOption, RecipeDAG } from '../types';
+
+export interface PlanProblem {
+  // Menu of launches available, already enumerated from the player's ships,
+  // research and effort level. `allocation` is indexed against this array, in
+  // this order. Options may repeat, may be shuffled, and may include entries no
+  // sane plan would use — the arena perturbs this deliberately.
+  readonly options: readonly LaunchOption[];
+  // Recipe graph for the targets, carrying per-node craft chances and the
+  // ingredient conservation structure.
+  readonly dag: RecipeDAG;
+  // Desired artifact node ids. The objective is P(at least one legendary of
+  // EVERY one of these) — the product over targets, not the max or the sum.
+  readonly targets: readonly string[];
+  // Total fuel across the whole plan.
+  readonly fuelCapacity: number;
+  // Seconds available *per slot*. A plan is feasible when its missions
+  // partition into `slots` slots each loaded to at most this.
+  readonly timeCapacity: number;
+  readonly slots: number;
+  // Copies of each node the player already owns, folded in before crafting.
+  readonly baseYield: ReadonlyMap<string, number>;
+}
+
+// Optional self-report of what a planner believes its own plan is worth.
+// Supplying it opts a planner into the arena's C2-honesty and C3-joint-product
+// checks, which compare the claim against the judge's own scoring of the same
+// allocation. Omitting it is legal and costs nothing but those two checks.
+export interface PlanReport {
+  jointProbability: number;
+  perTarget: number[]; // parallel to problem.targets
+}
+
+export interface PlanResult {
+  // Missions launched per option, parallel to `problem.options`. Non-negative
+  // integers. Must be feasible: fuel within capacity, and packable into
+  // `slots` slots of `timeCapacity`.
+  allocation: number[];
+  reported?: PlanReport;
+}
+
+// ---------------------------------------------------------------------------
 // The MILP seam: what `oa.ts` hands a solver, and what it expects back.
 //
 // There is exactly one implementation (`highs.ts`), and this is still a named
 // seam rather than a direct call for one reason: `oa.ts` must stay synchronous —
-// the arena's `Planner` is — while loading a WebAssembly module is not. So the
-// loading happens once, at the edge, and what travels inward is a plain
-// function. Everything else about this file is the wire format for a matrix.
+// planning is a pure function of `PlanProblem` — while loading a WebAssembly
+// module is not. So the loading happens once, at the edge, and what travels
+// inward is a plain function. Everything else about this section is the wire
+// format for a matrix.
 //
 // The model is always a maximization, always row-major, and always bounded by
 // *deterministic* limits (node counts, never wall clock) — see `MilpLimits`.
