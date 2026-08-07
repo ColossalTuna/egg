@@ -291,7 +291,7 @@ importers:
         specifier: ^3.2.2
         version: 3.2.2
       highs:
-        specifier: 1.15.2
+        specifier: ^1.15.2
         version: 1.15.2
       lib:
         specifier: workspace:^

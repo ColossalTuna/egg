@@ -23,24 +23,35 @@ const ctx = self as unknown as Worker;
 // posts one per input change, so without this a user editing three fields pays
 // for three full solves and the client discards the first two on arrival.
 //
-// The yield below is what makes the check mean anything. `solveWith` is
-// synchronous, so it blocks this thread for the whole solve and the queued
-// messages behind it are not dispatched until it returns — every request would
-// otherwise observe itself as the newest one. Handing control back to the event
-// loop once drains the queue first, so a superseded request can see that it is.
-//
 // The reply still goes out. `optimizer-client` settles every id it has pending
 // and resolves a superseded one to null, so dropping the message rather than
 // answering it would leave that promise hanging forever.
 let newestId = 0;
-const drainQueue = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+
+// Hands control back to the event loop for one macrotask, so that `message`
+// events already sitting in the worker's queue are dispatched — and their
+// handlers have raised `newestId` — before we decide whether this request is
+// stale.
+//
+// This is load-bearing, not decoration. `optimizeFull` awaits the cached wasm
+// module and then runs the solve synchronously, so for the whole second a solve
+// takes this thread never returns to the event loop and nothing queued behind
+// it is delivered. By the time request N's handler resumed, request N+1 had not
+// been dispatched yet, `newestId` was still N, and `req.id < newestId` was false
+// for every request ever made — a bare check is dead code that skips nothing.
+//
+// A microtask yield (`await Promise.resolve()`, or the `await loadHighs()`
+// already inside `optimizeFull`, which is a resolved promise after the first
+// call) is not enough: microtasks drain without ever returning to the task
+// queue, so no `message` event is delivered. It has to be a macrotask.
+const yieldToPendingMessages = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 
 ctx.onmessage = async (e: MessageEvent<OptimizerRequest>) => {
   const req = e.data;
   if (req.id > newestId) newestId = req.id;
   let response: OptimizerResponse;
   try {
-    await drainQueue();
+    await yieldToPendingMessages();
     if (req.id < newestId) {
       ctx.postMessage({ id: req.id, ok: true, solutions: [] } satisfies OptimizerResponse);
       return;

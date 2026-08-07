@@ -7,19 +7,36 @@
 // *quality* is not this file's business — that is what the arena measures, over
 // 40 instances, against recorded results.
 //
-// So: run the same instances the arena generates through the app entry point,
-// and assert the things a seam can break. Budgets, because a plan that overruns
-// them is a hard arena failure and would be a lie in the UI. A joint probability
-// in the right ballpark, because crossed option indices produce a plan that
-// scores like noise rather than one that scores slightly worse.
+// What this file pins is external to the planner. Nothing here asks the planner
+// to confirm its own arithmetic; every expectation is either an input the caller
+// supplied or a constant of a downstream consumer:
+//
+//   - The *rendered* plan fits the budgets the caller passed in. The launches in
+//     `choiceHistory` are what the UI draws and what the user is told to fly, so
+//     their fuel is re-summed from that list — not read off `fuelUsed` — and held
+//     against `args.fuelCapacity`. Same for `timeCapacity`: an option too long
+//     for one slot is dropped before indices are assigned, so its appearing in
+//     the plan at all is the index-crossing bug showing itself.
+//   - The packer and the assembler describe the same plan. `slots` comes out of
+//     `slotsOfAllocation`, `choiceHistory` out of `assembleSolution`; they are
+//     two independent walks of the allocation, so a mission count that disagrees
+//     between them means one of them is reading the allocation wrong.
+//   - The reply is shaped to the request: one `perTarget` row per requested
+//     target, in order. Crossed indices produce a plan that scores like noise
+//     rather than one that scores slightly worse, so a nonzero joint probability
+//     is a floor, not a quality bar.
+//   - Every matrix entry lands inside the window HiGHS will ingest — [1e-9,
+//     1e15], its own `small_matrix_value`/`large_matrix_value`. Outside it the
+//     model is silently mangled or refused, which is a crash on the production
+//     path rather than a worse plan.
 
 import { describe, expect, it } from 'vitest';
 import { generateInstance } from '../oracle/arena/instances';
 import { buildProblem } from '../oracle/arena/harness';
 import { NUM_SLOTS, optimizeFull, type OptimizeArgs } from './optimizer-core';
-import { buildModel } from '../oracle/arena/solvers/common/model';
-import { buildOaMilp, buildScaleLp, effectiveQs, layoutOf } from '../oracle/arena/solvers/highs/milp';
-import { loadHighs } from '../oracle/arena/solvers/highs/highs';
+import { buildModel } from './solver/model';
+import { buildOaMilp, buildScaleLp, effectiveQs, layoutOf } from './solver/milp';
+import { loadHighs } from './solver/highs';
 import { makeNode, makeOpt } from './spec-helpers';
 import type { RecipeDAG } from './types';
 
@@ -50,12 +67,33 @@ describe('the planner returns a plan production can render', () => {
       const args = argsOf(seed);
       const solution = await optimizeFull(args);
 
-      expect(solution.fuelUsed).toBeLessThanOrEqual(args.fuelCapacity * (1 + 1e-9));
+      // Re-summed from the launches the UI renders, against the budget the
+      // caller passed in. `solution.fuelUsed` is deliberately not consulted.
+      let fuel = 0;
+      for (const launch of solution.choiceHistory) fuel += launch.numShipsLaunched * launch.actualFuel;
+      expect(fuel).toBeLessThanOrEqual(args.fuelCapacity * (1 + 1e-9));
+
+      // No single launch may exceed one slot's horizon: options that do are
+      // filtered out before allocation indices are assigned, so one surfacing
+      // here is that filter and the solver disagreeing about what index i means.
+      for (const launch of solution.choiceHistory) {
+        expect(launch.actualTime).toBeLessThanOrEqual(args.timeCapacity + TIME_TOL);
+      }
+
       const slots = solution.slots ?? [];
       expect(slots.length).toBeLessThanOrEqual(NUM_SLOTS);
       for (const slot of slots) {
         expect(slot.loadSeconds).toBeLessThanOrEqual(args.timeCapacity + TIME_TOL);
       }
+    }, 30_000);
+
+    it(`packs exactly the launches it reports on arena:${seed}`, async () => {
+      // `slots` and `choiceHistory` are separate walks of the allocation — the
+      // packer and the assembler. They have to be describing the same plan.
+      const solution = await optimizeFull(argsOf(seed));
+      const launched = solution.choiceHistory.reduce((n, l) => n + l.numShipsLaunched, 0);
+      const packed = (solution.slots ?? []).reduce((n, s) => n + s.missionCount, 0);
+      expect(packed).toBe(launched);
     }, 30_000);
 
     it(`plans something worth launching on arena:${seed}`, async () => {
@@ -66,7 +104,8 @@ describe('the planner returns a plan production can render', () => {
       const solution = await optimizeFull(args);
       expect(solution.jointProbability).toBeGreaterThan(0);
       expect(solution.choiceHistory.length).toBeGreaterThan(0);
-      expect(solution.perTarget).toHaveLength(args.desiredArtifactNodeIds.length);
+      // Shaped to the request: one row per requested target, in order.
+      expect(solution.perTarget.map(r => r.nodeId)).toEqual(args.desiredArtifactNodeIds);
     }, 30_000);
   }
 });
