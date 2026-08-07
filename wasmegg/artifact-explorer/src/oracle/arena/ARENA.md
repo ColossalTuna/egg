@@ -226,13 +226,10 @@ to 285 options and from 1 to 4 targets.
 
 | id | what it is |
 | --- | --- |
-| `highs` | `solvers/highs/index.ts`, a shim over `src/lib/solver/`: the whole plan as a mixed-integer program — missions per slot, crafts as flow over the conservation polytope, packing as three rows rather than a repair — with the concave objective handled by outer approximation and solved by HiGHS. See `src/lib/solver/SPEC.md`. |
+| `highs` |The currently shipped solution. See `src/lib/solver/SPEC.md` for more details|
 
-**It is also the shipped planner.** `src/lib/optimizer-core.ts` calls the same
-`solveWith` on the same loaded module, so the solver measured here and the solver
-users run are one code path. That is what the arena is for now: not a bake-off
-between methodologies, but a bar a change to the shipped planner has to clear
-before it lands.
+The arena is not a bake-off between methodologies. It is the bar a change to the
+shipped planner has to clear before it lands.
 
 What each entry actually scored is written up alongside that entry rather than
 here, so a candidate's brief stays a statement of the rules.

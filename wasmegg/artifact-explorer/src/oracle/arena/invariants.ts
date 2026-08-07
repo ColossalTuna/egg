@@ -256,13 +256,10 @@ export function checkA6Capacity(c: CheckContext) {
 // Doubling from the floor, capped at the game's max, with 29 spliced in so the
 // top pair is a single level apart.
 //
-// Even spacing (the 1/10/20/30 this used to be) is too generous: the craft-rarity
-// multiplier moves a lot across ten levels, so a solver only has to be monotone
-// at a coarse resolution to pass, and one that quantises or rounds crafting level
-// into buckets never gets caught. The geometric prefix keeps the low end — where
-// the multiplier moves fastest per level — densely sampled, and 29 -> 30 is the
-// tightest increment the parameter admits, so passing it means monotone in the
-// level itself rather than in some bucketing of it.
+// The craft-rarity multiplier moves fastest at the low end, so the geometric
+// prefix keeps that region densely sampled. 29 -> 30 is the tightest increment
+// the parameter admits, so passing it means monotone in the level itself
+// rather than in some bucketing of it.
 const A7_CRAFTING_LEVELS = [1, 2, 4, 8, 16, 29, 30];
 
 export function checkA7CraftingLevel(c: CheckContext) {
