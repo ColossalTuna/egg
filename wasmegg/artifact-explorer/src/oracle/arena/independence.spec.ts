@@ -92,7 +92,7 @@ describe('arena independence', () => {
     const offenders: string[] = [];
     for (const file of HARNESS_FILES) {
       const src = readSource(file);
-      if (/\bbaseline-(main|fixed)\b/.test(src)) offenders.push(`${file} mentions a solver id`);
+      if (/\bhighs\b/.test(src)) offenders.push(`${file} mentions a solver id`);
     }
     expect(offenders).toEqual([]);
   });
@@ -110,10 +110,17 @@ describe('arena independence', () => {
     expect(offenders).toEqual([]);
   });
 
-  // The baselines are the control. They exist to be `src/lib`, so the rule
-  // below cannot apply to them or to the adapter they share; everything else
-  // under `solvers/` is a candidate and gets `PlanProblem` and nothing more.
-  const CONTROL = /^(baseline-main|baseline-fixed|optimizer-adapter)\.ts$|^vendor[/\\]/;
+  // No exemptions any more. There used to be two: `baseline-main` wrapped
+  // `src/lib`'s `optimizeFull` on purpose, because it *was* the control, and
+  // `optimizer-adapter` was the shim it came through. Both are gone with the
+  // search they wrapped, so every file under `solvers/` is now a candidate and
+  // gets `PlanProblem` and nothing more.
+  //
+  // Note the direction this leaves. `src/lib/optimizer-core.ts` imports the
+  // `highs` solver, which is what makes the shipped planner and the measured one
+  // the same code. That is intended. What is forbidden is the reverse: a
+  // candidate reaching into `src/lib` and measuring the app's machinery wearing
+  // a different hat.
 
   it('candidates re-derive everything: no value import from src/lib', () => {
     // Types move no code, so `import type { LaunchOption } from ...` is fine
@@ -124,7 +131,6 @@ describe('arena independence', () => {
     const offenders: string[] = [];
     for (const path of walk(join(ARENA, 'solvers'))) {
       const rel = path.slice(join(ARENA, 'solvers').length + 1);
-      if (CONTROL.test(rel)) continue;
       for (const spec of valueImportsOf(readFileSync(path, 'utf8'))) {
         // `@/lib/...` and any relative path that climbs into `src/lib`. The
         // bare `lib` workspace package is game data (egg/ship/artifact enums
@@ -145,7 +151,6 @@ describe('arena independence', () => {
 
   it('every registered solver has a distinct id', () => {
     // Imported lazily so this file stays runnable if a candidate fails to load.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     return import('./registry').then(({ SOLVERS }) => {
       const ids = SOLVERS.map(s => s.id);
       expect(new Set(ids).size).toBe(ids.length);

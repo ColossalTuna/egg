@@ -3,7 +3,7 @@
 //   pnpm arena                          smoke: 4 instances, whole roster
 //   ARENA=sweep pnpm arena              40 instances, cheap checks
 //   ARENA=deep pnpm arena               + D1/D2 local optimality
-//   SOLVER=baseline-fixed ARENA=sweep pnpm arena
+//   SOLVER=highs ARENA=sweep pnpm arena
 //   ARENA_INSTANCES=80 ARENA_SEED_BASE=9000 ARENA=sweep pnpm arena
 //
 // Gating. C0-contract and C1-feasibility hard-fail: a solver that returns a

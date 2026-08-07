@@ -110,8 +110,10 @@ export const mySolver: ArenaSolver = {
 };
 ```
 
-`solvers/optimizer-adapter.ts` is a worked example: it wraps the production
-`optimizeFull` and maps its output back onto an allocation vector.
+`solvers/highs/` is the worked example, and the entry you have to beat. If your
+methodology does not produce an allocation vector directly, the adapting step is
+yours to write: map whatever your solver returns onto counts indexed against
+`problem.options`.
 
 ### Rules
 
@@ -133,8 +135,12 @@ export const mySolver: ArenaSolver = {
   `src/lib/OPTIMIZER.md`, and you are free to model it however your methodology
   wants. Reading `src/lib` for reference is encouraged; importing it is not.
 
-  The two baselines are exempt because they *are* `src/lib` — they are the
-  control, not entries.
+  There are no exemptions. There used to be two, for baseline entries that
+  wrapped `src/lib`'s search on purpose; that search no longer exists. Note the
+  direction that leaves: `src/lib/optimizer-core.ts` imports the `highs`
+  candidate, which is what makes the shipped planner and the measured one the
+  same code. Importing `src/lib` from a candidate would close that loop and
+  measure the app grading itself.
 - **Be deterministic.** Same problem in, same allocation out. If your method is
   stochastic, seed it from the problem, not from a clock or a global. B5 checks
   this, and non-determinism makes every other result unreproducible.
@@ -215,56 +221,70 @@ options and from 1 to 4 targets.
 three times fresh and compared per instance, not just on aggregate counts — a
 stable total can hide one instance regressing while another improves.
 
-## The baselines
+## The baseline
 
 | id | what it is |
 | --- | --- |
-| `baseline-main` | `src/lib/optimizer-core.ts` as shipped: LP relaxation, dominance-pruned integer search, packing, beam polish |
-| `baseline-fixed` | the same with four ordering/seeding fixes from `optimizer-invariant-harness`: an intrinsic tie-break on option id, contention-band beam retention, reduced-cost-ranked adjacency candidates, and a forced alternate LP vertex |
+| `highs` | `src/oracle/arena/solvers/highs/`: the whole plan as a mixed-integer program — missions per slot, crafts as flow over the conservation polytope, packing as three rows rather than a repair — with the concave objective handled by outer approximation and solved by HiGHS. See its `SPEC.md`. |
 
-Both are wrappers, not privileged: they go through the same `Planner` seam as
-any candidate, and the harness does not know which entry is which. `baseline-fixed`
-is vendored under `solvers/vendor/` rather than merged into `src/lib`, so this
-branch changes no shipping code.
+**It is also the shipped planner.** `src/lib/optimizer-core.ts` imports this
+exact module, so the solver measured here and the solver users run are one code
+path. That is what the arena is for now: not a bake-off between methodologies,
+but a bar a change to the shipped planner has to clear before it lands. A
+candidate is measured against `results/highs.json`, and "better" means better
+than the thing already in production.
 
-Neither is clean. Measured on the default 40-instance cheap sweep
-(`ARENA=sweep pnpm arena`, seeds 2000-2039, this container):
+It is a wrapper like any other: it goes through the same `Planner` seam, and the
+harness does not know which entry is which. The one direction that is allowed to
+couple is production importing the candidate; a candidate may not import
+`src/lib`, and `arena:check` enforces that.
 
-| | `baseline-main` | `baseline-fixed` |
-| --- | --- | --- |
-| violations | 59 | 50 |
-| clean instances | 11/40 | 15/40 |
-| invariants firing | 11 | 10 |
-| solve latency median / p90 / max | 77 / 262 / 356 ms | 156 / 493 / 1885 ms |
-| sweep wall clock | 344 s | 950 s |
-| mean log10(joint) | -6.488 | -6.481 |
+It is not clean, and the shape of what it gets wrong is the important part.
+Measured on the default 40-instance cheap sweep (`ARENA=sweep pnpm arena`, seeds
+2000-2039, this container), at the shipped tuning of `{maxRounds: 2, maxNodes:
+5}`:
 
-Head-to-head on plan quality: `baseline-fixed` better on 19 instances, worse on
-3, tied on 18; mean delta +0.0074 log10. It buys that with ~2.8x the runtime.
+| | `highs` |
+| --- | --- |
+| violations | 63 |
+| clean instances | 23/40 |
+| invariants firing | 5 |
+| worst finite violation | 0.1951 nats |
+| `p -> 0` / `0 -> p` collapses | **0** |
+| solve latency median / p90 / max | 1090 / 2738 / 3727 ms |
+| sweep wall clock | 2228 s |
+| mean log10(joint) | -6.775 |
 
 Per-invariant counts:
 
-| invariant | main | fixed |
+| invariant | count | instances |
 | --- | --- | --- |
-| A3-menu | 19 | 12 |
-| A2-time | 12 | 12 |
-| A1-fuel | 8 | 9 |
-| A5-effort | 6 | 7 |
-| B1-option-order | 6 | 4 |
-| A8-targets | 2 | 1 |
-| M3-union | 2 | 2 |
-| A7-crafting | 1 | 1 |
-| B2-target-order | 1 | 1 |
-| C2-honesty | 1 | 1 |
-| B6-duplicate | 1 | 0 |
+| A3-menu | 39 | 13 |
+| B2-target-order | 11 | 11 |
+| A5-effort | 8 | 7 |
+| A1-fuel | 4 | 4 |
+| A2-time | 1 | 1 |
 
-So there is a lot of room. A candidate that holds A1, A2, A3 and A5 is doing
-something the incumbent method structurally cannot — those are the failures
-that survived four separate root-cause fixes to the incumbent's ranking, beam,
-candidate generation and LP seeding.
+**Every one of them is a truncated search, not a modelling gap.** They all have
+the form "a more constrained problem scored better", they are all under 0.2
+nats, and none is a collapse to or from probability zero. Raising `maxNodes` to
+5000 takes them from 55 to 8 on the instances that carry them — so the residual
+is bought by the node budget, and buying it back costs about seven times the
+wall clock. `DEFAULT_TUNING` in `solvers/highs/oa.ts` records that curve.
 
-Some of these are severe rather than marginal: several A1/A5/A7/A8 violations
-are `p->0` collapses, where relaxing a constraint drove the plan from a positive
-probability to exactly zero. The scorecard counts those separately from finite
-regressions, because averaging a collapse together with a 0.01-nat wobble hides
-both.
+For scale, the search this replaced (`optimizer-core.ts`'s LP relaxation,
+dominance-pruned integer search, packing and beam polish, removed in the same
+change that made HiGHS the planner) scored 59 violations, 11/40 clean, 11
+invariants firing, a worst finite violation of **-1.0917 nats** and **8 `p -> 0`
+collapses**, at a median solve of 77 ms. It was roughly fourteen times faster and
+wrong in a way that mattered: a collapse means a plan that cannot craft the
+target at all. An earlier `baseline-fixed` entry applied four root-cause fixes to
+its ranking, beam, candidate generation and LP seeding and reached 50 violations
+and 15/40 clean for ~2.8x the runtime — with every one of the A1/A2/A3/A5
+families surviving. Neither entry exists any more; the findings are the part that
+mattered.
+
+Two things follow for anyone writing a candidate. Beating `highs` on violation
+*count* is not the bar — beating it on violation *magnitude*, on collapses, or on
+latency at equal quality is. And a candidate that holds A1, A2, A3 and A5
+outright would be doing something neither method here manages.

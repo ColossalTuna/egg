@@ -3,14 +3,19 @@
 // Add one line per candidate. Nothing else in the harness needs to know a
 // candidate exists, and the harness never imports a solver module directly —
 // it asks here.
+//
+// One entry, and it is the shipped planner. `highs` is not a candidate being
+// auditioned against an incumbent any more — `src/lib/optimizer-core.ts` calls
+// this exact module, so the thing measured here and the thing users run are one
+// code path. That makes the arena a regression bar rather than a bake-off: a
+// change to the planner is proved against the invariants before it lands, and
+// the numbers in `results/highs.json` are the reference a candidate has to beat.
 
 import type { ArenaSolver } from './contract';
-import { baselineMain } from './solvers/baseline-main';
-import { baselineFixed } from './solvers/baseline-fixed';
+import { highs } from './solvers/highs';
 
 export const SOLVERS: ArenaSolver[] = [
-  baselineMain,
-  baselineFixed,
+  highs,
   // <- register your candidate here
 ];
 

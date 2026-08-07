@@ -2,6 +2,11 @@
 //
 // Imports optimizeFull directly rather than the lib barrel: the barrel
 // re-exports the ~18MB loot dataset, which this bundle has no use for.
+//
+// The planner is a WebAssembly MILP, so the first request in a worker's life
+// pays to fetch and instantiate it; the rest resolve off a cached promise. That
+// is also why this file is the only place the solve is awaited — everything
+// below the seam is synchronous.
 
 import { optimizeFull } from './optimizer-core';
 import {
@@ -13,11 +18,11 @@ import {
 
 const ctx = self as unknown as Worker;
 
-ctx.onmessage = (e: MessageEvent<OptimizerRequest>) => {
+ctx.onmessage = async (e: MessageEvent<OptimizerRequest>) => {
   const req = e.data;
   let response: OptimizerResponse;
   try {
-    const solution = optimizeFull({
+    const solution = await optimizeFull({
       options: optionsFromWire(req.options),
       recipeDag: req.recipeDag,
       desiredArtifactNodeIds: req.desiredArtifactNodeIds,
