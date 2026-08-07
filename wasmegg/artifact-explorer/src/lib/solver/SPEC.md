@@ -249,8 +249,15 @@ the group's cap. Both budgets are rows of the model, so a decoded plan is
 feasible by construction; `certifies` says so out loud rather than assuming it.
 It re-checks the fuel row against the rounded counts and reads the three slot
 loads straight off the MILP's own columns — the packing witness the
-sum-over-slots threw away — against tolerances of 1e-9 relative on fuel and 1e-6
-seconds on a slot.
+sum-over-slots threw away — against tolerances of 1e-9 relative on fuel and 1e-9
+absolute seconds on a slot.
+
+The slot figure is not chosen for resolution; the drift it has to absorb is
+three decades smaller and measures zero in practice. It is the judge's own
+packing tolerance, and it is a ceiling rather than a preference: certifying to
+anything looser would accept plans the judge calls infeasible, which is a C1
+hard failure. Same scale as the pinned feasibility tolerances and the raw-seconds
+slot rows, for the same reason.
 
 It is a verifier, not a repairer. An incumbent that fails is dropped, not
 patched: the caller keeps the previous judged plan, and the worst case is the
