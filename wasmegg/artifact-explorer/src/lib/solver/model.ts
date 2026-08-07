@@ -190,8 +190,7 @@ export function buildModel(problem: PlanProblem): Model {
     candidates.push({ fuel, time, timeSeconds: opt.actualTime, yieldEntries, legendaryEntries, cap, index });
   });
 
-  // Sort by canonical key and merge exact duplicates into one group. Search is
-  // over groups, so menu order and injected duplicates are structurally inert.
+  // Merge exact duplicates into one group; see SPEC.md section 1 (B1, B6).
   candidates.sort((a, b) => cmpKey(a, b) || a.index - b.index);
   const groups: Group[] = [];
   const groupOfOption = new Array<number>(problem.options.length).fill(-1);

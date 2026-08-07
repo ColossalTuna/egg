@@ -1,17 +1,9 @@
 // HiGHS as WebAssembly (`highs`, lovasoa/highs-js): the loader, and the text
-// interface it insists on.
+// interface it insists on. See SPEC.md section 8 for why this is the build
+// that ships and what the text round trip costs.
 //
-// This is the build that ships. It is the same C++ solver, compiled to wasm, so
-// it runs in the browser this app is with no native toolchain and no install
-// step. What it costs is the interface — the wasm module exposes one entry
-// point, `solve(text)`, taking a model in CPLEX LP format — so every solve pays
-// for serializing the matrix to text and having HiGHS parse it back. Measured,
-// that is 75-85% of a *continuous* call but under 5% of an expensive MILP one,
-// which is why the native addon this used to be compared against is gone: the
-// thing it removed was never the expensive part.
-//
-// One thing about that entry point is worth knowing before trusting an option
-// to it. It reads the model *first* and applies the options afterwards:
+// The entry point's read-then-apply-options order, quoted here because SPEC.md
+// points at this file for it:
 //
 //     FS.writeFile(MODEL_FILENAME, model_str);
 //     Highs_readModel(highs, MODEL_FILENAME);
@@ -20,27 +12,18 @@
 //
 // So anything governing how a model is *ingested* — `small_matrix_value`,
 // `large_matrix_value`, `infinite_bound` — is set too late here and silently
-// does nothing, while anything governing the solve (the feasibility tolerances,
-// the node budget, the seed) applies normally. `milp.ts` scales its rows rather
-// than relying on the first group; see `SAFE_COEFFICIENT` there.
+// does nothing. `milp.ts` scales its rows rather than relying on the first
+// group; see `SAFE_COEFFICIENT` there.
 
 import highsLoader from 'highs';
 import wasmUrl from 'highs/runtime?url';
 import { INF, SOLVER_OPTIONS, type MilpModel, type MilpSolution, type MilpSolve } from './types';
 
-// Asset resolution, and the reason this module is loaded rather than imported.
-//
-// Left to itself the Emscripten loader looks for `highs.wasm` beside its own
-// glue, which is right under Node and wrong inside a bundled worker, where the
-// glue has been rewritten into a chunk somewhere else entirely. Handing it the
-// URL explicitly lets Vite emit and fingerprint the file like any other asset.
-//
-// In the browser `wasmUrl` is a URL the loader can fetch: an emitted asset in a
-// build, a `/@fs/...` dev-server path under `vite dev` and under Vitest. In Node
-// there is no server to answer that path and the loader reads from disk, so the
-// dev prefix has to come back off.
-// On Windows that path is `/@fs/C:/...`, and stripping only the prefix leaves a
-// leading slash the loader cannot open, so a drive letter takes the slash too.
+// Asset resolution; see SPEC.md section 8 for why this is a loader function
+// rather than a bare import. Local warning for this exact regex: on Windows
+// `wasmUrl` arrives as `/@fs/C:/...`, and stripping only the `/@fs` prefix
+// leaves a leading slash the loader cannot open ahead of the drive letter, so
+// the drive-letter branch strips that slash too.
 const wasmLocation = (() => {
   if (typeof self !== 'undefined' || !wasmUrl.startsWith('/@fs/')) return wasmUrl;
   const path = wasmUrl.slice('/@fs'.length);
@@ -49,9 +32,7 @@ const wasmLocation = (() => {
 
 let cached: Promise<MilpSolve> | null = null;
 
-// One module instance per realm, loaded on first use: the wasm is 3.4MB and
-// most sessions never ask for this solver.
-//
+// One module instance per realm, loaded on first use; see SPEC.md section 8.
 // Nothing here is stateful across solves — `solve` builds a fresh model string
 // every call — so the sharing is of the module, not of any search state.
 export function loadHighs(): Promise<MilpSolve> {
@@ -69,10 +50,9 @@ export function loadHighs(): Promise<MilpSolve> {
           )
     )
     .catch((error: unknown) => {
-      // What is cached is the promise, not the module, so a rejected one would
-      // stay cached and every later solve in the session would fail with the
-      // same error. A dropped fetch of a 3.4MB asset must not disable the
-      // planner until the page is reloaded.
+      // What is cached is the promise, not the module — clearing it here is
+      // what keeps a rejected load from staying cached and failing every later
+      // solve in the session. See SPEC.md section 8.
       cached = null;
       throw error;
     });
@@ -160,18 +140,17 @@ export function writeLp(model: MilpModel): string {
 export interface RawHighsSolution {
   Status: string;
   ObjectiveValue: number;
-  // `Index` is declared but never read — see `readSolution` on why the name is
-  // the only reliable key. It is here because an infeasible solve returns
-  // columns carrying no `Primal` at all, and a type whose properties are all
-  // optional and all absent from that shape is rejected as a weak type.
+  // `Index` is declared but never read — see `readSolution` and SPEC.md
+  // section 8 on why the name is the only reliable key. It is declared here
+  // because an infeasible solve returns columns carrying no `Primal` at all,
+  // and a type whose properties are all optional and all absent from that
+  // shape is rejected as a weak type.
   Columns: Record<string, { Primal?: number; Index?: number }>;
 }
 
 export function readSolution(model: MilpModel, solution: RawHighsSolution): MilpSolution {
-  // Keyed by *name*, deliberately. The `Index` a solution reports is the
-  // column's position in the LP file, which is the order the reader first saw
-  // it in — not the order this model built its columns in. A column that is
-  // absent from the file (no objective, no bound, no coefficient anywhere) is
+  // Keyed by *name*, deliberately — see SPEC.md section 8. A column absent
+  // from the LP file (no objective, no bound, no coefficient anywhere) is
   // absent from the solution too, and its zero is already in place.
   const columnValues = new Float64Array(model.columnCount);
   let hasPrimal = false;

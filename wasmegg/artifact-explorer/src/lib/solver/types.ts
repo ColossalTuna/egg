@@ -113,10 +113,8 @@ export interface MilpSolution {
 }
 
 // Everything that bounds the search. Deliberately node- and gap-based rather
-// than time-based: the arena requires the same problem to produce the same
-// allocation, and a wall-clock limit makes the answer a function of how loaded
-// the machine was. That rule holds in the app too — the sidebar exposes the node
-// budget, not a number of seconds, so the same settings give the same plan.
+// than time-based; see SPEC.md section 7 for why a wall-clock limit is off the
+// table entirely.
 export interface MilpLimits {
   // 0 means "no branching allowed beyond the root"; Infinity means unbounded.
   maxNodes: number;
@@ -127,15 +125,10 @@ export interface MilpLimits {
 export type MilpSolve = (model: MilpModel, limits: MilpLimits) => MilpSolution;
 
 // Options pinned on every solve, so a plan is a function of the model and the
-// limits and of nothing else.
-//
-// `threads`/`parallel` are pinned because a parallel MIP search is not
-// reproducible, and reproducibility is a hard arena rule. The feasibility
-// tolerances are pinned an order of magnitude below HiGHS's defaults because a
-// solution this candidate returns is graded by a packer working to 1e-9
-// absolute seconds: at the default 1e-6 a plan could be "feasible" to HiGHS and
-// infeasible to the judge, which is a hard arena failure rather than a rounding
-// difference of opinion.
+// limits and of nothing else. `threads`/`parallel`/`random_seed` are pinned
+// for reproducibility (SPEC.md section 7); the feasibility tolerances are
+// pinned below HiGHS's defaults to stay on the judge's packer's scale
+// (SPEC.md section 3).
 export const SOLVER_OPTIONS: Readonly<Record<string, boolean | number | string>> = {
   output_flag: false,
   log_to_console: false,
@@ -145,12 +138,10 @@ export const SOLVER_OPTIONS: Readonly<Record<string, boolean | number | string>>
   presolve: 'on',
   primal_feasibility_tolerance: 1e-9,
   mip_feasibility_tolerance: 1e-9,
-  // The dual tolerance is absolute on reduced costs, and this candidate's raw
-  // scores are tiny enough that at the default 1e-7 an LP can report "optimal"
-  // at the all-zero vertex while a strictly better point sits in the same
-  // polytope. One order of magnitude, not more: at HiGHS's documented minimum
-  // of 1e-10 the simplex fails outright on the wider instances ("HiGHS error
-  // -1" out of `Highs_run`), so the structural fix is `SCALE_LP_OBJECTIVE` in
-  // `milp.ts` and this is only the margin around it.
+  // One order of magnitude below default, not more: at HiGHS's documented
+  // minimum of 1e-10 the simplex fails outright on the wider instances
+  // ("HiGHS error -1" out of `Highs_run`). See SPEC.md section 4 for why this
+  // option needs touching at all (`SCALE_LP_OBJECTIVE` in `milp.ts` is the
+  // structural fix; this is only the margin around it).
   dual_feasibility_tolerance: 1e-8,
 };
