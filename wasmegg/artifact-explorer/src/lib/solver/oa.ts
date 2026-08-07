@@ -64,7 +64,7 @@ export interface Tuning {
 //
 // The default is `{2, 5}`: the cheap end of the two-round plateau, chosen for
 // the instances real players are expected to bring rather than for the arena's
-// uniform-random tail. See `src/oracle/arena/solvers/highs/SPEC.md` section 7.
+// uniform-random tail. See SPEC.md section 7.
 export const DEFAULT_TUNING: Tuning = { maxRounds: 2, maxNodes: 5 };
 
 const MIP_REL_GAP = 1e-6;
@@ -117,13 +117,38 @@ function slotLoads(model: Model, layout: Layout, columnValues: Float64Array): nu
 
 // Verifier, not a repairer.
 //
-// Both budgets are rows of the model, so a solution HiGHS calls feasible
-// already satisfies them and this returns true. What it is really checking is
-// the *transformation*: `decodeCounts` rounds integer columns HiGHS returns a
-// few ulps off, and clamps to `group.cap`. Rounding can only move a budget by
-// ~1e-9, and the clamp only ever removes missions — a sub-multiset of a
-// packable multiset packs — so neither can produce an infeasible plan. This
-// says so out loud rather than assuming it.
+// WHEN THIS IS EVER FALSE. Both budgets are rows of the model, so it is fair to
+// ask whether the construction has already asserted the answer. It has not,
+// and the gap is `decodeCounts`, not the solve:
+//
+//   * HiGHS satisfies a row only to `mip_feasibility_tolerance` (1e-9, pinned
+//     in `SOLVER_OPTIONS`), and that tolerance is *absolute on the row as
+//     ingested*. For fuel that is generous — `milp.ts` rescales the fuel row by
+//     up to 1/smallest ~ 5e7, so 1e-9 there is ~2e-17 in normalized fuel — and
+//     for the slot rows it is 1e-9 raw seconds. Neither of those alone can
+//     reach `FUEL_TOL` or `SLOT_TOL`.
+//   * `decodeCounts` then *rounds*. Integrality also holds only to 1e-9, so
+//     `Math.round` can move a column by up to 1e-9 — and a slot row multiplies
+//     that column by `timeSeconds`, which is ~1e6. One column rounding the
+//     wrong way is worth up to ~1e-3 seconds of slot load, three orders above
+//     `SLOT_TOL`. The same argument on the fuel row gives up to ~1e-9 per
+//     column, which `FUEL_TOL` covers only if a single column drifts.
+//
+// That is not enough on its own to be reachable — it needs a plan sitting
+// exactly on a budget. Those exist: over 231 certifications (the 40-instance
+// sweep, plus the same sweep with fuel and with time tightened by 0.1%), the
+// largest fuel excess observed was exactly 0.000e+0, i.e. plans that fill the
+// tank to the last drop, which the round-number fuel costs and tank sizes make
+// commonplace. The check never fired in any of those 231 — the drift in
+// practice is ~1e-12, not the 1e-9 worst case — but "never observed" and
+// "unreachable" are different claims, and C1 is a hard failure. The branch
+// stays.
+//
+// The two budgets are read from different places on purpose. Fuel is checked
+// against the rounded, `group.cap`-clamped `counts` — what `emit` actually
+// returns. Slot loads are read off the raw columns *before* the clamp, so the
+// loads checked are an upper bound on the emitted plan's: the clamp only ever
+// removes missions, and a sub-multiset of a packable multiset packs.
 //
 // It replaced a repair loop that dropped the highest-fuel (then longest)
 // mission until both budgets held. That loop was measured never to fire — 40

@@ -1,6 +1,6 @@
 // The mixed-integer program handed to HiGHS.
 //
-// Two models are built from the same core (`src/oracle/arena/solvers/highs/SPEC.md` sections 3 and 4):
+// Two models are built from the same core (SPEC.md sections 3 and 4):
 //
 //   scaleLp(t)   continuous, maximize s_t alone. Gives theta_t, the largest
 //                score target t can reach at all, which is what every score is
@@ -119,9 +119,36 @@ export function effectiveQs(model: Model): number[] {
 // `highs.ts`), so `small_matrix_value` is inert: it is set too late to affect the
 // ingestion it governs.
 //
-// The margin is not comfortable either. Fuel costs are normalized by the tank,
-// and across the 40 sweep instances the smallest is 2e-8; A1-fuel doubles the
-// tank, which halves it. Ten times the filter is not a margin.
+// The margin is not comfortable either, and the fuel row is where it is
+// thinnest, so here is the whole arithmetic with real numbers.
+//
+// The tank capacity itself never reaches the matrix. `model.ts` divides every
+// mission's `actualFuel` by `fuelCapacity`, so what the fuel row carries is a
+// dimensionless ratio, and a 1e14 tank is not on its own a large coefficient —
+// it is a large *denominator*. Both ends of the ratio are bounded:
+//
+//   upper  an option costing more than the whole tank is dropped by
+//          `buildModel` (`cap = floor(1 / fuel)`, and `cap < 1` returns), so
+//          every surviving coefficient is <= 1. Whatever the tank, this row
+//          cannot approach `large_matrix_value` = 1e15.
+//   lower  the smallest ratio the game admits is the cheapest launch over the
+//          largest tank: 1.0e7 / 5.0e14 = 2.0e-8. (`fuelTankSizes` tops out at
+//          5e14; 1e7 is the cheapest `actualFuel` in the enumerated menu across
+//          the sweep.) A1-fuel doubles the tank, which halves it to 1e-8.
+//
+// 2e-8 is twenty times `small_matrix_value`. Twenty is not a margin, which is
+// why this constant is 1e-6 and not 1e-9: at 1e-6 the row is rescaled while the
+// filter is still two decades away. What the rescale then does with those
+// numbers: `smallest = 2e-8 < 1e-6`, so `scale = min(1/2e-8, 1e12/largest)`,
+// and since `largest <= 1` the headroom term is >= 1e12 while `1/smallest` is
+// 5e7 — the cap cannot bind on this row, and the scale is exactly `1/smallest`.
+// The smallest entry lands on 1 and the largest on at most 5e7, both sitting
+// mid-window with eight decades of clearance below and seven above.
+//
+// Measured, forcing all 40 sweep instances to the largest tank: normalized fuel
+// coefficients span [2.0e-8, 3.3e-1], and the smallest entry any fuel row
+// actually hands HiGHS after scaling is 1.0e-5. Whole OA matrix over the same
+// run: [1e-5, 1e12], against a window of roughly [1e-9, 1e15].
 //
 // So instead: scaling a row and its bounds by a positive constant leaves the
 // feasible set exactly unchanged, so any row carrying an entry near the filter

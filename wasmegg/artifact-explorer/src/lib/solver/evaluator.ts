@@ -1,5 +1,5 @@
 // Judge-equivalent evaluator: the value in nats of an integer allocation over
-// option groups, re-derived from the objective (`src/oracle/arena/solvers/highs/SPEC.md` section 2) to mirror
+// option groups, re-derived from the objective (SPEC.md section 2) to mirror
 // `src/oracle/evaluate.ts` numerically without importing it.
 //
 // Single target: one craft LP, s_T = Q_T * craft_T + lambda_T.

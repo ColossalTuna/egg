@@ -1,8 +1,41 @@
-// Dense primal simplex for the re-derived arena candidates.
+// Dense primal simplex for the evaluator's craft LP.
 //
 // Maximize c.x subject to A x <= b, x >= 0, with every b_i >= 0 so the slack
-// basis is feasible from the start and no phase 1 is needed. Re-derived for
-// the arena — imports nothing.
+// basis is feasible from the start and no phase 1 is needed. Imports nothing.
+//
+// WHY THIS EXISTS WHEN THE PROJECT ALREADY DEPENDS ON HiGHS.
+//
+// Not because HiGHS is asynchronous — `MilpSolve` is a plain synchronous
+// function once `loadHighs()` has resolved, and `evaluator.ts` could be handed
+// one. Not because of call volume either: measured over the 40-instance arena
+// sweep, `simplexMax` runs 12 times per plan on average and 72 times at the
+// worst instance, on LPs no larger than 27 rows by 21 columns. Those numbers
+// alone would not justify a hand-rolled solver.
+//
+// The reason is what `evaluator.ts` consumes. Two of its three call sites read
+// `primal` — the *vertex* — not the objective:
+//
+//   * away-step Frank-Wolfe (`optimizeJointCrafts`) keeps an active set of
+//     extreme points of the craft polytope, identifies them by coordinates
+//     (`sameVertex`), and moves along `x - v` for a v in that set. The argument
+//     only works over vertices.
+//   * the seed is one max-craft vertex per target.
+//
+// Feeding those LPs to HiGHS instead was measured on 142 of them captured out
+// of real solves. HiGHS matched this solver's *objective* on 142 of 142, to
+// better than 1e-6 relative — and returned a *different optimal vertex* on 142
+// of 142. The craft polytope is massively degenerate (conservation rows, many
+// ties), so which optimum comes back is a tie-breaking convention, and HiGHS's
+// is not this one. Swapping would silently reroute every Frank-Wolfe
+// trajectory, change the craft split, change the judged score of every
+// incumbent and so change the plan on essentially every instance — with no
+// error anywhere to say so. `evaluator.ts` exists to mirror the judge
+// (`src/oracle/evaluate.ts`), which is itself a dense Bland tableau; a third
+// tie-break rule is the one thing it must not have.
+//
+// The cost argument is real but secondary: HiGHS is reachable only through a
+// model serialized to CPLEX LP text and parsed back, which measures 2.05ms per
+// call on a 27x21 LP against 0.185ms here — 11x, almost all of it text.
 //
 // DEVIATION from SPEC section 2 ("Bland's rule simplex, iteration guard
 // 50*(rows+cols)"): pure Bland pricing needed thousands of pivots on the
@@ -32,12 +65,6 @@
 export interface SimplexSolution {
   objective: number;
   primal: number[]; // parallel to c
-  // Shadow price of each row: d(objective)/d(b_i), in the *unscaled* units of
-  // the problem as handed in. A retired `astar-alloc` entry steered by these — one solve prices
-  // every item, where a finite-difference marginal would cost one solve per
-  // option. Read off the final objective row at the slack columns and undone
-  // for both scalings; non-negative at an optimum by construction.
-  dual: number[]; // parallel to b
 }
 
 // Reduced costs and pivot elements both live on a unit scale after
@@ -55,10 +82,6 @@ export function simplexMax(
   b: readonly number[],
   c: readonly number[]
 ): SimplexSolution {
-  (globalThis as any).__sx = ((globalThis as any).__sx ?? 0) + 1;
-  (globalThis as any).__sxDims = (globalThis as any).__sxDims ?? [];
-  (globalThis as any).__sxDims.push([A.length, c.length]);
-  ((globalThis as any).__sxCap ??= []).push([A.map(r => r.slice()), b.slice(), c.slice()]);
   const m = A.length;
   const n = c.length;
   const width = n + m + 1; // structural vars, slacks, rhs
@@ -70,7 +93,6 @@ export function simplexMax(
   if (!(cScale > 0) || !Number.isFinite(cScale)) cScale = 1;
 
   const T: Float64Array[] = [];
-  const rowScale = new Float64Array(m);
   for (let i = 0; i < m; i++) {
     const row = new Float64Array(width);
     // Row equilibration over the structural coefficients and the rhs. The
@@ -82,7 +104,6 @@ export function simplexMax(
     for (let j = 0; j < n; j++) row[j] = A[i][j] / s;
     row[n + i] = 1;
     row[width - 1] = b[i] / s;
-    rowScale[i] = s;
     T.push(row);
   }
   const obj = new Float64Array(width);
@@ -125,9 +146,7 @@ export function simplexMax(
       for (let i = 0; i < m; i++) {
         if (basis[i] < n) primal[basis[i]] = Math.max(0, T[i][width - 1]);
       }
-      const dual = new Array<number>(m).fill(0);
-      for (let i = 0; i < m; i++) dual[i] = Math.max(0, (T[m][n + i] * cScale) / rowScale[i]);
-      return { objective: T[m][width - 1] * cScale, primal, dual };
+      return { objective: T[m][width - 1] * cScale, primal };
     };
 
     if (enter === -1) return currentSolution();

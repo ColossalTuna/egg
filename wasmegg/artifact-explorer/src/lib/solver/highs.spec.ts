@@ -1,8 +1,24 @@
-// The LP-format writer is the one place in this solver where a bug is silent.
-// Everything else fails loudly — a bad bound is infeasible, a bad
-// objective is a bad plan the judge catches — but a row that serializes wrong
+// This is a test of `highs.ts`, not of the `highs` package.
+//
+// Three pieces of project code sit between a `MilpModel` and an answer, and all
+// three are ours:
+//
+//   `writeLp`        serializes the row-major matrix to CPLEX LP text — bounds,
+//                    integrality, equality vs one-sided rows, sign handling,
+//                    scientific notation across the coefficient range the cuts
+//                    actually use.
+//   `readSolution`   maps the returned columns back by *name*, because the
+//                    `Index` HiGHS reports is the column's position in the LP
+//                    file rather than in the model, and a column absent from
+//                    the file is absent from the solution.
+//   status mapping   HiGHS's string statuses collapsed into `MilpStatus`, which
+//                    `oa.ts` branches on.
+//
+// Nothing else in this solver fails quietly. A bad bound is infeasible; a bad
+// objective is a bad plan the judge catches. But a row that serializes wrong
 // just means HiGHS cheerfully solves a different problem and hands back an
-// answer that looks fine.
+// answer that looks fine, and a column read back against the wrong index is a
+// plan built from someone else's numbers.
 //
 // So: build models in memory, solve them through the wasm backend, and check the
 // solution against the *in-memory* model rather than against the text. A dropped
@@ -10,7 +26,11 @@
 // returned point that does not satisfy the model it was supposed to come from.
 //
 // Deliberately no harness and no instance generation here; these are synthetic
-// models chosen to exercise the writer's branches.
+// models chosen to exercise the writer's branches. The one assertion that
+// really is about HiGHS — that it reports infeasibility rather than a
+// plausible-looking point — is here because `oa.ts` keeps its previous
+// incumbent on that status, so a solver that answered differently would be
+// silently believed.
 
 import { describe, expect, it } from 'vitest';
 import { INF, type MilpModel, type MilpSolve } from './types';
