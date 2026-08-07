@@ -110,10 +110,11 @@ export const mySolver: ArenaSolver = {
 };
 ```
 
-`solvers/highs/` is the worked example, and the entry you have to beat. If your
-methodology does not produce an allocation vector directly, the adapting step is
-yours to write: map whatever your solver returns onto counts indexed against
-`problem.options`.
+`solvers/highs/index.ts` is the worked example of the seam — a shim over the
+shipped planner in `src/lib/solver/`, described in `src/lib/solver/SPEC.md`. If
+your methodology does not produce an allocation vector directly, the adapting
+step is yours to write: map whatever your solver returns onto counts indexed
+against `problem.options`.
 
 ### Rules
 
@@ -135,15 +136,20 @@ yours to write: map whatever your solver returns onto counts indexed against
   `src/lib/OPTIMIZER.md`, and you are free to model it however your methodology
   wants. Reading `src/lib` for reference is encouraged; importing it is not.
 
-  There are no exemptions. There used to be two, for baseline entries that
-  wrapped `src/lib`'s search on purpose; that search no longer exists. Note the
-  direction that leaves: `src/lib/optimizer-core.ts` imports the `highs`
-  candidate, which is what makes the shipped planner and the measured one the
-  same code. Importing `src/lib` from a candidate would close that loop and
+  There is one exception, and it is narrow: `solvers/highs/index.ts` is a shim
+  around `src/lib/solver/`, the planner the app itself runs, so that one file may
+  import `src/lib/solver/` and nothing else out of `src/lib`.
+  `independence.spec.ts` encodes the exception by name. It buys nothing else —
+  that file, like every candidate, still may not touch the judge, the feasibility
+  rule or the checks.
+
+  Note the direction that leaves. Production calls the planner
+  (`src/lib/optimizer-core.ts` calls the same `solveWith` on the same loaded
+  module the shim does), so the shipped planner and the measured one are one code
+  path. A candidate importing `src/lib` would close that loop the other way and
   measure the app grading itself.
 - **Be deterministic.** Same problem in, same allocation out. If your method is
-  stochastic, seed it from the problem, not from a clock or a global. B5 checks
-  this, and non-determinism makes every other result unreproducible.
+  stochastic, seed it from the problem, not from a clock or a global.
 - **Do not read the seed, the instance label, or anything outside `PlanProblem`.**
   It is the whole input.
 - **Do not mutate `problem`.** It is shared across the checks in a sweep.
@@ -168,13 +174,13 @@ holds without knowing the optimum, so none of them needs a reference answer:
 
 | group | asserts |
 | --- | --- |
-| **C0** contract | the returned allocation is the right shape, non-negative and integral |
+| **C0** contract | the returned allocation has one entry per option, and every entry is a non-negative whole number |
 | **C1** feasibility | the plan fits the fuel tank and packs into the slots |
-| **C2/C3** honesty | what you report matches what you returned (opt-in) |
-| **A** monotonicity | more fuel, more time, more ships, more inventory, more crafting level, less launch-period floor, or fewer targets can never make the answer worse |
-| **B** invariance | shuffling the menu, reversing the target list, rescaling every fuel figure, duplicating an option, or simply running twice must not move the answer |
-| **M** cross-path | the joint answer must not beat the product of per-target optima (M1), must not be beaten by a solo solve on a target it already covers (M2), and must not lose to the union of per-target plans on split budgets (M3) |
-| **D** local optimality | no improving feasible 2-opt (D1) or 4-opt (D2) move exists over the plan's support |
+| **C2/C3** honesty | the probability you report is the one the judge computes for the allocation you returned, and your per-target factors multiply to it (opt-in) |
+| **A** monotonicity | relaxing the problem cannot make your answer worse. More fuel, more time, more ships on the menu, more inventory, a higher crafting level, a shorter launch-period floor, one fewer target: each of those is solved alongside the original, and the relaxed solve must not score below it |
+| **B** invariance | restating the same problem must not move the answer at all. Shuffling the menu, reversing the target list, multiplying every fuel cost and the tank by the same constant, appending a duplicate of an option already on the menu, or simply solving twice |
+| **M** cross-path | the joint answer must not beat the product of the per-target optima (M1); a solo solve of one target must reach at least what the joint plan already reaches on that target (M2); and the joint answer must not lose to the union of per-target plans solved on split budgets (M3) |
+| **D** local optimality | your plan cannot be improved by a small edit to itself. D1 tries every *pair* — remove up to 2 launches of one option in the plan, add up to 2 of some other option — and D2 tries two such pairs at once. If any of those edits is feasible and scores better, the returned plan was not even a local optimum |
 
 **Quality**, as the judged joint probability on the unperturbed instance,
 reported in log10 and compared head-to-head against the other entries. This is
@@ -189,10 +195,6 @@ this harness is an absolute number of **nats** on `log(joint)`, so a drop from
 `1e-13` to `1e-14` is 2.30 nats and reads exactly as loudly as `0.5 -> 0.05`.
 Probability zero is `-Infinity`, so returning nothing where another solver
 returns `1e-13` is a failure rather than a rounding artefact.
-
-This matters more than it sounds. Under the relative-with-a-floor comparison
-this harness originally used, 13 of the 40 sweep instances — including 10 of the
-15 four-target ones — were silently skipped by every A, B and M check.
 
 ## Running it
 
@@ -209,82 +211,28 @@ Per-solver JSON lands in `results/<solver-id>.json`, which is gitignored — eve
 sweep rewrites it, so re-run rather than expecting a committed reference.
 
 **Gating.** `C0-contract` and `C1-feasibility` hard-fail: a plan that is not a
-plan is broken outright. Everything else is reported rather than thrown, because
-no entry holds all of them yet and a suite that goes red for everyone measures
-nothing. `ARENA_GATE=all` promotes the rest to failures.
+plan is broken outright, and that is not a matter of degree. Every other
+invariant is reported rather than thrown, because what the arena measures is how
+far a candidate is from holding them — a suite that aborts on the first
+monotonicity wobble stops producing a scorecard and starts producing a stack
+trace. `ARENA_GATE=all` promotes the rest to failures, for a candidate that is
+meant to hold them.
 
-**Cost.** A 40-instance cheap sweep is roughly 15-25 minutes per solver on this
-container; the deep tier adds substantially more. Instances range from 63 to 285
-options and from 1 to 4 targets.
+**Cost.** A 40-instance cheap sweep is at least 15 minutes (heavily dependent on
+solver runtime); the deep tier adds substantially more. Instances range from 63
+to 285 options and from 1 to 4 targets.
 
-**Validation bar.** A result is not durable until the full sweep has been re-run
-three times fresh and compared per instance, not just on aggregate counts — a
-stable total can hide one instance regressing while another improves.
-
-## The baseline
+## The roster
 
 | id | what it is |
 | --- | --- |
-| `highs` | `src/oracle/arena/solvers/highs/`: the whole plan as a mixed-integer program — missions per slot, crafts as flow over the conservation polytope, packing as three rows rather than a repair — with the concave objective handled by outer approximation and solved by HiGHS. See its `SPEC.md`. |
+| `highs` | `solvers/highs/index.ts`, a shim over `src/lib/solver/`: the whole plan as a mixed-integer program — missions per slot, crafts as flow over the conservation polytope, packing as three rows rather than a repair — with the concave objective handled by outer approximation and solved by HiGHS. See `src/lib/solver/SPEC.md`. |
 
-**It is also the shipped planner.** `src/lib/optimizer-core.ts` imports this
-exact module, so the solver measured here and the solver users run are one code
-path. That is what the arena is for now: not a bake-off between methodologies,
-but a bar a change to the shipped planner has to clear before it lands. A
-candidate is measured against `results/highs.json`, and "better" means better
-than the thing already in production.
+**It is also the shipped planner.** `src/lib/optimizer-core.ts` calls the same
+`solveWith` on the same loaded module, so the solver measured here and the solver
+users run are one code path. That is what the arena is for now: not a bake-off
+between methodologies, but a bar a change to the shipped planner has to clear
+before it lands.
 
-It is a wrapper like any other: it goes through the same `Planner` seam, and the
-harness does not know which entry is which. The one direction that is allowed to
-couple is production importing the candidate; a candidate may not import
-`src/lib`, and `arena:check` enforces that.
-
-It is not clean, and the shape of what it gets wrong is the important part.
-Measured on the default 40-instance cheap sweep (`ARENA=sweep pnpm arena`, seeds
-2000-2039, this container), at the shipped tuning of `{maxRounds: 2, maxNodes:
-5}`:
-
-| | `highs` |
-| --- | --- |
-| violations | 63 |
-| clean instances | 23/40 |
-| invariants firing | 5 |
-| worst finite violation | 0.1951 nats |
-| `p -> 0` / `0 -> p` collapses | **0** |
-| solve latency median / p90 / max | 1090 / 2738 / 3727 ms |
-| sweep wall clock | 2228 s |
-| mean log10(joint) | -6.775 |
-
-Per-invariant counts:
-
-| invariant | count | instances |
-| --- | --- | --- |
-| A3-menu | 39 | 13 |
-| B2-target-order | 11 | 11 |
-| A5-effort | 8 | 7 |
-| A1-fuel | 4 | 4 |
-| A2-time | 1 | 1 |
-
-**Every one of them is a truncated search, not a modelling gap.** They all have
-the form "a more constrained problem scored better", they are all under 0.2
-nats, and none is a collapse to or from probability zero. Raising `maxNodes` to
-5000 takes them from 55 to 8 on the instances that carry them — so the residual
-is bought by the node budget, and buying it back costs about seven times the
-wall clock. `DEFAULT_TUNING` in `solvers/highs/oa.ts` records that curve.
-
-For scale, the search this replaced (`optimizer-core.ts`'s LP relaxation,
-dominance-pruned integer search, packing and beam polish, removed in the same
-change that made HiGHS the planner) scored 59 violations, 11/40 clean, 11
-invariants firing, a worst finite violation of **-1.0917 nats** and **8 `p -> 0`
-collapses**, at a median solve of 77 ms. It was roughly fourteen times faster and
-wrong in a way that mattered: a collapse means a plan that cannot craft the
-target at all. An earlier `baseline-fixed` entry applied four root-cause fixes to
-its ranking, beam, candidate generation and LP seeding and reached 50 violations
-and 15/40 clean for ~2.8x the runtime — with every one of the A1/A2/A3/A5
-families surviving. Neither entry exists any more; the findings are the part that
-mattered.
-
-Two things follow for anyone writing a candidate. Beating `highs` on violation
-*count* is not the bar — beating it on violation *magnitude*, on collapses, or on
-latency at equal quality is. And a candidate that holds A1, A2, A3 and A5
-outright would be doing something neither method here manages.
+What each entry actually scored is written up alongside that entry rather than
+here, so a candidate's brief stays a statement of the rules.
