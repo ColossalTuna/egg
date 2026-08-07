@@ -205,7 +205,7 @@ describe('arena independence', () => {
   it('the harness names no solver', () => {
     // `registry.ts` is the only file allowed to know which candidates exist.
     //
-    // Code only. A comment is allowed to cite `solvers/highs/SPEC.md` as the
+    // Code only. A comment is allowed to cite `src/lib/solver/SPEC.md` as the
     // document an invariant was argued in — prose about where a rule came from
     // is not the harness branching on which candidate it is grading, which is
     // the thing this forbids.

@@ -386,7 +386,7 @@ export function checkB2TargetOrder(c: CheckContext) {
 // and still be quietly unit-dependent.
 //
 // The incumbent passes exactly, not within tolerance, because it normalises fuel
-// to a budget of 1 before modelling (see `solvers/highs/SPEC.md`) — which is the
+// to a budget of 1 before modelling (see `src/lib/solver/SPEC.md`) — which is the
 // property this invariant exists to keep true of future candidates too.
 export function checkB3FuelScale(c: CheckContext) {
   const base = solve(c).joint;
@@ -420,7 +420,7 @@ export function checkB3FuelScale(c: CheckContext) {
 // The slot is left empty rather than closed up because the ids are the arena's
 // public vocabulary: they are what `results/*.json` keys violations by, what the
 // scorecard tables in `ARENA.md` are written against, and what
-// `solvers/highs/SPEC.md` cites when it argues which invariants the model holds
+// `src/lib/solver/SPEC.md` cites when it argues which invariants the model holds
 // structurally. Renumbering B5 -> B4 and B6 -> B5 would silently re-point every
 // one of those at a different check, which is a worse outcome than a gap in a
 // sequence. New invariances take the next free number (B7); B4 stays vacant.

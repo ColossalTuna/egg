@@ -123,7 +123,7 @@ once per returned solution, never in the search loop.
 `optimizeFull` states the whole problem as one mixed-integer program and hands
 it to HiGHS. The model, the outer-approximation loop that handles the concave
 objective, and the numeric traps in both live in
-`src/oracle/arena/solvers/highs/SPEC.md`; what follows is only what a reader of
+`src/lib/solver/SPEC.md`; what follows is only what a reader of
 this file needs.
 
 **Why a MILP.** The three-slot packing constraint is a genuine bin packing, and
@@ -160,7 +160,7 @@ and why the default sits where it does.
 
 **What it buys.** Measured over the arena's 40 instances: no plan that collapses
 to probability zero, against eight for the previous search, and a worst
-monotonicity violation of 0.20 nats against 1.09. See `ARENA.md`.
+monotonicity violation of 0.20 nats against 1.09. See `solver/RESULTS.md`.
 
 **What is still wrong with it.** Roughly sixty invariant violations across the
 sweep, all of the form "a more constrained problem scored better", all small, and
@@ -251,7 +251,7 @@ own legendary. With a single target every share is 1.
 | File | Role |
 | --- | --- |
 | `optimizer-core.ts` | The pipeline around the planner: `buildEvalContext` compiles the objective, `optimizeFull` states the problem and calls the MILP, `assembleFullSolution` turns an allocation into a renderable solution. |
-| `../oracle/arena/solvers/highs/` | The planner itself — the MILP, the outer-approximation loop, the HiGHS binding. Also the arena's registered entry, so the shipped solver and the measured one are one module. See its `SPEC.md`. |
+| `solver/` | The planner itself — the MILP, the outer-approximation loop, the HiGHS binding. `../oracle/arena/solvers/highs/index.ts` is a shim that registers this same module as the arena's entry, so the shipped solver and the measured one are one code path. See its `SPEC.md`. |
 | `packing.ts` | Exact 3-bin feasibility returning a witness assignment. Standalone by design: it imports nothing, and in particular nothing from `../oracle/`, because the oracle spec re-checks every solver plan against its own independent feasibility routine. Sharing one implementation would make that assertion circular. |
 | `value-function.ts` | Inner crafting LP, the tangent epigraph construction, `alphaToProb`, and `refineJointCraftSplit`. |
 | `lp.ts` | Small dense-tableau simplex with Bland's rule, tuned for many small re-solves. Equilibrates rows and columns before solving: an absolute epsilon against raw fuel coefficients (~1e18) and craft-conservation rows (~1) in the same tableau used to stop the pivot loop early while reporting `'optimal'`. |

@@ -17,10 +17,11 @@ export interface EvalResult {
   scores: number[]; // s_T per target (may be +Infinity for a prob-1 craft)
 }
 
-// g(s) = log(1 - exp(-s)) via expm1. SPEC section 2 writes this as
-// log1p(-exp(-s)), but that form loses the s ~ 1e-13 regime the arena scores in
-// (the subtraction 1 - exp(-s) cancels); log(-expm1(-s)) is the accurate
-// expm1 form and is what the judge computes. Deviation flagged.
+// g(s) = log(1 - exp(-s)), computed as log(-expm1(-s)).
+//
+// The form matters. Evaluating `1 - exp(-s)` directly cancels in the s ~ 1e-13
+// regime the arena scores in, so the accurate expm1 form is the one the judge
+// computes and the one this has to match.
 export function logHit(s: number): number {
   return s > 0 ? Math.log(-Math.expm1(-s)) : -Infinity;
 }

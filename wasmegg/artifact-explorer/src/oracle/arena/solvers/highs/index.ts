@@ -7,7 +7,7 @@
 // WebAssembly binding (`highs.ts`). `src/lib/optimizer-core.ts` calls the same
 // `solveWith` with the same loaded module, so the planner users run and the
 // planner the harness measures are one code path, and a change to it is proved
-// against the invariants before it ships. See `SPEC.md` for the method.
+// against the invariants before it ships. See `src/lib/solver/SPEC.md` for the method.
 //
 // So this entry is DELIBERATELY not independent of `src/lib`, and it is the
 // only file under `solvers/` that is allowed to be. Every other candidate must
