@@ -29,6 +29,7 @@ import type { Planner } from './contract';
 import {
   budgetsOf,
   feasible,
+  fuelWithinCapacity,
   oracleInstanceOf,
   run,
   signature,
@@ -366,7 +367,7 @@ export function checkC0Contract(c: CheckContext) {
 export function checkC1Feasibility(c: CheckContext) {
   const s = solve(c);
   const b = budgetsOf(s.problem, s.allocation);
-  if (b.fuel > s.problem.fuelCapacity * (1 + 1e-9) + 1e-6) {
+  if (!fuelWithinCapacity(b.fuel, s.problem.fuelCapacity)) {
     c.out.push({
       invariant: 'C1-feasibility',
       instance: c.inst.label,
@@ -427,6 +428,14 @@ export function checkC3JointIsProduct(c: CheckContext) {
 export function checkM1M2SoloDominance(c: CheckContext) {
   if (c.inst.targets.length < 2) return;
   const joint = solve(c);
+  // `perTarget` is positional against the instance's target list. That is the
+  // judge's contract, but reading it by index without saying so would turn a
+  // future reordering into a silently wrong M2 rather than a failure.
+  if (joint.judged.perTarget.length !== c.inst.targets.length) {
+    throw new Error(
+      `arena: judged perTarget has ${joint.judged.perTarget.length} entries for ${c.inst.targets.length} target(s)`
+    );
+  }
   let product = 1;
   for (let i = 0; i < c.inst.targets.length; i++) {
     const t = c.inst.targets[i];
@@ -571,14 +580,21 @@ function kOpt(
       exhausted = true;
       return;
     }
-    if (!feasible(s.problem, a)) return;
+    // Charged before the feasibility test, not after. `feasible` runs the full
+    // packing search, so it is the expensive part of a candidate; charging only
+    // the ones that pass let an instance whose candidates are mostly infeasible
+    // run the loops to completion regardless of the budget.
     evals++;
+    if (!feasible(s.problem, a)) return;
     const p = evaluateAllocationJoint(oracleInst, a).jointProbability;
     if (improved(best.p, p, thresholdNats)) best = { p, detail: describe(moves) };
   };
 
   // Pairs: -k of a held line, +m of anything.
-  for (const i of held) {
+  // `exhausted` has to unwind every level: `tryAlloc` setting it is not enough
+  // on its own, and the nests below run to billions of iterations on a wide
+  // instance, each one still paying for `alloc.slice()`.
+  pairs: for (const i of held) {
     for (let k = 1; k <= Math.min(alloc[i], maxDelta); k++) {
       for (const j of addable) {
         if (i === j) continue;
@@ -590,15 +606,16 @@ function kOpt(
             [i, -k],
             [j, m],
           ]);
+          if (exhausted) break pairs;
         }
       }
     }
   }
 
-  if (arity === 4) {
+  if (arity === 4 && !exhausted) {
     // Two simultaneous exchanges. Restricted to the plan's own support on the
     // drop side, which is what keeps this tractable.
-    for (let x = 0; x < held.length; x++) {
+    quads: for (let x = 0; x < held.length; x++) {
       for (let y = x + 1; y < held.length; y++) {
         const i1 = held[x];
         const i2 = held[y];
@@ -619,6 +636,7 @@ function kOpt(
                   [i2, -k2],
                   [j2, k2],
                 ]);
+                if (exhausted) break quads;
               }
             }
           }

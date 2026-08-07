@@ -116,7 +116,7 @@ export function simplexMax(
         }
       }
     }
-    if (enter === -1) {
+    const currentSolution = () => {
       const primal = new Array<number>(n).fill(0);
       for (let i = 0; i < m; i++) {
         if (basis[i] < n) primal[basis[i]] = Math.max(0, T[i][width - 1]);
@@ -124,7 +124,9 @@ export function simplexMax(
       const dual = new Array<number>(m).fill(0);
       for (let i = 0; i < m; i++) dual[i] = Math.max(0, (T[m][n + i] * cScale) / rowScale[i]);
       return { objective: T[m][width - 1] * cScale, primal, dual };
-    }
+    };
+
+    if (enter === -1) return currentSolution();
 
     // Largest candidate in the entering column sets the scale below which a
     // pivot element is noise rather than a usable pivot.
@@ -139,8 +141,10 @@ export function simplexMax(
     let leave = -1;
     let bestRatio = Infinity;
     let bestPivot = 0;
+    let anyPositive = false;
     for (let i = 0; i < m; i++) {
       const a = T[i][enter];
+      if (a > 0) anyPositive = true;
       if (a <= pivotFloor) continue;
       const ratio = Math.max(0, T[i][width - 1]) / a;
       if (leave === -1 || ratio < bestRatio - TOL) {
@@ -159,7 +163,15 @@ export function simplexMax(
       }
     }
     if (leave === -1) {
-      throw new Error('arena simplex: LP is unbounded');
+      // Two different things reach here. A column with no positive entry at all
+      // really is an unbounded ray. A column that has positive entries, all of
+      // them under `pivotFloor`, is a numerical dead end on a bounded LP:
+      // `pivotFloor` is scaled off the largest *magnitude* in the column, so a
+      // large negative entry can float it above every positive one. Throwing
+      // for the second case travels all the way up through `evaluateAt` and
+      // `solveWith` and costs the user a plan rather than a slightly worse one.
+      if (!anyPositive) throw new Error('arena simplex: LP is unbounded');
+      return currentSolution();
     }
 
     const pivot = T[leave][enter];

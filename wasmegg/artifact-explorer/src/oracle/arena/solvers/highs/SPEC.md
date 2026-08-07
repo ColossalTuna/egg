@@ -32,7 +32,7 @@ silently lies.
 
 ## Module layout
 
-```
+```text
 solvers/common/
   model.ts                 # restricted DAG, normalized budgets, merged option groups
   evaluator.ts             # judge-equivalent value of an integer allocation
@@ -88,7 +88,7 @@ is the log of a probability.
 
 ## 3. Rows
 
-```
+```text
 aggregation      N_g - sum_k n_{g,k}                              =  0
 conservation_i   sum_p cons[i][p] c_p - sum_g yield_g[i] N_g     <=  baseB_i
 score_t          theta_t sigma_t - Q_t c_{target t}
@@ -250,7 +250,7 @@ the proxy only steers.
 
 ## 5. The loop
 
-```
+```text
 theta   <- one LP per target
 cuts    <- log-spaced grid, 15 points per target, 1 down to 1e-7
 best    <- the empty plan
@@ -258,9 +258,8 @@ best    <- the empty plan
 repeat maxRounds times:
     solve the MILP under the current cuts
     counts  <- round the n columns, sum over slots
-    repair(counts)                       # see section 6
     value   <- common/evaluator on counts
-    keep counts if value beats best
+    keep counts if certifies(counts) and value beats best   # see section 6
     stop if the MILP was proven optimal and its bound is within 1e-6 nats of best
     add a cut per target where the MILP thinks the plan landed
     add a cut per target where it actually landed

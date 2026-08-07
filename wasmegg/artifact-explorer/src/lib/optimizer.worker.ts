@@ -18,10 +18,33 @@ import {
 
 const ctx = self as unknown as Worker;
 
+// Ids only ever increase, so anything below the newest one seen has already
+// been superseded on the main thread. A solve is about a second and the UI
+// posts one per input change, so without this a user editing three fields pays
+// for three full solves and the client discards the first two on arrival.
+//
+// The yield below is what makes the check mean anything. `solveWith` is
+// synchronous, so it blocks this thread for the whole solve and the queued
+// messages behind it are not dispatched until it returns — every request would
+// otherwise observe itself as the newest one. Handing control back to the event
+// loop once drains the queue first, so a superseded request can see that it is.
+//
+// The reply still goes out. `optimizer-client` settles every id it has pending
+// and resolves a superseded one to null, so dropping the message rather than
+// answering it would leave that promise hanging forever.
+let newestId = 0;
+const drainQueue = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+
 ctx.onmessage = async (e: MessageEvent<OptimizerRequest>) => {
   const req = e.data;
+  if (req.id > newestId) newestId = req.id;
   let response: OptimizerResponse;
   try {
+    await drainQueue();
+    if (req.id < newestId) {
+      ctx.postMessage({ id: req.id, ok: true, solutions: [] } satisfies OptimizerResponse);
+      return;
+    }
     const solution = await optimizeFull({
       options: optionsFromWire(req.options),
       recipeDag: req.recipeDag,

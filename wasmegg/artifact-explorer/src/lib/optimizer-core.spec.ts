@@ -76,7 +76,7 @@ describe('optimizeFull', () => {
     expect(sol.fuelUsed).toBeCloseTo(300, 6);
   });
 
-  it('prunes an option dominated on yield', async () => {
+  it('does not allocate an option dominated on yield', async () => {
     const opt0 = makeOpt(10, 10, [['B', 1]], [], Name.LUNAR_TOTEM); // same cost, half the yield
     const opt1 = makeOpt(10, 10, [['B', 2]], [], Name.TUNGSTEN_ANKH);
     const sol = await optimizeFull({
@@ -152,7 +152,7 @@ describe('optimizeFull', () => {
     expect(sol.finalYieldVector.get('C') ?? 0).toBeGreaterThanOrEqual(9);
   });
 
-  it('falls back to triples when pairs are not enough', async () => {
+  it('allocates three distinct options when two cannot reach the optimum', async () => {
     // A needs B, C and D, with one option per ingredient. Any pair leaves
     // the third ingredient at zero, so only the triple scan can find the
     // (10, 10, 10) allocation.
@@ -192,7 +192,7 @@ describe('optimizeFull', () => {
     expect(sol.expectedCrafts).toBeCloseTo(10, 6);
   });
 
-  it('prunes an option dominated on cost alone', async () => {
+  it('does not allocate an option dominated on cost alone', async () => {
     const optExpensive = makeOpt(20, 10, [['B', 1]], [], Name.LUNAR_TOTEM);
     const optCheap = makeOpt(10, 10, [['B', 1]], [], Name.TUNGSTEN_ANKH); // same yield, half the fuel
     const sol = await optimizeFull({

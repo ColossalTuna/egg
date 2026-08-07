@@ -19,6 +19,17 @@ import { packFeasible, type PackVerdict } from './pack-feasibility';
 // Slack on budget comparisons. Capacities are float sums of float costs, so a
 // plan that lands exactly on the cap can read a few ulps over it.
 export const BUDGET_TOL = 1e-9;
+// An absolute floor on top of the relative slack: fuel figures run to 1e18, but
+// a plan of a few cheap missions can still land an absolute ulp over.
+export const FUEL_ABS_TOL = 1e-6;
+
+// One predicate, called from both `feasible` here and C1 in `invariants.ts`.
+// The two have to agree exactly: C1 is what reports a plan as infeasible, and
+// `feasible` is what every k-opt move filters on, so a tolerance that drifted
+// between them would let C1 fail a plan the improvement search calls legal.
+export function fuelWithinCapacity(fuel: number, capacity: number): boolean {
+  return fuel <= capacity * (1 + BUDGET_TOL) + FUEL_ABS_TOL;
+}
 
 export interface SolveOverrides {
   config?: ArenaInstance['config'];
@@ -51,7 +62,13 @@ export function buildProblem(inst: ArenaInstance, over: SolveOverrides = {}): Pl
   return {
     options,
     dag,
-    targets,
+    // Copied, not aliased. `options` and `dag` are built fresh for every call,
+    // so a candidate that mutates those can only damage its own problem, but
+    // `targets` would otherwise be the instance's own array: a candidate that
+    // sorted it in place would silently change every later check in the sweep
+    // instead of producing a violation. `ARENA.md` says the problem is
+    // read-only; this is the half of that the harness can enforce cheaply.
+    targets: [...targets],
     fuelCapacity: over.fuelCapacity ?? inst.fuelCapacity,
     timeCapacity: over.timeCapacity ?? inst.timeCapacity,
     slots: NUM_SLOTS,
@@ -148,7 +165,7 @@ export function budgetsOf(problem: PlanProblem, alloc: readonly number[]): Budge
 
 export function feasible(problem: PlanProblem, alloc: readonly number[]): boolean {
   const b = budgetsOf(problem, alloc);
-  return b.fuel <= problem.fuelCapacity * (1 + BUDGET_TOL) + 1e-6 && b.pack === 'packs';
+  return fuelWithinCapacity(b.fuel, problem.fuelCapacity) && b.pack === 'packs';
 }
 
 export interface Solved {

@@ -27,11 +27,20 @@ function importsOf(source: string): string[] {
   while ((m = re.exec(source)) !== null) out.push(m[1]);
   const bare = /(?:^|\n)\s*import\s+['"]([^'"]+)['"]/g;
   while ((m = bare.exec(source)) !== null) out.push(m[1]);
+  // A dynamic import and a re-export move the same bindings a static import
+  // does. This file itself reaches `./registry` through the first form, so a
+  // candidate could reach the judge the same way and leave the guard green.
+  const dynamic = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  while ((m = dynamic.exec(source)) !== null) out.push(m[1]);
+  const reexport = /(?:^|\n)\s*export\s[^;]*?from\s+['"]([^'"]+)['"]/g;
+  while ((m = reexport.exec(source)) !== null) out.push(m[1]);
   return out;
 }
 
 // Type-only imports move no code and cannot change behaviour, so they are not
-// a coupling. `import type { X } from ...` and inline `import { type X }`.
+// a coupling. This strips the `import type { X } from ...` statement form only;
+// an inline `import { type X }` is still reported as a value import, which errs
+// towards flagging a coupling that is not one rather than missing one that is.
 function valueImportsOf(source: string): string[] {
   const withoutTypeImports = source.replace(/(?:^|\n)\s*import\s+type\s[^;]*?;/g, '\n');
   return importsOf(withoutTypeImports);

@@ -20,7 +20,10 @@ const solve: MilpSolve = await loadHighs();
 
 interface Row {
   // column -> coefficient
-  terms: Record<number, number>;
+  // Ordered pairs, not an object. Integer-like object keys enumerate in
+  // ascending numeric order, so `{ 2: .., 0: .., 1: .. }` would reach the
+  // writer as 0, 1, 2 and no fixture could exercise an unsorted row slice.
+  terms: [number, number][];
   lower: number;
   upper: number;
 }
@@ -34,8 +37,8 @@ function model(
   const values: number[] = [];
   for (const row of rows) {
     offsets.push(indices.length);
-    for (const [column, coefficient] of Object.entries(row.terms)) {
-      indices.push(Number(column));
+    for (const [column, coefficient] of row.terms) {
+      indices.push(column);
       values.push(coefficient);
     }
   }
@@ -90,7 +93,7 @@ describe('the LP-format writer round-trips the model', () => {
         { lower: 0, upper: 3, integer: true, objective: 1 },
         { lower: 0, upper: 10, integer: true, objective: 1 },
       ],
-      [{ terms: { 0: 1, 1: 2 }, lower: -INF, upper: 4 }]
+      [{ terms: [[0, 1], [1, 2]], lower: -INF, upper: 4 }]
     );
     const solution = solve(m, { maxNodes: 1000, relGap: 1e-9 });
     expect(solution.status).toBe('optimal');
@@ -109,9 +112,9 @@ describe('the LP-format writer round-trips the model', () => {
         { lower: -INF, upper: INF, objective: 1 },
       ],
       [
-        { terms: { 2: 1, 0: -2, 1: -3 }, lower: 0, upper: 0 },
-        { terms: { 0: 1, 1: 1 }, lower: -INF, upper: 4 },
-        { terms: { 0: 1, 1: -1 }, lower: 0, upper: INF },
+        { terms: [[2, 1], [0, -2], [1, -3]], lower: 0, upper: 0 },
+        { terms: [[0, 1], [1, 1]], lower: -INF, upper: 4 },
+        { terms: [[0, 1], [1, -1]], lower: 0, upper: INF },
       ]
     );
     const solution = solve(m, { maxNodes: 1000, relGap: 1e-9 });
@@ -132,10 +135,10 @@ describe('the LP-format writer round-trips the model', () => {
         { lower: -INF, upper: 0, objective: 1 },
       ],
       [
-        { terms: { 0: 1234.5678 }, lower: -INF, upper: 2592000 },
-        { terms: { 0: 0.001371742112482853 }, lower: -INF, upper: 1 },
-        { terms: { 1: 1, 0: -1e-7 }, lower: -INF, upper: -3.5e-6 },
-        { terms: { 1: 1, 0: -1e7 }, lower: -INF, upper: 4.25 },
+        { terms: [[0, 1234.5678]], lower: -INF, upper: 2592000 },
+        { terms: [[0, 0.001371742112482853]], lower: -INF, upper: 1 },
+        { terms: [[1, 1], [0, -1e-7]], lower: -INF, upper: -3.5e-6 },
+        { terms: [[1, 1], [0, -1e7]], lower: -INF, upper: 4.25 },
       ]
     );
     const solution = solve(m, { maxNodes: 1000, relGap: 1e-9 });
@@ -147,7 +150,7 @@ describe('the LP-format writer round-trips the model', () => {
   it('reports infeasibility rather than a plausible-looking point', () => {
     const m = model(
       [{ lower: 2, upper: 5, integer: true, objective: 1 }],
-      [{ terms: { 0: 1 }, lower: -INF, upper: 1 }]
+      [{ terms: [[0, 1]], lower: -INF, upper: 1 }]
     );
     expect(solve(m, { maxNodes: 1000, relGap: 1e-9 }).status).toBe('infeasible');
   });

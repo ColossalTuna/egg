@@ -22,8 +22,21 @@ import { formatComparison, formatScorecard, sweep, writeResults, type SweepResul
 
 const MODE = process.env.ARENA ?? 'smoke';
 const DEEP = MODE === 'deep';
-const COUNT = Number(process.env.ARENA_INSTANCES ?? (MODE === 'smoke' ? 4 : 40));
-const SEED_BASE = Number(process.env.ARENA_SEED_BASE ?? 2000);
+// Validated rather than coerced: `Number('x')` is NaN, `Array.from({length: NaN})`
+// is empty, and a sweep over zero instances asserts nothing while reporting a
+// clean run. A typo in the environment must fail loudly, not silently pass.
+const intEnv = (name: string, fallback: number): number => {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`${name} must be a non-negative integer, got ${JSON.stringify(raw)}`);
+  }
+  return n;
+};
+
+const COUNT = intEnv('ARENA_INSTANCES', MODE === 'smoke' ? 4 : 40);
+const SEED_BASE = intEnv('ARENA_SEED_BASE', 2000);
 const GATE_ALL = process.env.ARENA_GATE === 'all';
 const RESULT_DIR = resolve(__dirname, 'results');
 

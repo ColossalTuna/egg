@@ -141,6 +141,11 @@ export function buildModel(problem: PlanProblem): Model {
 
   const candidates: Candidate[] = [];
   problem.options.forEach((opt: LaunchOption, index: number) => {
+    // A non-finite cost passes every comparison below -- `NaN > 1` is false, so
+    // the slot filter lets it through, and `time > 0` is false, so `cap` falls
+    // back to GROUP_CAP. It would then reach the slot and fuel rows and be
+    // written into the LP text, where HiGHS rejects the whole model. Drop it.
+    if (!Number.isFinite(opt.actualFuel) || !Number.isFinite(opt.actualTime)) return;
     const fuel = fuelCap > 0 ? opt.actualFuel / fuelCap : 0;
     const time = timeCap > 0 ? opt.actualTime / timeCap : Infinity;
     if (time > 1) return; // can never pack into a slot

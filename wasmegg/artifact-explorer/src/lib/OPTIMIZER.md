@@ -137,11 +137,18 @@ the same matrix rather than in an inner LP the outer search re-solves.
 
 **Why it is not a linear program.** `sum_T log(1 - e^-s_T)` is concave and
 transcendental. Outer approximation handles it: hold each target's contribution
-under a family of its tangents, solve the resulting MILP exactly, add tangents
-where the answer landed, and repeat. Every model in the sequence over-estimates,
-so each optimum is an upper bound on the true one. The loop returns the best
-*judged* incumbent — every candidate plan is scored by a re-derivation of the
-exact objective, so the linearisation steers and the real objective decides.
+under a family of its tangents, solve the resulting MILP, add tangents where the
+answer landed, and repeat. Each model in the sequence over-estimates the true
+objective, so *when a round is solved to proven optimality* its optimum is an
+upper bound on the true one — that is a property of the formulation, and it is
+what the loop's stopping rule reads. It is not a claim about every run: both
+budgets (`maxRounds`, `maxNodes`) can stop a round early, and a node-limited
+round returns an incumbent with no proven bound attached, so a budget-limited
+solve can and does return a non-optimal plan. The measured invariant violations
+are exactly that case. What holds unconditionally is the other half: the loop
+returns the best *judged* incumbent — every candidate plan is scored by a
+re-derivation of the exact objective, so the linearisation steers and the real
+objective decides.
 
 **What it costs.** About a second on a production-scale instance, against ~110ms
 for the search it replaced. Almost all of that is branch-and-bound, not the
@@ -250,7 +257,7 @@ own legendary. With a single target every share is 1.
 | `lp.ts` | Small dense-tableau simplex with Bland's rule, tuned for many small re-solves. Equilibrates rows and columns before solving: an absolute epsilon against raw fuel coefficients (~1e18) and craft-conservation rows (~1) in the same tableau used to stop the pivot loop early while reporting `'optimal'`. |
 | `phases.ts` | Recipe DAG construction and launch-option enumeration from loot data. |
 | `index.ts` | Pipeline glue: `buildRecipeDag`, `computeBaseYield`, `finalizeSolutions`, and an async `optimize` used only by tests — it imports `optimizer-core` dynamically so the solver stays out of the main chunk. |
-| `optimizer.worker.ts` | Worker entry point; awaits `optimizeFull`. The only place the solve is awaited — everything below the seam is synchronous. |
+| `optimizer.worker.ts` | Worker entry point; awaits `optimizeFull`. The only place the *app* awaits the solve — `index.ts` has the other await site, on the test-only path. Everything below the seam is synchronous, which is also why the worker drops requests a newer one has superseded. |
 | `optimizer-worker-protocol.ts` | Wire types and `MissionType` narrow/reconstruct across structured clone. |
 | `optimizer-client.ts` | Main-thread worker lifecycle, request numbering, supersession. |
 | `optimizer-tree.ts` | Recipe-tree builders for the inventory and craft-chain panels. |

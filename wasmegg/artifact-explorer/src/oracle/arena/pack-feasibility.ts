@@ -76,7 +76,6 @@ export function packFeasible(
 
     const j = active[t];
     const d = durations[j];
-    let remaining = counts[j];
 
     // Residual volume bound: everything still unplaced, including this
     // duration, has to fit in the room that is left.
@@ -86,13 +85,25 @@ export function packFeasible(
     for (const l of loads) room += capacity - l;
     if (residual > room + EPS) return false;
 
-    const key = `${t}|${loads.map(l => Math.round(l)).join(',')}`;
+    // Exact loads, not rounded ones. The memo records *infeasibility*, so two
+    // distinct states sharing a key would report a packable plan as infeasible:
+    // durations are mission seconds and routinely fractional, and [0, 1.075,
+    // 2.15] and [0, 1, 2] are not the same state.
+    const key = `${t}|${loads.join(',')}`;
     if (seenInfeasible.has(key)) return false;
 
     // Enumerate how many of this duration go into each slot. `fill` walks the
     // slots left to right; the last slot takes whatever is left over.
     const perSlot = new Array<number>(loads.length).fill(0);
     const fill = (s: number, left: number): boolean => {
+      // Charged too, not just `place`. `fill` enumerates every distribution of
+      // `counts[j]` across the slots before it recurses, which is the larger
+      // half of the work; leaving it uncharged meant `nodeBudget` did not
+      // actually bound the search.
+      if (++nodes > nodeBudget) {
+        exhausted = true;
+        return false;
+      }
       if (s === loads.length - 1) {
         if (loads[s] + left * d > capacity + EPS) return false;
         perSlot[s] = left;
@@ -112,8 +123,7 @@ export function packFeasible(
       return false;
     };
 
-    remaining = counts[j];
-    if (fill(0, remaining)) return true;
+    if (fill(0, counts[j])) return true;
     if (exhausted) return false;
 
     seenInfeasible.add(key);

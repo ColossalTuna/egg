@@ -39,8 +39,13 @@ import { INF, SOLVER_OPTIONS, type MilpModel, type MilpSolution, type MilpSolve 
 // build, a `/@fs/...` dev-server path under `vite dev` and under Vitest. In Node
 // there is no server to answer that path and the loader reads from disk, so the
 // dev prefix has to come back off.
-const wasmLocation =
-  typeof self === 'undefined' && wasmUrl.startsWith('/@fs/') ? wasmUrl.slice('/@fs'.length) : wasmUrl;
+// On Windows that path is `/@fs/C:/...`, and stripping only the prefix leaves a
+// leading slash the loader cannot open, so a drive letter takes the slash too.
+const wasmLocation = (() => {
+  if (typeof self !== 'undefined' || !wasmUrl.startsWith('/@fs/')) return wasmUrl;
+  const path = wasmUrl.slice('/@fs'.length);
+  return /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path;
+})();
 
 let cached: Promise<MilpSolve> | null = null;
 
@@ -50,18 +55,27 @@ let cached: Promise<MilpSolve> | null = null;
 // Nothing here is stateful across solves — `solve` builds a fresh model string
 // every call — so the sharing is of the module, not of any search state.
 export function loadHighs(): Promise<MilpSolve> {
-  cached ??= highsLoader({ locateFile: () => wasmLocation }).then(
-    (highs): MilpSolve =>
-      (model, limits) =>
-        readSolution(
-          model,
-          highs.solve(writeLp(model), {
-            ...SOLVER_OPTIONS,
-            mip_max_nodes: limits.maxNodes,
-            mip_rel_gap: limits.relGap,
-          } as Parameters<typeof highs.solve>[1])
-        )
-  );
+  cached ??= highsLoader({ locateFile: () => wasmLocation })
+    .then(
+      (highs): MilpSolve =>
+        (model, limits) =>
+          readSolution(
+            model,
+            highs.solve(writeLp(model), {
+              ...SOLVER_OPTIONS,
+              mip_max_nodes: limits.maxNodes,
+              mip_rel_gap: limits.relGap,
+            } as Parameters<typeof highs.solve>[1])
+          )
+    )
+    .catch((error: unknown) => {
+      // What is cached is the promise, not the module, so a rejected one would
+      // stay cached and every later solve in the session would fail with the
+      // same error. A dropped fetch of a 3.4MB asset must not disable the
+      // planner until the page is reloaded.
+      cached = null;
+      throw error;
+    });
   return cached;
 }
 
