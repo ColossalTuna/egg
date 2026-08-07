@@ -201,11 +201,12 @@ export interface EvalPrecision {
 
 // The judge's constants; the default so parity and the reported numbers hold.
 export const EXACT_PRECISION: EvalPrecision = { gapTol: 1e-12, maxIters: 2000 };
-// DEVIATION from SPEC section 2 (which fixes gap 1e-12 / 2000 iterations):
-// the search calls this evaluator thousands of times per solve, and running
-// every steering evaluation to 1e-12 costs ~10x the wall clock for ranking
-// decisions that are separated by millinats. Steering runs at 1e-7; the final
-// evaluation of the returned plan always uses EXACT_PRECISION.
+// DEVIATION from SPEC section 2 (which fixes gap 1e-12 / 2000 iterations).
+// Steering evaluations run at 1e-7 instead: `solveWith` scores an incumbent
+// only to rank it against the current best, and those comparisons are
+// separated by millinats, so the extra five decades decide nothing. The plan
+// actually returned is always re-scored at EXACT_PRECISION — that is the
+// number `reported` carries and the one C2/C3 check.
 export const STEERING_PRECISION: EvalPrecision = { gapTol: 1e-7, maxIters: 600 };
 
 export interface Inventory {

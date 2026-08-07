@@ -5,37 +5,43 @@
 //
 // WHY THIS EXISTS WHEN THE PROJECT ALREADY DEPENDS ON HiGHS.
 //
-// Not because HiGHS is asynchronous — `MilpSolve` is a plain synchronous
-// function once `loadHighs()` has resolved, and `evaluator.ts` could be handed
-// one. Not because of call volume either: measured over the 40-instance arena
-// sweep, `simplexMax` runs 12 times per plan on average and 72 times at the
-// worst instance, on LPs no larger than 27 rows by 21 columns. Those numbers
-// alone would not justify a hand-rolled solver.
+// One reason, and it is narrower than it looks: this solver keeps the plan's
+// self-report inside the judge's agreement band. Everything else that has been
+// offered for it has been measured and is false.
 //
-// The reason is what `evaluator.ts` consumes. Two of its three call sites read
-// `primal` — the *vertex* — not the objective:
+// Not asynchrony — `MilpSolve` is synchronous once `loadHighs()` has resolved.
+// Not call volume — 12 calls per plan on average across the 40-instance sweep,
+// 72 at the worst, on LPs no larger than 27 rows by 21 columns. And not the
+// vertex, which is the argument this comment used to make at length: that two
+// of `evaluator.ts`'s three call sites read `primal` rather than the objective,
+// that HiGHS returns a different optimum on a degenerate polytope, and that
+// swapping would therefore change the plan almost everywhere.
 //
-//   * away-step Frank-Wolfe (`optimizeJointCrafts`) keeps an active set of
-//     extreme points of the craft polytope, identifies them by coordinates
-//     (`sameVertex`), and moves along `x - v` for a v in that set. The argument
-//     only works over vertices.
-//   * the seed is one max-craft vertex per target.
+// It does not. A HiGHS-backed drop-in over the same signature was run against
+// the whole sweep: 38 of 40 instances came back with a byte-identical
+// allocation and a judged joint identical to the last bit, and the two that
+// moved moved by 0.0179 nats at most, in opposite directions. The reason the
+// vertex does not matter is structural: in `optimizeJointCrafts` the returned
+// array is used as nothing but a Frank-Wolfe linear-oracle vertex and an
+// active-set member, and any argmax vertex is a valid oracle answer, so the
+// iteration converges to the same optimum whichever one it is handed.
 //
-// Feeding those LPs to HiGHS instead was measured on 142 of them captured out
-// of real solves. HiGHS matched this solver's *objective* on 142 of 142, to
-// better than 1e-6 relative — and returned a *different optimal vertex* on 142
-// of 142. The craft polytope is massively degenerate (conservation rows, many
-// ties), so which optimum comes back is a tie-breaking convention, and HiGHS's
-// is not this one. Swapping would silently reroute every Frank-Wolfe
-// trajectory, change the craft split, change the judged score of every
-// incumbent and so change the plan on essentially every instance — with no
-// error anywhere to say so. `evaluator.ts` exists to mirror the judge
-// (`src/oracle/evaluate.ts`), which is itself a dense Bland tableau; a third
-// tie-break rule is the one thing it must not have.
+// What did move is `emit`'s `reported` value, by 1.06e-6 to 3.56e-6 nats —
+// enough to trip C2-honesty, whose tolerance is 1e-6, on 11 of 18 instances.
+// The plans were unchanged; only the self-report drifted. That looks like a
+// conditioning artifact of the LP encoding rather than anything intrinsic to
+// HiGHS, but it was not proven removable, and 11 new invariant violations is
+// not a trade worth making blind. Issue #52 carries the remaining work and the
+// three conditioning fixes still untried.
 //
-// The cost argument is real but secondary: HiGHS is reachable only through a
-// model serialized to CPLEX LP text and parsed back, which measures 2.05ms per
-// call on a 27x21 LP against 0.185ms here — 11x, almost all of it text.
+// Two things that would have been reasons are not: the judge has its own
+// simplex in `src/oracle/simplex.ts` (a float Bland tableau and an exact
+// rational one), so nothing here is coupled to it; and HiGHS is not the slower
+// path in aggregate — it needed 558 LP calls against 2581, because the pricing
+// rule below makes Frank-Wolfe stall. On one instance it burns 2107 iterations
+// and exits on `maxIters` without reaching the 1e-12 gap, where the HiGHS
+// oracle reaches the same answer in 40. That is a defect in this file, recorded
+// so it is not mistaken for a reason to keep it.
 //
 // DEVIATION from SPEC section 2 ("Bland's rule simplex, iteration guard
 // 50*(rows+cols)"): pure Bland pricing needed thousands of pivots on the
