@@ -141,11 +141,27 @@ export function buildModel(problem: PlanProblem): Model {
 
   const candidates: Candidate[] = [];
   problem.options.forEach((opt: LaunchOption, index: number) => {
-    // A non-finite cost passes every comparison below -- `NaN > 1` is false, so
-    // the slot filter lets it through, and `time > 0` is false, so `cap` falls
-    // back to GROUP_CAP. It would then reach the slot and fuel rows and be
-    // written into the LP text, where HiGHS rejects the whole model. Drop it.
-    if (!Number.isFinite(opt.actualFuel) || !Number.isFinite(opt.actualTime)) return;
+    // Two ways a malformed cost gets through the comparisons below, both ending
+    // in a model that is wrong rather than one that fails loudly.
+    //
+    // Non-finite: `NaN > 1` is false, so the slot filter lets it through, and
+    // `time > 0` is false, so `cap` falls back to GROUP_CAP. It reaches the slot
+    // and fuel rows and is written into the LP text, where HiGHS rejects the
+    // whole model.
+    //
+    // Negative: worse, because nothing rejects it. A negative `actualFuel` is a
+    // negative coefficient in the fuel row, so launching the mission *buys* fuel
+    // budget; a negative `actualTime` passes `time > 1` and `time > 0` alike and
+    // then discounts a slot's load. Either one silently licenses a plan the
+    // budgets were supposed to forbid.
+    if (
+      !Number.isFinite(opt.actualFuel) ||
+      !Number.isFinite(opt.actualTime) ||
+      opt.actualFuel < 0 ||
+      opt.actualTime < 0
+    ) {
+      return;
+    }
     const fuel = fuelCap > 0 ? opt.actualFuel / fuelCap : 0;
     const time = timeCap > 0 ? opt.actualTime / timeCap : Infinity;
     if (time > 1) return; // can never pack into a slot
