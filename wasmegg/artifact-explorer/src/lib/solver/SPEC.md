@@ -75,10 +75,16 @@ is the log of a probability.
 item that can exist is what is owned plus what every mission could drop at its
 maximum count plus what could be crafted of it, and the most of a node that can
 be crafted is the smallest of those supplies divided by the recipe quantity.
-Every step ignores competition between siblings and ignores fuel and time
-entirely, so it is a relaxation and cannot cut off a feasible point. It is not
-floored: `c` is continuous, so 2.5 crafts is a reachable point and a floored
-bound would remove it.
+"Maximum count" is `group.cap`, which is already `min(floor(1/fuel),
+floor(slots/time), GROUP_CAP)` — so fuel, time and the slot count do enter the
+bound, per group. What the propagation drops is *aggregate competition*: each
+group is counted at the maximum it could reach if it had the whole tank and every
+slot to itself, and two parents drawing on one ingredient are each given all of
+it. Both approximations over-state supply, so the result is a relaxation and
+cannot cut off a feasible point.
+
+It is not floored: `c` is continuous, so 2.5 crafts is a reachable point and a
+floored bound would remove it.
 
 The conservation rows already imply all of this — but only through a chain, one
 tier at a time, which presolve has to walk on every model. Handing the bound over

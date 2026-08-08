@@ -94,9 +94,13 @@ function cmpKey(a: Candidate, b: Candidate): number {
 // maximum number of times, plus everything that could be crafted of it. For
 // each craftable, the most that can be crafted is the smallest, over its
 // ingredients, of that supply divided by the recipe quantity. Every step
-// ignores competition — two parents drawing on one ingredient are each given
-// all of it, and fuel and time are ignored entirely — so the result is a
-// relaxation of the feasible set and cannot cut off a feasible point.
+// ignores *aggregate competition* — each group is counted at `group.cap`, the
+// most it could be launched with the whole tank and every slot to itself, and
+// two parents drawing on one ingredient are each given all of it. Note that
+// fuel, time and the slot count are not ignored: they are already inside
+// `group.cap`. What is dropped is that the groups have to share them. Both
+// approximations over-state supply, so the result is a relaxation of the
+// feasible set and cannot cut off a feasible point.
 //
 // NOT FLOORED. `c` is continuous (SPEC.md section 2), so a fractional bound is
 // reachable: with 5 of an ingredient and a recipe taking 2, the LP may sit at
