@@ -151,7 +151,16 @@ re-derivation of the exact objective, so the linearisation steers and the real
 objective decides.
 
 **What it costs.** About a second on a production-scale instance, against ~110ms
-for the search it replaced. Almost all of that is branch-and-bound, not the
+for the search it replaced.
+
+One avoidable part of that has been removed. The craft columns used to be the
+only columns in the model with no bound of their own — the conservation rows
+bound them, but only through a chain presolve has to walk tier by tier — so
+`model.ts` now derives a per-column bound from the recipe directly
+(`craftUpperBounds`, and `solver/SPEC.md` section 2 for why it is a relaxation).
+Measured at 26% of a two-target production solve, for an identical plan. The
+gap was found by accident, from a *slack* golden egg budget row speeding the
+solver up by a similar margin. Almost all of that is branch-and-bound, not the
 WebAssembly boundary, so it does not come back with a faster interface. The two
 budgets that bound it (`maxRounds`, `maxNodes`) are deliberately node- and
 round-based rather than a wall clock, because the same inputs have to produce the

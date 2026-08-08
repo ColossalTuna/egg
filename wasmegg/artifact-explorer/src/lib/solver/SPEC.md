@@ -70,6 +70,23 @@ optimising a different objective from the one being graded.
 `z` is bounded above by 0 before any cut is added, because `g(s) = log(1 - e^-s)`
 is the log of a probability.
 
+`c` carries an explicit upper bound per column (`craftUpperBounds` in
+`model.ts`), obtained by interval propagation over the recipe: the most of an
+item that can exist is what is owned plus what every mission could drop at its
+maximum count plus what could be crafted of it, and the most of a node that can
+be crafted is the smallest of those supplies divided by the recipe quantity.
+Every step ignores competition between siblings and ignores fuel and time
+entirely, so it is a relaxation and cannot cut off a feasible point. It is not
+floored: `c` is continuous, so 2.5 crafts is a reachable point and a floored
+bound would remove it.
+
+The conservation rows already imply all of this — but only through a chain, one
+tier at a time, which presolve has to walk on every model. Handing the bound over
+directly was measured at 26% of the solve on a two-target production instance
+(1553ms to 1146ms, identical plan). It was found by accident: adding a
+*deliberately slack* golden egg row sped the solver up by a similar margin, and
+the row turned out to be the only thing that had ever bounded these columns.
+
 ## 3. Rows
 
 ```text

@@ -247,6 +247,16 @@ function buildCore(
     // per group.
     columnUpper[layout.aBase + g] = model.groups[g].cap;
   }
+  // Craft columns. `model.craftCaps` is a relaxation (see `craftUpperBounds`),
+  // so this cannot cut off a feasible point — it only saves presolve from
+  // re-deriving through the conservation chain what the recipe already implies.
+  // Anything at or past INF stays unbounded rather than becoming a huge finite
+  // bound, which would be a coefficient near the top of the ingestion window.
+  for (let p = 0; p < layout.crafts; p++) {
+    const cap = model.craftCaps[p];
+    if (Number.isFinite(cap) && cap >= 0 && cap < INF) columnUpper[layout.cBase + p] = cap;
+  }
+
   // g(s) <= 0 for every s, so z is bounded above by 0 before any cut is added.
   if (withZ) {
     for (let t = 0; t < layout.targets; t++) {
