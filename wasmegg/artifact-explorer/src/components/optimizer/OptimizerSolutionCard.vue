@@ -60,7 +60,7 @@
         >Crafting cost</span
       >
       : {{ formatGoldenEggs(planCost.total) }}
-      <img :src="iconURL('egginc-extras/icon_golden_egg.png', 64)" class="inline-block h-4 w-4 -mt-0.5" alt="" />
+      <base-icon icon-rel-path="egginc-extras/icon_golden_egg.png" :size="64" class="inline-block -ml-0.5 h-4 w-4" />
     </div>
     <div class="text-gray-600">Ships in flight: {{ formatDuration(solution.runningTimeSeconds, true) }}</div>
     <div v-if="idleTimeSeconds > 0" class="text-gray-600">
@@ -92,7 +92,7 @@
 <script lang="ts">
 import { computed, defineComponent, PropType } from 'vue';
 
-import { eggIconPath, formatDuration, formatEIValue, iconURL } from 'lib';
+import { eggIconPath, formatDuration, formatEIValue } from 'lib';
 import type { OptimizerSolution, PlanCost, TargetView } from '@/lib';
 import { formatGoldenEggs } from '@/lib';
 import BaseIcon from 'ui/components/BaseIcon.vue';
@@ -157,7 +157,6 @@ export default defineComponent({
       formatDuration,
       formatEIValue,
       formatGoldenEggs,
-      iconURL,
       craftingCostTooltip,
       sparseTooltip,
       chanceTooltip,
