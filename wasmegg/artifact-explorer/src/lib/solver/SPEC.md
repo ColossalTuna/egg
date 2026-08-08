@@ -159,7 +159,7 @@ solver quality rescues.
 
 So every target is measured in units of its own ceiling. `theta_t` is the largest
 score target `t` can reach when every other target is ignored and the counts are
-allowed to be fractional — one continuous LP per target (`buildScaleLp`, solved
+allowed to be fractional — one continuous LP per target (`scaleLps`, solved
 by the same backend). Then `sigma_t = s_t / theta_t` lies in `[0, 1]` for every
 feasible plan, and a tangent at `sigma = a` has slope `1/a` rather than `1/s`.
 With the initial grid bottoming out at `1e-7`, its coefficients stay under `1e7`;

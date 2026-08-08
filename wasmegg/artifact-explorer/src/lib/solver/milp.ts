@@ -338,14 +338,19 @@ function finish(core: Core, objective: Float64Array): MilpModel {
 // an empty plan on an instance where the search this replaced scored 1.6e-14.
 const SCALE_LP_OBJECTIVE = 1e9;
 
-// Continuous relaxation maximizing target `t`'s score on its own. theta is left
-// at 1 so sigma_t *is* s_t and the answer reads straight off the column.
-export function buildScaleLp(model: Model, qs: readonly number[], t: number): MilpModel {
+// Continuous relaxations maximizing one target's score on its own. theta is
+// left at 1 so sigma_t *is* s_t and the answer reads straight off the column.
+//
+// Nothing but the single objective column depends on the target, so the core is
+// built once and every LP is finished from it.
+export function scaleLps(model: Model, qs: readonly number[]): (t: number) => MilpModel {
   const ones = new Array<number>(model.targets.length).fill(1);
   const core = buildCore(model, qs, ones, false, false);
-  const objective = new Float64Array(core.layout.columnCount);
-  objective[core.layout.sBase + t] = SCALE_LP_OBJECTIVE;
-  return finish(core, objective);
+  return t => {
+    const objective = new Float64Array(core.layout.columnCount);
+    objective[core.layout.sBase + t] = SCALE_LP_OBJECTIVE;
+    return finish(core, objective);
+  };
 }
 
 // A tangent of g at s = theta_t * a, written in sigma:

@@ -19,12 +19,12 @@ import { EXACT_PRECISION, STEERING_PRECISION, evaluateCounts } from './evaluator
 import { buildModel, type Model } from './model';
 import {
   buildOaMilp,
-  buildScaleLp,
   decodeCounts,
   decodeSigmas,
   effectiveQs,
   layoutOf,
   nCol,
+  scaleLps,
   type Layout,
   type Tangent,
 } from './milp';
@@ -202,9 +202,10 @@ function addCut(cuts: Tangent[], target: number, at: number): boolean {
 // probability is zero for every allocation and no plan beats the empty one.
 function scales(model: Model, qs: readonly number[], solve: MilpSolve, limits: MilpLimits): number[] | null {
   const layout = layoutOf(model, false);
+  const scaleLp = scaleLps(model, qs);
   const theta: number[] = [];
   for (let t = 0; t < model.targets.length; t++) {
-    const solution = solve(buildScaleLp(model, qs, t), limits);
+    const solution = solve(scaleLp(t), limits);
     if (solution.status === 'infeasible' || solution.status === 'unknown') return null;
     const value = solution.columnValues[layout.sBase + t];
     if (!(value > 0) || !Number.isFinite(value)) return null;

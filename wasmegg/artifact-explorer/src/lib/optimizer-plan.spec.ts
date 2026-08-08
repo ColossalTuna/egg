@@ -35,7 +35,7 @@ import { generateInstance } from '../oracle/arena/instances';
 import { buildProblem } from '../oracle/arena/harness';
 import { NUM_SLOTS, optimizeFull, type OptimizeArgs } from './optimizer-core';
 import { buildModel } from './solver/model';
-import { buildOaMilp, buildScaleLp, effectiveQs, layoutOf } from './solver/milp';
+import { buildOaMilp, effectiveQs, layoutOf, scaleLps } from './solver/milp';
 import { loadHighs } from './solver/highs';
 import { makeNode, makeOpt } from './spec-helpers';
 import type { RecipeDAG } from './types';
@@ -145,8 +145,9 @@ describe('every matrix entry lands inside the range HiGHS will ingest', () => {
     const qs = effectiveQs(model);
     const layout = layoutOf(model, false);
 
+    const scaleLp = scaleLps(model, qs);
     const theta = model.targets.map((_, t) => {
-      const sol = solve(buildScaleLp(model, qs, t), { maxNodes: 5, relGap: 1e-6 });
+      const sol = solve(scaleLp(t), { maxNodes: 5, relGap: 1e-6 });
       return sol.columnValues[layout.sBase + t];
     });
     // The grid `oa.ts` starts from; its deepest points are where the ratio
@@ -154,7 +155,7 @@ describe('every matrix entry lands inside the range HiGHS will ingest', () => {
     const grid = [1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 3e-3, 1e-3, 3e-4, 1e-4, 3e-5, 1e-5, 1e-6, 1e-7];
     const cuts = model.targets.flatMap((_, target) => grid.map(at => ({ target, at })));
 
-    const models = [...model.targets.map((_, t) => buildScaleLp(model, qs, t)), buildOaMilp(model, qs, theta, cuts)];
+    const models = [...model.targets.map((_, t) => scaleLp(t)), buildOaMilp(model, qs, theta, cuts)];
     for (const m of models) {
       for (const v of m.values) {
         expect(Math.abs(v)).toBeGreaterThan(SMALL);

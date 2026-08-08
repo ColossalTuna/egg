@@ -215,9 +215,8 @@ export interface Inventory {
 }
 
 // Drops and direct legendary rates implied by an integer allocation. Split out
-// of `evaluateCounts` so a search can perturb the inventory (e.g. floor it)
-// before scoring it.
-export function inventoryOf(model: Model, counts: readonly number[]): Inventory {
+// of `evaluateCounts`.
+function inventoryOf(model: Model, counts: readonly number[]): Inventory {
   const nTargets = model.targets.length;
   const b = model.baseB.slice();
   const lambdas = new Array<number>(nTargets).fill(0);
@@ -240,16 +239,14 @@ export function evaluateCounts(
   return evaluateAt(model, b, lambdas, precision);
 }
 
-// Value of a given inventory. `Qs` defaults to the judge's own craft rates;
-// a search may pass its own (the retired `astar-alloc` capped an infinite Q so
-// that steering arithmetic stays finite).
+// Value of a given inventory.
 export function evaluateAt(
   model: Model,
   b: number[],
   lambdas: readonly number[],
-  precision: EvalPrecision = EXACT_PRECISION,
-  Qs: readonly number[] = model.Qs
+  precision: EvalPrecision = EXACT_PRECISION
 ): EvalResult {
+  const Qs = model.Qs;
   const nTargets = model.targets.length;
   const scores = new Array<number>(nTargets).fill(0);
   // Split the targets: Q = +Infinity (craft probability 1) is handled
