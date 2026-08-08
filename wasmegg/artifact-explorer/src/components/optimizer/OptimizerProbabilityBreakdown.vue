@@ -35,9 +35,9 @@
       <ul class="text-xs">
         <optimizer-recipe-tree-row :node="craftChainTree">
           <template #metrics="{ node }">
-            <!-- two nowrap chunks, so the cost drops to its own line on narrow
-                 screens instead of widening the page -->
-            <span class="font-mono text-xs inline-flex flex-wrap justify-end gap-x-2">
+            <!-- the cost always sits on its own line under `used`, right-aligned
+                 with it, at every width -->
+            <span class="font-mono text-xs inline-flex flex-col items-end">
               <span class="whitespace-nowrap">
                 <template v-if="hasInventory && node.metrics.owned > 0.005">
                   <span class="text-amber-600">{{ formatCount(node.metrics.owned) }} inv</span>
