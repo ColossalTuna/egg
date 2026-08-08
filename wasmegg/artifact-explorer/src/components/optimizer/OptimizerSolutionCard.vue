@@ -55,6 +55,13 @@
         <base-icon :icon-rel-path="eggIconPath(egg)" :size="64" class="inline-block -ml-0.5 h-4 w-4"></base-icon>
       </li>
     </ul>
+    <div v-if="planCost.total > 0" class="text-gray-600">
+      <span v-tippy="craftingCostTooltip" class="cursor-help border-b border-dotted border-gray-400/60"
+        >Crafting cost</span
+      >
+      : {{ formatGoldenEggs(planCost.total) }}
+      <base-icon icon-rel-path="egginc-extras/icon_golden_egg.png" :size="64" class="inline-block -ml-0.5 h-4 w-4" />
+    </div>
     <div class="text-gray-600">Ships in flight: {{ formatDuration(solution.runningTimeSeconds, true) }}</div>
     <div v-if="idleTimeSeconds > 0" class="text-gray-600">
       <span v-tippy="idleTooltip" class="cursor-help border-b border-dotted border-gray-400/60">Idle</span>
@@ -86,7 +93,8 @@
 import { computed, defineComponent, PropType } from 'vue';
 
 import { eggIconPath, formatDuration, formatEIValue } from 'lib';
-import type { OptimizerSolution, TargetView } from '@/lib';
+import type { OptimizerSolution, PlanCost, TargetView } from '@/lib';
+import { formatGoldenEggs } from '@/lib';
 import BaseIcon from 'ui/components/BaseIcon.vue';
 import OptimizerChoiceList from './OptimizerChoiceList.vue';
 import OptimizerExpectedDrops from './OptimizerExpectedDrops.vue';
@@ -99,6 +107,7 @@ export default defineComponent({
     maxWaitTimeSeconds: { type: Number, required: true },
     hasInventory: { type: Boolean, required: true },
     targets: { type: Array as PropType<TargetView[]>, required: true },
+    planCost: { type: Object as PropType<PlanCost>, required: true },
   },
   setup(props) {
     // One row per target for any count, so the markup below needs no n=1 arm.
@@ -136,6 +145,8 @@ export default defineComponent({
     const craftTooltip =
       'Probability of crafting at least one legendary from the gathered ingredients (plus anything already in your inventory).';
     const dropTooltip = 'Probability of at least one legendary dropping directly from the missions.';
+    const craftingCostTooltip =
+      'Golden eggs needed to perform every craft in this plan, at your own crafting prices (the price of an item drops the more times you have crafted it). Crafts come out of the LP relaxation, so counts — and therefore the bill — are fractional.';
     const idleTooltip =
       'Budget time with no ships in flight — gaps between launches (per your effort setting) plus unused budget at the end. Ships in flight + idle = your max wait time.';
     const idleTimeSeconds = computed(() =>
@@ -145,6 +156,8 @@ export default defineComponent({
       eggIconPath,
       formatDuration,
       formatEIValue,
+      formatGoldenEggs,
+      craftingCostTooltip,
       sparseTooltip,
       chanceTooltip,
       jointTooltip,

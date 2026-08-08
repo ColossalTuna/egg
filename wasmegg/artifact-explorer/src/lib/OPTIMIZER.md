@@ -246,6 +246,38 @@ back to the pooled totals instead of showing each artifact "using" the whole
 pool. The root target itself is never scaled: every craft of it rolls for its
 own legendary. With a single target every share is 1.
 
+## Golden egg cost
+
+The plan is priced, not constrained: the solver has no notion of golden eggs, and
+`optimizer-cost.ts` reads a finished solution. The price curve is not re-derived
+here — `singleCraftCost`/`multiCraftCost` come from `lib`, so the numbers shown
+are the game's own, seeded with the player's `crafted` count per item (a veteran
+pays less for the same plan).
+
+`craftPrimal` is an LP relaxation, so craft counts are fractional while the curve
+is indexed by an integer craft number. `fractionalCraftCost` charges the whole
+crafts exactly and the remaining fraction at the price of the craft it has
+started: continuous in the craft count, and identical to `multiCraftCost` at
+integers.
+
+Two numbers, one bill. The solution card's total comes from
+`computePlanCraftingCost`, which prices the **unsplit** `craftPrimal` — one bill
+for the whole plan. The per-node `goldenEggCost` in a craft-chain tree prices that
+same pooled quantity and then takes the target's demand-weighted share of the
+result (see above), exactly as every other metric on the node is `pooled * share`.
+Pricing the *scaled* craft count instead would restart the decreasing curve for
+every target and overstate the bill; as written, the per-target chain subtotals
+reconcile with the card's total.
+
+One caveat to that reconciliation, and it predates pricing: a tree's root is never
+scaled (`shareOf` returns 1 for it). If one target's artifact is also an ingredient
+of another target, it is billed in full to its own chain and again as a share of
+the other's, so those subtotals sum to more than the plan total. The card's total
+remains the figure to trust.
+
+The manual "previous crafts" override feeds `legendaryCraftProbability` only.
+Pricing always reads the real crafted counts from the save.
+
 ## File map
 
 | File | Role |
@@ -262,6 +294,7 @@ own legendary. With a single target every share is 1.
 | `optimizer-client.ts` | Main-thread worker lifecycle, request numbering, supersession. |
 | `optimizer-tree.ts` | Recipe-tree builders for the inventory and craft-chain panels. |
 | `optimizer-views.ts` | Flat presentation helpers derived from a solution. |
+| `optimizer-cost.ts` | Golden egg pricing of a plan's craft chain, over `lib`'s price curve. |
 | `types.ts` | Shared types for all of the above. |
 | `../oracle/` | Brute-force correctness harness; see its own README. |
 | `../components/ArtifactMissionOptimizer.vue` | Top-level planner: assembles inputs, drives the worker, debounces auto-compute. |

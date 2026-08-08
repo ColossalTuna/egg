@@ -3,6 +3,7 @@ export * from './missions';
 export * from './loot';
 export * from './optimizer-views';
 export * from './optimizer-tree';
+export * from './optimizer-cost';
 export * from './tank-ids';
 
 import type { DAGNode, LaunchSolution, OptimizerConfig, OptimizerSolution, DropRow, RecipeDAG } from './types';
