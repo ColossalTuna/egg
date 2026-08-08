@@ -78,6 +78,7 @@ conservation_i   sum_p cons[i][p] c_p - sum_g yield_g[i] N_g     <=  baseB_i
 score_t          theta_t sigma_t - Q_t c_{target t}
                                  - sum_g leg_g[t] N_g             =  0
 fuel             sum_g fuel_g N_g                                <=  1
+goldenEggs       sum_p price_p c_p                               <=  craftBudget
 slot_k           sum_g seconds_g n_{g,k}                         <=  timeCapacity
 order_k          sum_g seconds_g (n_{g,k} - n_{g,k+1})           >=  0
 cut(t, a)        z_t - theta_t g'(theta_t a) sigma_t             <=  g(theta_t a)
@@ -105,6 +106,21 @@ a hard arena failure, not a difference of opinion about rounding.
 conservation polytope and the mission counts are in one matrix, so the solver
 trades a mission for a craft directly rather than choosing missions first and
 accounting for crafts afterwards.
+
+`goldenEggs` is optional and written only when the caller supplies a budget and
+at least one craftable carries a positive price; without it the plan is priced
+after the fact and never constrained. `price_p` is a *linear* stand-in for a
+curve that decreases in the craft index — the player's next craft of `p`, the
+dearest one the plan can make — so the row's activity is an upper bound on the
+real bill and a plan that satisfies it is always affordable. The converse does
+not hold: a plan leaning many crafts on one node is over-charged and can be
+rejected despite fitting. Raw golden eggs, not normalized: prices run 1e2-1e7
+against capacities of 1e6-1e10, which sits mid-window at both ends.
+
+The row binds on this model alone, which is not where the reported bill comes
+from. `optimizer-core.ts` re-derives the craft split downstream, so the same
+budget is written into `compileJointInnerLp` and the LP inside
+`refineJointCraftSplit`; see OPTIMIZER.md.
 
 `order_k` breaks the slot symmetry by forcing slot loads non-increasing. Without
 it every plan appears `slots!` times and the tree spends its budget rediscovering

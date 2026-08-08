@@ -6,7 +6,15 @@ export * from './optimizer-tree';
 export * from './optimizer-cost';
 export * from './tank-ids';
 
-import type { DAGNode, LaunchSolution, OptimizerConfig, OptimizerSolution, DropRow, RecipeDAG } from './types';
+import type {
+  CraftBudget,
+  DAGNode,
+  LaunchSolution,
+  OptimizerConfig,
+  OptimizerSolution,
+  DropRow,
+  RecipeDAG,
+} from './types';
 import { enumerateLaunchOptions, generateRecipeDag } from './phases';
 import { ei, getArtifactTierPropsFromId, getCraftingInfoFromLevel, Inventory, InventoryItem, ShipsConfig } from 'lib';
 
@@ -140,7 +148,8 @@ export async function optimize(
   dag: RecipeDAG,
   baseYield: Map<string, number>,
   launchPeriodSeconds = 0,
-  maxGemCost?: number
+  maxGemCost?: number,
+  craftBudget?: CraftBudget
 ) {
   const { desiredArtifactNodeIds, fuelTankCapacity, timeBudgetSeconds } = config;
   const options = enumerateLaunchOptions(playerConfig, dag, launchPeriodSeconds, maxGemCost);
@@ -154,6 +163,7 @@ export async function optimize(
       fuelCapacity: fuelTankCapacity,
       timeCapacity: timeBudgetSeconds,
       baseYield: baseYield,
+      craftBudget,
     }),
   ];
 
@@ -161,6 +171,7 @@ export async function optimize(
 }
 
 export type {
+  CraftBudget,
   OptimizerConfig,
   OptimizerSolution,
   LaunchOption,

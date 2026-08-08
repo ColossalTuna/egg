@@ -8,7 +8,7 @@ import { getArtifactTierPropsFromId, multiCraftCost, singleCraftCost } from 'lib
 // Type-only, so this stays a one-way runtime dependency: optimizer-tree
 // imports craftCostOf from here.
 import type { CraftChainMetrics, RecipeTreeNode } from './optimizer-tree';
-import type { OptimizerSolution } from './types';
+import type { OptimizerSolution, RecipeDAG } from './types';
 
 // Leaves (raw drops) have no recipe, hence no price.
 export function craftingPriceParamsOf(nodeId: string): CraftingPriceParams | null {
@@ -44,6 +44,28 @@ export function craftCostOf(nodeId: string, crafts: number, playerInventory: Inv
   const params = craftingPriceParamsOf(nodeId);
   if (!params) return 0;
   return fractionalCraftCost(params, previousCraftsOf(playerInventory, nodeId), crafts);
+}
+
+// Linear per-craft prices for the golden egg budget row, one entry per
+// craftable node in the DAG.
+//
+// The price curve decreases in the craft index, so the dearest craft the plan
+// can possibly make of a node is the player's *next* one. Charging every craft
+// at that price is the tangent of the true (concave) cost at zero: it can only
+// over-state the bill, never under-state it, which is the direction a hard cap
+// has to err in. See `CraftBudget` and OPTIMIZER.md for what that costs.
+export function computeCraftUnitPrices(
+  recipeDag: RecipeDAG,
+  playerInventory: Inventory | null | undefined
+): Map<string, number> {
+  const prices = new Map<string, number>();
+  for (const [nodeId, node] of recipeDag) {
+    if (node.isLeaf) continue;
+    const params = craftingPriceParamsOf(nodeId);
+    if (!params) continue;
+    prices.set(nodeId, singleCraftCost(params, previousCraftsOf(playerInventory, nodeId)));
+  }
+  return prices;
 }
 
 // Golden eggs are whole in game; fractional crafts are the only reason these

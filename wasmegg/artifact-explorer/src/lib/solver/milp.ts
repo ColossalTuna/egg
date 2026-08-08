@@ -292,6 +292,20 @@ function buildCore(
   for (let g = 0; g < layout.groups; g++) rows.add(layout.aBase + g, model.groups[g].fuel);
   rows.end(-INF, 1);
 
+  // Golden eggs, over the whole plan: sum_p price_p c_p <= capacity. Prices are
+  // linear upper bounds on a curve that decreases in the craft index (see
+  // `CraftBudget`), so this row can only under-spend the player's balance.
+  //
+  // Written in raw golden eggs rather than normalized, for the same reason the
+  // slot rows are in raw seconds: prices are ~1e2-1e7 and capacities ~1e6-1e10,
+  // which sits mid-window with room at both ends, and normalizing would put the
+  // row's smallest entry near `SAFE_COEFFICIENT` for no gain.
+  if (Number.isFinite(model.craftBudgetCapacity)) {
+    rows.begin();
+    for (let p = 0; p < layout.crafts; p++) rows.add(layout.cBase + p, model.craftPrices[p]);
+    rows.end(-INF, model.craftBudgetCapacity);
+  }
+
   // The packing constraint, stated exactly, in raw seconds rather than
   // normalized — not cosmetic, see SPEC.md section 3 ("`slot_k` is the packing
   // constraint, stated").

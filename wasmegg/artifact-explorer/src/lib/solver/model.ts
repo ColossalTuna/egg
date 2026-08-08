@@ -34,6 +34,11 @@ export interface Model {
   targetCraftIdx: number[]; // craft column per target; -1 when not craftable
   slots: number;
   timeCapacitySeconds: number;
+  // Golden egg budget, dense over `craftables`. `craftBudgetCapacity` is
+  // Infinity when there is no cap, or when no craftable carries a price — in
+  // both cases `milp.ts` writes no row.
+  craftPrices: number[];
+  craftBudgetCapacity: number;
   groups: Group[];
   groupOfOption: number[]; // original option index -> group index, -1 if dropped
 }
@@ -136,6 +141,19 @@ export function buildModel(problem: PlanProblem): Model {
     return node ? -Math.log(1 - node.legendaryCraftProbability) : 0;
   });
   const targetCraftIdx = targets.map(t => craftIndex.get(t) ?? -1);
+
+  // Golden egg prices, dense over the craft columns. A negative or non-finite
+  // price is dropped rather than trusted: the same class of bug as a negative
+  // fuel cost below, and with the same consequence — a craft that *earns*
+  // budget — except that here the column is continuous, so nothing bounds how
+  // far the solver would run with it.
+  const budget = problem.craftBudget;
+  const craftPrices = craftables.map(id => {
+    const price = budget?.unitPrices.get(id) ?? 0;
+    return Number.isFinite(price) && price > 0 ? price : 0;
+  });
+  const capped = budget !== undefined && Number.isFinite(budget.capacity) && budget.capacity >= 0;
+  const craftBudgetCapacity = capped && craftPrices.some(p => p > 0) ? budget!.capacity : Infinity;
 
   // Normalized budgets: fuel budget 1, per-slot time budget 1. fuelCapacity <= 0
   // reads as "all fuel costs are 0".
@@ -244,6 +262,8 @@ export function buildModel(problem: PlanProblem): Model {
     targetCraftIdx,
     slots,
     timeCapacitySeconds: timeCap,
+    craftPrices,
+    craftBudgetCapacity,
     groups,
     groupOfOption,
   };

@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  DEFAULT_MAX_GOLDEN_EGG_COST,
   DEFAULT_WAIT_TIME_DAYS,
   isExtrasConfig,
   isMissionFilters,
@@ -101,6 +102,8 @@ describe('MissionFilters', () => {
 
     expect(filters.effort).toBe('medium');
     expect(filters.maxGemCostEnabled).toBe(false);
+    expect(filters.maxGoldenEggCostEnabled).toBe(false);
+    expect(filters.maxGoldenEggCost).toBe(DEFAULT_MAX_GOLDEN_EGG_COST);
     expect(filters.waitTimeDays).toBe(DEFAULT_WAIT_TIME_DAYS);
   });
 
@@ -111,6 +114,10 @@ describe('MissionFilters', () => {
   it('accepts persisted blobs without waitTimeDays', () => {
     const old = { effort: 'high', maxGemCostEnabled: true, maxGemCost: 12 };
     expect(isMissionFilters(old)).toBe(true);
+  });
+
+  it('rejects a non-number maxGoldenEggCost', () => {
+    expect(isMissionFilters({ ...newMissionFilters(), maxGoldenEggCost: '25M' })).toBe(false);
   });
 
   it('rejects a non-string waitTimeDays', () => {
