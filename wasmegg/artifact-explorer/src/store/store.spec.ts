@@ -120,6 +120,18 @@ describe('MissionFilters', () => {
     expect(isMissionFilters({ ...newMissionFilters(), maxGoldenEggCost: '25M' })).toBe(false);
   });
 
+  // A capacity buildModel would read as "no cap" must not validate, or the
+  // checkbox stays on with nothing enforcing it.
+  it('rejects a maxGoldenEggCost that could never bind', () => {
+    for (const maxGoldenEggCost of [-1, NaN, Infinity, -Infinity]) {
+      expect(isMissionFilters({ ...newMissionFilters(), maxGoldenEggCost })).toBe(false);
+    }
+  });
+
+  it('still accepts a zero capacity, which is a real cap and not an absent one', () => {
+    expect(isMissionFilters({ ...newMissionFilters(), maxGoldenEggCost: 0 })).toBe(true);
+  });
+
   it('rejects a non-string waitTimeDays', () => {
     expect(isMissionFilters({ ...newMissionFilters(), waitTimeDays: 30 })).toBe(false);
   });

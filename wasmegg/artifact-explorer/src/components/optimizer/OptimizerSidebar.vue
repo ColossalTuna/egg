@@ -483,7 +483,9 @@ export default defineComponent({
       const raw = (event.target as HTMLInputElement).value.trim();
       if (!raw) return;
       const n = parseValueWithUnit(raw, false);
-      if (n === null || n < 0) return;
+      // `n < 0` alone lets Infinity through, which a long enough digit string
+      // followed by a unit does reach.
+      if (n === null || !Number.isFinite(n) || n < 0) return;
       setMaxGoldenEggCost(n);
     }
 

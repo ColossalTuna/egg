@@ -127,7 +127,10 @@ export function isMissionFilters(x: unknown): x is MissionFilters {
     (m.maxGemCostEnabled === undefined || typeof m.maxGemCostEnabled === 'boolean') &&
     (m.maxGemCost === undefined || typeof m.maxGemCost === 'number') &&
     (m.maxGoldenEggCostEnabled === undefined || typeof m.maxGoldenEggCostEnabled === 'boolean') &&
-    (m.maxGoldenEggCost === undefined || typeof m.maxGoldenEggCost === 'number') &&
+    // Finite and non-negative, not merely a number: `buildModel` reads a
+    // negative or non-finite capacity as "no cap", so a value that fails this
+    // would leave the checkbox on with nothing enforcing it.
+    (m.maxGoldenEggCost === undefined || (Number.isFinite(m.maxGoldenEggCost) && m.maxGoldenEggCost >= 0)) &&
     (m.waitTimeDays === undefined || typeof m.waitTimeDays === 'string')
   );
 }

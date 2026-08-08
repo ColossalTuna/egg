@@ -418,7 +418,12 @@ export function setMaxGoldenEggCostEnabled(enabled: boolean): void {
   missionFilters.value.maxGoldenEggCostEnabled = enabled;
 }
 
+// Non-finite is dropped rather than clamped: `Math.max(0, NaN)` is NaN, and a
+// NaN or Infinity capacity reads downstream as "no cap" — the checkbox would
+// stay on with nothing enforcing it. Keeping the previous value is the safe
+// reading of an unusable input.
 export function setMaxGoldenEggCost(cost: number): void {
+  if (!Number.isFinite(cost)) return;
   missionFilters.value.maxGoldenEggCost = Math.max(0, cost);
 }
 
