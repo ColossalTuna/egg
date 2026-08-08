@@ -116,13 +116,27 @@ function lpTemplate(inst: OracleInstance): LpTemplate {
   // sum_n price_n * craft_n <= capacity. Prices come from the instance, so this
   // evaluator never has to know how the game charges for a craft — only that a
   // craft has a price and the plan has a purse.
+  //
+  // An unusable capacity throws rather than being read as "no cap". The judge
+  // grades candidates, so quietly dropping the row here would credit craft
+  // splits the instance asked to forbid and then report the difference as the
+  // candidate's failure — the one outcome a harness must never produce. This is
+  // deliberately stricter than `solver/model.ts`, which treats the same value as
+  // uncapped: that path takes a number typed into a field and must not crash a
+  // worker over it, and the store validates it before it gets there. Here the
+  // value is harness-constructed, so a bad one is a bug and should say so.
   let budgetCapacity: number | null = null;
   const budget = inst.craftBudget;
-  if (budget && Number.isFinite(budget.capacity) && budget.capacity >= 0) {
+  if (budget) {
+    if (!Number.isFinite(budget.capacity) || budget.capacity < 0) {
+      throw new Error(`craft budget capacity must be finite and non-negative, got ${budget.capacity}`);
+    }
     const row = craftables.map(id => {
       const price = budget.unitPrices.get(id) ?? 0;
       return Number.isFinite(price) && price > 0 ? price : 0;
     });
+    // No priced column is not a cap of zero: nothing in this instance is known
+    // to cost anything, so nothing can consume the purse.
     if (row.some(p => p > 0)) {
       A.push(row);
       budgetCapacity = budget.capacity;

@@ -115,6 +115,25 @@ describe('the judge under a craft budget', () => {
     expect(bill).toBeLessThanOrEqual(400 + 1e-6);
   });
 
+  it('treats a zero capacity as a real cap when the columns are priced', () => {
+    // The distinction the test below does not make on its own: an
+    // implementation that skipped a zero-capacity row entirely would pass that
+    // one and fail this. Zero means "craft nothing", not "no budget".
+    const scored = evaluateAllocation(
+      instance(singleDag, ['A1'], 40, { capacity: 0, unitPrices: prices(100, 25) }),
+      alloc
+    );
+    expect(scored.expectedCrafts).toBe(0);
+  });
+
+  it('rejects a capacity that could never bind, rather than scoring around it', () => {
+    for (const capacity of [-1, NaN, Infinity]) {
+      expect(() =>
+        evaluateAllocation(instance(singleDag, ['A1'], 40, { capacity, unitPrices: prices(100, 25) }), alloc)
+      ).toThrow(/finite and non-negative/);
+    }
+  });
+
   it('ignores a budget that prices nothing, rather than pinning every craft to zero', () => {
     // A capacity with no priced column is not a cap of zero: nothing in the
     // instance is known to cost anything, so nothing can consume the purse.

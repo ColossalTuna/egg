@@ -60,7 +60,7 @@ is a hard failure, not a low score.
 **The golden egg budget is not part of this.** `craftBudget`, when a problem
 carries one, caps what the plan's *crafts* may cost:
 
-```
+```text
 sum_n unitPrices[n] * crafts[n] <= capacity
 ```
 

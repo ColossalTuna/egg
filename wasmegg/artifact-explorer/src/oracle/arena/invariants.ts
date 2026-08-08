@@ -163,6 +163,15 @@ export function checkA2Time(c: CheckContext) {
 // and crushing on every dear one, and the check would measure the tier of the
 // target rather than the solver. The anchor understates the true bill, which
 // consumes intermediate tiers too, so the tight end of the axis genuinely bites.
+//
+// One caveat this axis shares with the rest of the A family, worth knowing
+// before reading a violation as a bug in the cap. A budget large enough to be
+// provably redundant can still change the plan at the shipped node budget:
+// measured on tachyon-deflector-4, a cap at 100x the plan's own bill returned a
+// different — and slightly better — plan than no cap at all, the two converging
+// once `maxNodes` reached 50. So a violation here can be branch-and-bound
+// truncation rather than anything about golden eggs, which is what
+// `solver/RESULTS.md` says about the A family generally.
 export function checkA9GoldenEggs(c: CheckContext) {
   const base = solve(c);
   const prices = craftUnitPrices(base.problem.dag, c.inst.previousCrafts);
