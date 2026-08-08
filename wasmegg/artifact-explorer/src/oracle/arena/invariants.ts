@@ -422,10 +422,12 @@ export function checkB3FuelScale(c: CheckContext) {
 // one of those at a different check, which is a worse outcome than a gap in a
 // sequence. New invariances take the next free number (B7); B4 stays vacant.
 export function checkB5Determinism(c: CheckContext, repeats = 3) {
-  const first = solve(c);
+  // `fresh` on every call: a cached plan compared against itself would report
+  // any planner deterministic, which is the one thing this check must not do.
+  const first = solve(c, { fresh: true });
   const sig = signature(first);
   for (let k = 1; k < repeats; k++) {
-    const again = solve(c);
+    const again = solve(c, { fresh: true });
     if (signature(again) !== sig || again.joint !== first.joint) {
       c.out.push({
         invariant: 'B5-determinism',

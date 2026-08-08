@@ -25,12 +25,11 @@
 import { loadHighs } from '@/lib/solver/highs';
 import { solveWith } from '@/lib/solver/oa';
 import type { ArenaSolver, PlanProblem, PlanResult } from '../../contract';
-import { memoizePlanner } from '../common/memo';
 
 const solve = await loadHighs();
 
 export const highs: ArenaSolver = {
   id: 'highs',
   description: 'MILP over slots and crafts, outer-approximated objective, solved by HiGHS (WebAssembly)',
-  plan: memoizePlanner((problem: PlanProblem): PlanResult => solveWith(problem, solve)),
+  plan: (problem: PlanProblem): PlanResult => solveWith(problem, solve),
 };

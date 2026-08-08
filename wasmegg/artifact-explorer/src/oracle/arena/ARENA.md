@@ -149,7 +149,9 @@ against `problem.options`.
   path. A candidate importing `src/lib` would close that loop the other way and
   measure the app grading itself.
 - **Be deterministic.** Same problem in, same allocation out. If your method is
-  stochastic, seed it from the problem, not from a clock or a global.
+  stochastic, seed it from the problem, not from a clock or a global. You do not
+  need to memoize: the harness caches plans by problem content, so the repeated
+  solves the checks perform reach you once.
 - **Do not read the seed, the instance label, or anything outside `PlanProblem`.**
   It is the whole input.
 - **Do not mutate `problem`.** It is shared across the checks in a sweep.

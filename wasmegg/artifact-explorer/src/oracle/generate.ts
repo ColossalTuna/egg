@@ -39,7 +39,7 @@ export function mulberry32(seed: number): () => number {
 
 type Rng = () => number;
 
-function randInt(rng: Rng, lo: number, hi: number): number {
+export function randInt(rng: Rng, lo: number, hi: number): number {
   return lo + Math.floor(rng() * (hi - lo + 1));
 }
 
@@ -47,7 +47,7 @@ function dyadic(rng: Rng, lo: number, hi: number, denom = 4): number {
   return randInt(rng, Math.round(lo * denom), Math.round(hi * denom)) / denom;
 }
 
-function pick<T>(rng: Rng, items: T[]): T {
+export function pick<T>(rng: Rng, items: T[]): T {
   return items[randInt(rng, 0, items.length - 1)];
 }
 

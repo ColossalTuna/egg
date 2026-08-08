@@ -43,6 +43,10 @@ export interface SolveOverrides {
   // Applied to the enumerated menu before it reaches the solver, for the
   // invariances that perturb the menu itself.
   transformOptions?: (options: LaunchOption[]) => LaunchOption[];
+  // Bypasses the plan cache in both directions, for the checks that have to
+  // observe the planner running again rather than a value it returned before.
+  // Not part of the problem: `buildProblem` ignores it.
+  fresh?: boolean;
 }
 
 export function buildProblem(inst: ArenaInstance, over: SolveOverrides = {}): PlanProblem {
@@ -73,6 +77,62 @@ export function buildProblem(inst: ArenaInstance, over: SolveOverrides = {}): Pl
     timeCapacity: over.timeCapacity ?? inst.timeCapacity,
     slots: NUM_SLOTS,
     baseYield: over.baseYield ?? new Map<string, number>(),
+  };
+}
+
+// Plan cache. The checks re-solve the identical problem many times per instance
+// (several A and M checks re-solve the unperturbed problem as their baseline),
+// and a `Planner` is a pure function of `PlanProblem`, so serving a repeat from
+// here changes no output — only wall clock. The key is built from nothing
+// outside `PlanProblem`, so this cannot leak instance identity into a solver.
+const PLAN_CACHE_MAX = 128;
+// The elapsed time is cached with the plan and replayed on a hit, so the
+// scorecard's latency reports what the planner cost on that problem rather than
+// what a Map lookup cost.
+const planCache = new Map<string, { result: PlanResult; elapsedMs: number }>();
+
+function sortedEntries(map: ReadonlyMap<string, number>): string {
+  return [...map]
+    .filter(([, v]) => v !== 0)
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([k, v]) => `${k}:${v}`)
+    .join(',');
+}
+
+function problemKey(problem: PlanProblem): string {
+  const options = problem.options
+    .map(
+      (o: LaunchOption) =>
+        `${o.actualFuel}|${o.actualTime}|${sortedEntries(o.yieldVector)}|${sortedEntries(o.legendaryYieldVector)}`
+    )
+    .join(';');
+  const dag = [...problem.dag.keys()]
+    .sort()
+    .map(id => {
+      const node = problem.dag.get(id)!;
+      const children = node.children.map(c => `${c.nodeId}:${c.quantity}`).join(',');
+      return `${id}~${node.isLeaf ? 1 : 0}~${node.legendaryCraftProbability}~${children}`;
+    })
+    .join(';');
+  return [
+    problem.targets.join(','),
+    problem.fuelCapacity,
+    problem.timeCapacity,
+    problem.slots,
+    sortedEntries(problem.baseYield),
+    dag,
+    options,
+  ].join('##');
+}
+
+// Copied on both sides, so a check mutating what it got back cannot poison a
+// later solve.
+function copyResult(result: PlanResult): PlanResult {
+  return {
+    allocation: result.allocation.slice(),
+    reported: result.reported
+      ? { jointProbability: result.reported.jointProbability, perTarget: result.reported.perTarget.slice() }
+      : undefined,
   };
 }
 
@@ -182,9 +242,15 @@ export interface Solved {
 
 export function run(planner: Planner, inst: ArenaInstance, over: SolveOverrides = {}): Solved {
   const problem = buildProblem(inst, over);
+  const key = over.fresh ? null : problemKey(problem);
+  const hit = key === null ? undefined : planCache.get(key);
   const started = performance.now();
-  const result = planner(problem);
-  const elapsedMs = performance.now() - started;
+  const result = hit ? copyResult(hit.result) : planner(problem);
+  const elapsedMs = hit ? hit.elapsedMs : performance.now() - started;
+  if (key !== null && !hit) {
+    if (planCache.size >= PLAN_CACHE_MAX) planCache.clear();
+    planCache.set(key, { result: copyResult(result), elapsedMs });
+  }
 
   const breaches = contractBreaches(problem, result);
   // Score whatever is scoreable. A malformed allocation is reported by C0 and
