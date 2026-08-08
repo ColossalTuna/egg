@@ -260,13 +260,20 @@ crafts exactly and the remaining fraction at the price of the craft it has
 started: continuous in the craft count, and identical to `multiCraftCost` at
 integers.
 
-Two numbers, two scopes. The solution card's total comes from
+Two numbers, one bill. The solution card's total comes from
 `computePlanCraftingCost`, which prices the **unsplit** `craftPrimal` — one bill
-for the whole plan. The per-node `goldenEggCost` in a craft-chain tree is that
-target's demand-weighted share (see above), and each share restarts the price
-curve at the player's own index, so shares of a pooled craft sum to slightly more
-than the pooled bill. The total is the honest figure; the per-node numbers say
-where the money goes.
+for the whole plan. The per-node `goldenEggCost` in a craft-chain tree prices that
+same pooled quantity and then takes the target's demand-weighted share of the
+result (see above), exactly as every other metric on the node is `pooled * share`.
+Pricing the *scaled* craft count instead would restart the decreasing curve for
+every target and overstate the bill; as written, the per-target chain subtotals
+reconcile with the card's total.
+
+One caveat to that reconciliation, and it predates pricing: a tree's root is never
+scaled (`shareOf` returns 1 for it). If one target's artifact is also an ingredient
+of another target, it is billed in full to its own chain and again as a share of
+the other's, so those subtotals sum to more than the plan total. The card's total
+remains the figure to trust.
 
 The manual "previous crafts" override feeds `legendaryCraftProbability` only.
 Pricing always reads the real crafted counts from the save.

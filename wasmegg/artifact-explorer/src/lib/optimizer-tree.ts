@@ -199,15 +199,16 @@ export function computeCraftChainTree(
     }
     const share = shareOf(nodeId);
     const dropped = Math.max(0, (solution.finalYieldVector.get(nodeId) ?? 0) - (solution.baseYield.get(nodeId) ?? 0));
-    const crafted = (solution.craftPrimal.get(nodeId) ?? 0) * share;
+    const pooledCrafts = solution.craftPrimal.get(nodeId) ?? 0;
     return {
       owned: ownedCount * share,
       dropped: dropped * share,
-      crafted,
+      crafted: pooledCrafts * share,
       consumed: (consumed.get(nodeId) ?? 0) * share,
-      // This target's share of the bill; the plan-wide total comes from
-      // computePlanCraftingCost, which prices the unscaled pool.
-      goldenEggCost: craftCostOf(nodeId, crafted, playerInventory),
+      // Price the pooled crafts once, then take this target's share of that
+      // bill. Pricing `pooledCrafts * share` instead would restart the
+      // decreasing curve for every target and overstate the total.
+      goldenEggCost: craftCostOf(nodeId, pooledCrafts, playerInventory) * share,
     };
   };
 

@@ -200,7 +200,7 @@ describe('sumCraftChainCost', () => {
     );
   });
 
-  it('prices each target’s share of a shared craft pool from craft index 0', () => {
+  it('splits a shared craft pool so the target shares sum to the plan bill', () => {
     const dag: RecipeDAG = new Map([
       [lt3, makeNode(lt3, false, [[lt2, 2]])],
       [lt4, makeNode(lt4, false, [[lt2, 2]])],
@@ -221,17 +221,23 @@ describe('sumCraftChainCost', () => {
       ],
     });
 
-    // Each target sees half the lt2 pool, and each half restarts the price
-    // curve at index 0, so the shares overstate the pooled bill (the curve is
-    // decreasing). The solution card's total, priced off the unsplit pool, is
-    // the honest one.
-    const shared = craftCostOf(lt2, 2, null) * 2;
-    const perTargetSum =
-      sumCraftChainCost(computeCraftChainTree(solution, lt3, null)) +
-      sumCraftChainCost(computeCraftChainTree(solution, lt4, null));
-    expect(perTargetSum).toBeCloseTo(craftCostOf(lt3, 1, null) + craftCostOf(lt4, 1, null) + shared, 9);
+    // Each target demands half the lt2 pool, so each is billed half of the
+    // four-craft price — not the price of two crafts, which would restart the
+    // decreasing curve and overstate the bill.
+    const lt3Cost = sumCraftChainCost(computeCraftChainTree(solution, lt3, null));
+    const lt4Cost = sumCraftChainCost(computeCraftChainTree(solution, lt4, null));
+    expect(lt3Cost).toBeCloseTo(craftCostOf(lt3, 1, null) + craftCostOf(lt2, 4, null) / 2, 9);
+    expect(lt4Cost).toBeCloseTo(craftCostOf(lt4, 1, null) + craftCostOf(lt2, 4, null) / 2, 9);
 
+    // The shares reconcile with the solution card's total: no target's chain
+    // root is an ingredient of another target here, so nothing is scaled to 1
+    // twice.
     const { total } = computePlanCraftingCost(solution, null);
     expect(total).toBe(craftCostOf(lt3, 1, null) + craftCostOf(lt4, 1, null) + craftCostOf(lt2, 4, null));
+    expect(lt3Cost + lt4Cost).toBeCloseTo(total, 9);
+
+    // Restarting the curve per target — the pre-fix behaviour — would have
+    // billed strictly more than the plan actually costs.
+    expect(craftCostOf(lt2, 2, null) * 2).toBeGreaterThan(craftCostOf(lt2, 4, null));
   });
 });
