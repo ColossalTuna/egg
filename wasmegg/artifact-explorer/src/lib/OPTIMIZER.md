@@ -246,6 +246,31 @@ back to the pooled totals instead of showing each artifact "using" the whole
 pool. The root target itself is never scaled: every craft of it rolls for its
 own legendary. With a single target every share is 1.
 
+## Golden egg cost
+
+The plan is priced, not constrained: the solver has no notion of golden eggs, and
+`optimizer-cost.ts` reads a finished solution. The price curve is not re-derived
+here — `singleCraftCost`/`multiCraftCost` come from `lib`, so the numbers shown
+are the game's own, seeded with the player's `crafted` count per item (a veteran
+pays less for the same plan).
+
+`craftPrimal` is an LP relaxation, so craft counts are fractional while the curve
+is indexed by an integer craft number. `fractionalCraftCost` charges the whole
+crafts exactly and the remaining fraction at the price of the craft it has
+started: continuous in the craft count, and identical to `multiCraftCost` at
+integers.
+
+Two numbers, two scopes. The solution card's total comes from
+`computePlanCraftingCost`, which prices the **unsplit** `craftPrimal` — one bill
+for the whole plan. The per-node `goldenEggCost` in a craft-chain tree is that
+target's demand-weighted share (see above), and each share restarts the price
+curve at the player's own index, so shares of a pooled craft sum to slightly more
+than the pooled bill. The total is the honest figure; the per-node numbers say
+where the money goes.
+
+The manual "previous crafts" override feeds `legendaryCraftProbability` only.
+Pricing always reads the real crafted counts from the save.
+
 ## File map
 
 | File | Role |
@@ -262,6 +287,7 @@ own legendary. With a single target every share is 1.
 | `optimizer-client.ts` | Main-thread worker lifecycle, request numbering, supersession. |
 | `optimizer-tree.ts` | Recipe-tree builders for the inventory and craft-chain panels. |
 | `optimizer-views.ts` | Flat presentation helpers derived from a solution. |
+| `optimizer-cost.ts` | Golden egg pricing of a plan's craft chain, over `lib`'s price curve. |
 | `types.ts` | Shared types for all of the above. |
 | `../oracle/` | Brute-force correctness harness; see its own README. |
 | `../components/ArtifactMissionOptimizer.vue` | Top-level planner: assembles inputs, drives the worker, debounces auto-compute. |

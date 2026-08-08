@@ -4,6 +4,7 @@
 
 import type { Inventory } from 'lib';
 import { getArtifactTierPropsFromId, iconURL } from 'lib';
+import { craftCostOf } from './optimizer-cost';
 import type { OptimizerSolution, RecipeDAG } from './types';
 
 export interface RecipeTreeNode<M> {
@@ -120,6 +121,7 @@ export interface CraftChainMetrics {
   dropped: number;
   crafted: number;
   consumed: number;
+  goldenEggCost: number; // cost of this node's `crafted` share; 0 for leaves
 }
 
 // Units of each descendant consumed per craft of `nodeId`, summed over every
@@ -197,11 +199,15 @@ export function computeCraftChainTree(
     }
     const share = shareOf(nodeId);
     const dropped = Math.max(0, (solution.finalYieldVector.get(nodeId) ?? 0) - (solution.baseYield.get(nodeId) ?? 0));
+    const crafted = (solution.craftPrimal.get(nodeId) ?? 0) * share;
     return {
       owned: ownedCount * share,
       dropped: dropped * share,
-      crafted: (solution.craftPrimal.get(nodeId) ?? 0) * share,
+      crafted,
       consumed: (consumed.get(nodeId) ?? 0) * share,
+      // This target's share of the bill; the plan-wide total comes from
+      // computePlanCraftingCost, which prices the unscaled pool.
+      goldenEggCost: craftCostOf(nodeId, crafted, playerInventory),
     };
   };
 

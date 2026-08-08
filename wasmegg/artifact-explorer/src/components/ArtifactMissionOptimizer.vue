@@ -27,6 +27,7 @@
               :max-wait-time-seconds="lastComputedMaxWaitTimeSeconds"
               :has-inventory="!!playerInventory"
               :targets="view.targets"
+              :plan-cost="view.planCost"
             />
             <p
               v-if="computing && solutionViews.length === 0"
@@ -114,6 +115,7 @@ import {
   computeCraftChainTree,
   computeInventoryTree,
   computeMissionLegendaryRows,
+  computePlanCraftingCost,
   finalizeSolutions,
   lambdaFromDropProbability,
   legendaryCraftProbabilityOf,
@@ -307,7 +309,7 @@ export default defineComponent({
             dropDataIsSparse: legendaryDataIsSparse(nodeId),
           };
         });
-        return { solution, targets };
+        return { solution, targets, planCost: computePlanCraftingCost(solution, playerInventory.value) };
       })
     );
 
