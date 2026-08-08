@@ -89,7 +89,22 @@ const PLAN_CACHE_MAX = 128;
 // The elapsed time is cached with the plan and replayed on a hit, so the
 // scorecard's latency reports what the planner cost on that problem rather than
 // what a Map lookup cost.
-const planCache = new Map<string, { result: PlanResult; elapsedMs: number }>();
+interface PlanCacheEntry {
+  result: PlanResult;
+  elapsedMs: number;
+}
+// Per planner, not per problem: a sweep runs the whole roster in one process, so
+// a cache keyed on the problem alone would answer the second candidate with the
+// first one's plan and make every scorecard depend on roster order.
+const planCaches = new WeakMap<Planner, Map<string, PlanCacheEntry>>();
+
+function cacheFor(planner: Planner): Map<string, PlanCacheEntry> {
+  const existing = planCaches.get(planner);
+  if (existing) return existing;
+  const created = new Map<string, PlanCacheEntry>();
+  planCaches.set(planner, created);
+  return created;
+}
 
 function sortedEntries(map: ReadonlyMap<string, number>): string {
   return [...map]
@@ -243,16 +258,20 @@ export interface Solved {
 export function run(planner: Planner, inst: ArenaInstance, over: SolveOverrides = {}): Solved {
   const problem = buildProblem(inst, over);
   const key = over.fresh ? null : problemKey(problem);
-  const hit = key === null ? undefined : planCache.get(key);
+  const cache = key === null ? null : cacheFor(planner);
+  const hit = key !== null && cache ? cache.get(key) : undefined;
   const started = performance.now();
   const result = hit ? copyResult(hit.result) : planner(problem);
   const elapsedMs = hit ? hit.elapsedMs : performance.now() - started;
-  if (key !== null && !hit) {
-    if (planCache.size >= PLAN_CACHE_MAX) planCache.clear();
-    planCache.set(key, { result: copyResult(result), elapsedMs });
-  }
 
   const breaches = contractBreaches(problem, result);
+  // Cached only once it is known well-formed: `copyResult` assumes the arrays
+  // the contract promises, and a plan that breaches it is C0's to report rather
+  // than something to hand back to a later check.
+  if (key !== null && cache && !hit && breaches.length === 0) {
+    if (cache.size >= PLAN_CACHE_MAX) cache.clear();
+    cache.set(key, { result: copyResult(result), elapsedMs });
+  }
   // Score whatever is scoreable. A malformed allocation is reported by C0 and
   // clamped here so one bad return does not abort the rest of the sweep.
   const allocation = new Array<number>(problem.options.length).fill(0);

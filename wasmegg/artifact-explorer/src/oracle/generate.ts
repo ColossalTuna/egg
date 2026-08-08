@@ -48,6 +48,9 @@ function dyadic(rng: Rng, lo: number, hi: number, denom = 4): number {
 }
 
 export function pick<T>(rng: Rng, items: T[]): T {
+  // An empty pool would draw `undefined` and hand it on as a `T`, surfacing far
+  // from the caller that emptied it.
+  if (items.length === 0) throw new RangeError('pick from an empty collection');
   return items[randInt(rng, 0, items.length - 1)];
 }
 
