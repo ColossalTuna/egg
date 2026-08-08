@@ -127,7 +127,10 @@ export function buildModel(problem: PlanProblem): Model {
       }))
   );
 
-  const baseB = items.map(item => problem.baseYield.get(item) ?? 0);
+  const baseB = items.map(item => {
+    const quantity = problem.baseYield.get(item) ?? 0;
+    return Number.isFinite(quantity) && quantity >= 0 ? quantity : 0;
+  });
   const Qs = targets.map(t => {
     const node = dag.get(t);
     return node ? -Math.log(1 - node.legendaryCraftProbability) : 0;
@@ -155,6 +158,10 @@ export function buildModel(problem: PlanProblem): Model {
     // budget; a negative `actualTime` passes `time > 1` and `time > 0` alike and
     // then discounts a slot's load. Either one silently licenses a plan the
     // budgets were supposed to forbid.
+    //
+    // Same class of bug applies to quantities: a non-finite yield reaches the
+    // LP matrix and HiGHS rejects the whole model, so we reject the option
+    // instead wherever a quantity would actually be used below.
     if (
       !Number.isFinite(opt.actualFuel) ||
       !Number.isFinite(opt.actualTime) ||
@@ -169,12 +176,18 @@ export function buildModel(problem: PlanProblem): Model {
 
     const yieldEntries: Entry[] = [];
     for (const [item, qty] of opt.yieldVector) {
-      if (qty > 0 && itemIndex.has(item)) yieldEntries.push([item, qty]);
+      if (qty > 0 && itemIndex.has(item)) {
+        if (!Number.isFinite(qty)) return; // non-finite yield would reach the LP matrix
+        yieldEntries.push([item, qty]);
+      }
     }
     const legendaryEntries: Entry[] = [];
     for (const t of targets) {
       const qty = opt.legendaryYieldVector.get(t) ?? 0;
-      if (qty > 0) legendaryEntries.push([t, qty]);
+      if (qty > 0) {
+        if (!Number.isFinite(qty)) return; // non-finite yield would reach the LP matrix
+        legendaryEntries.push([t, qty]);
+      }
     }
     if (yieldEntries.length === 0 && legendaryEntries.length === 0) return; // useless
     yieldEntries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
