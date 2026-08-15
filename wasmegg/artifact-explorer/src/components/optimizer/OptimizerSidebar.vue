@@ -120,13 +120,20 @@
           <div class="mt-1 flex items-center gap-2">
             <input
               type="text"
+              aria-label="Maximum crafting cost in golden eggs"
               :disabled="!missionFilters.maxGoldenEggCostEnabled"
               :value="maxGoldenEggCostDisplay"
               placeholder="e.g. 25M"
               class="block w-24 sm:text-sm rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 px-2 py-1 border border-gray-300 disabled:bg-gray-50 disabled:text-gray-400"
               @input="onGoldenEggCostInput($event)"
             />
-            <base-icon icon-rel-path="egginc-extras/icon_golden_egg.png" :size="64" class="h-4 w-4" />
+            <!-- The unit lives in the input's aria-label; the icon repeats it visually. -->
+            <base-icon
+              icon-rel-path="egginc-extras/icon_golden_egg.png"
+              :size="64"
+              class="h-4 w-4"
+              aria-hidden="true"
+            />
           </div>
           <p v-if="missionFilters.maxGoldenEggCostEnabled" class="mt-1 text-xs text-gray-400">
             Cap the golden eggs the plan's crafts may cost, at your own crafting prices

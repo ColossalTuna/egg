@@ -1,7 +1,7 @@
 # Brute-force oracle for the artifact optimizer
 
 An independent correctness harness for `optimizeFull`, whose design is in
-[`../lib/OPTIMIZER.md`](../lib/OPTIMIZER.md). The solver is treated as a black
+[`../../src/lib/OPTIMIZER.md`](../../src/lib/OPTIMIZER.md). The solver is treated as a black
 box: nothing here imports its internals, and the three-slot packing feasibility
 check is re-derived rather than shared, so the grader and the graded are never
 the same code.

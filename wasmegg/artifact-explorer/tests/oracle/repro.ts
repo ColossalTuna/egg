@@ -4,8 +4,8 @@
 // wasm loader cannot open outside a browser.
 
 import { optimizeFull } from '@/lib/optimizer-core';
-import { bruteForceBest } from './enumerate';
-import { evaluateAllocation, OracleInstance } from './evaluate';
+import { bruteForceBestJoint } from './enumerate';
+import { evaluateAllocationJoint, OracleInstance } from './evaluate';
 import { FAMILIES, Family, generateInstance } from './generate';
 
 const SPEC = process.argv[2] ?? process.env.ORACLE_REPRO ?? '';
@@ -50,6 +50,7 @@ async function main(): Promise<void> {
     fuelCapacity: inst.fuelCapacity,
     timeCapacityPerSlot: inst.timeCapacityPerSlot,
     baseYield: inst.baseYield,
+    craftBudget: inst.craftBudget,
     maximumCost: Infinity,
   });
   const alloc = new Array<number>(inst.options.length).fill(0);
@@ -64,23 +65,23 @@ async function main(): Promise<void> {
     }
     alloc[i] += h.numShipsLaunched;
   }
-  const planEval = evaluateAllocation(inst, alloc);
+  const planEval = evaluateAllocationJoint(inst, alloc);
   const fuelUsed = alloc.reduce((t, k, i) => t + k * inst.options[i].actualFuel, 0);
   const makespan = (sol.slots ?? []).reduce((m, s) => Math.max(m, s.loadSeconds), 0);
 
   console.log(`\nsolver plan: ${fmtAlloc(inst, alloc)}`);
-  console.log(`  reported bestProbability: ${sol.bestProbability}`);
-  console.log(`  independent evaluation:   ${planEval.probability}`);
+  console.log(`  reported jointProbability: ${sol.jointProbability}`);
+  console.log(`  independent evaluation:    ${planEval.jointProbability}`);
   console.log(
     `  uses fuel ${fuelUsed}/${inst.fuelCapacity} (${((100 * fuelUsed) / Math.max(1, inst.fuelCapacity)).toFixed(1)}%), ` +
       `busiest slot ${makespan}/${inst.timeCapacityPerSlot}s (${((100 * makespan) / Math.max(1, inst.timeCapacityPerSlot)).toFixed(1)}%)`
   );
   console.log(`  slots: ${JSON.stringify(sol.slots ?? [])}`);
 
-  const oracle = bruteForceBest(inst);
+  const oracle = bruteForceBestJoint(inst);
   console.log(`\noracle plan: ${fmtAlloc(inst, oracle.bestAllocation)}`);
-  console.log(`  probability: ${oracle.bestProbability}`);
-  console.log(`  gap vs solver plan: ${(oracle.bestProbability - planEval.probability).toExponential(3)}`);
+  console.log(`  jointProbability: ${oracle.bestJointProbability}`);
+  console.log(`  gap vs solver plan: ${(oracle.bestJointProbability - planEval.jointProbability).toExponential(3)}`);
   console.log(`  (negative gap means the solver plan is infeasible and priced on overspent budget)`);
 }
 

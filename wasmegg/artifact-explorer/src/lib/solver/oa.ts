@@ -123,10 +123,18 @@ export function solveWith(
 
   const layout = layoutOf(model, 'oa');
   const counts = decodeCounts(model, layout, solution.columnValues);
-  const judged = evaluateCounts(model, counts, STEERING_PRECISION);
-  const keep =
-    certifies(model, layout, solution.columnValues, counts) &&
-    judged.logJoint > evaluateCounts(model, empty, STEERING_PRECISION).logJoint;
+  // `simplexMax` throws on an unbounded column, on a lost basis and on its iteration cap. Every
+  // other failure here degrades to the empty plan, so a numerically unjudgeable incumbent does
+  // too rather than taking the whole call down with it.
+  let keep: boolean;
+  try {
+    keep =
+      certifies(model, layout, solution.columnValues, counts) &&
+      evaluateCounts(model, counts, STEERING_PRECISION).logJoint >
+        evaluateCounts(model, empty, STEERING_PRECISION).logJoint;
+  } catch {
+    keep = false;
+  }
 
   return emit(problem, model, keep ? counts : empty, report);
 }

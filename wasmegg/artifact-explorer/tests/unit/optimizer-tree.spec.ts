@@ -262,6 +262,43 @@ describe('computeCraftChainTree', () => {
     expect(ownedViaLt3 + ownedViaLt2).toBeCloseTo(5, 9);
   });
 
+  it('partitions a target that is also an ingredient of another target', () => {
+    // lt3 is selected *and* consumed by lt4. Its pooled crafts and its bill have to split
+    // between the two trees: giving lt3's own tree the whole pool and lt4's tree a demand
+    // share of it again put the craft-chain subtotals past the plan's real crafting cost.
+    const dag: RecipeDAG = new Map([
+      [lt4, makeNode(lt4, false, [[lt3, 2]])],
+      [lt3, makeNode(lt3, false, [[lt1, 3]])],
+      [lt1, makeNode(lt1, true)],
+    ]);
+    const prob = { bestProbability: 0, craftProbability: 0, dropProbability: 0 };
+    // Demand for lt3: lt4 wants 3*2 = 6, lt3 wants 2 for itself, total 8.
+    const solution = makeSolution({
+      recipeDag: dag,
+      craftPrimal: new Map([
+        [lt4, 3],
+        [lt3, 8],
+      ]),
+      perTarget: [
+        { nodeId: lt4, expectedCrafts: 3, ...prob },
+        { nodeId: lt3, expectedCrafts: 2, ...prob },
+      ],
+    });
+
+    const lt3ViaLt4 = computeCraftChainTree(solution, lt4, null)!.children.find(c => c.nodeId === lt3)!;
+    const lt3Root = computeCraftChainTree(solution, lt3, null)!;
+    expect(lt3ViaLt4.metrics.crafted).toBeCloseTo(8 * (6 / 8), 9);
+    expect(lt3Root.metrics.crafted).toBeCloseTo(8 * (2 / 8), 9);
+
+    // The whole point: the two slices reconstitute the pool instead of over-drawing it, so the
+    // per-tree bills sum to what the plan actually spends on lt3.
+    expect(lt3ViaLt4.metrics.crafted + lt3Root.metrics.crafted).toBeCloseTo(8, 9);
+    expect(lt3ViaLt4.metrics.goldenEggCost + lt3Root.metrics.goldenEggCost).toBeCloseTo(libCost(lt3, 0, 8), 9);
+
+    // An uncontested target still keeps its own pool whole.
+    expect(computeCraftChainTree(solution, lt4, null)!.metrics.crafted).toBe(3);
+  });
+
   it('falls back to an even split when no target demands the node', () => {
     // No demand at all: attribution has no signal, so it splits evenly rather
     // than hand each tree the full pool.

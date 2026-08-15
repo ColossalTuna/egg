@@ -103,6 +103,14 @@ export async function optimizeFull(args: OptimizeArgs): Promise<OptimizerSolutio
     craftBudget,
   } = args;
 
+  // Rejected here rather than downstream: `model.ts` and `value-function.ts` both drop a budget
+  // they cannot turn into a row, so a negative or NaN capacity would silently become *no* cap —
+  // the one reading a caller who asked for a cap can least afford. `capacity === 0` is a valid
+  // binding cap and passes. A caller wanting no cap omits `craftBudget`.
+  if (craftBudget && (!Number.isFinite(craftBudget.capacity) || craftBudget.capacity < 0)) {
+    throw new Error(`craft budget capacity must be finite and non-negative, got ${craftBudget.capacity}`);
+  }
+
   // An empty input field upstream arrives as NaN; clamp before it reaches the
   // model, where a NaN budget would make every row unsatisfiable.
   const R = Number.isFinite(rawR) && rawR > 0 ? rawR : 0;
