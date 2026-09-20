@@ -28843,5 +28843,32 @@
     "startTimestamp": 1789833600,
     "type": "piggy-boost",
     "ultra": false
+  },
+  {
+    "endTimestamp": 1790006400,
+    "id": "event-9-20",
+    "message": "30% OFF CRAFTING!",
+    "multiplier": 0.7,
+    "startTimestamp": 1789920000,
+    "type": "crafting-sale",
+    "ultra": false
+  },
+  {
+    "endTimestamp": 1790092800,
+    "id": "event-9-20-2",
+    "message": "DOUBLE CAPACITY!",
+    "multiplier": 2,
+    "startTimestamp": 1789920000,
+    "type": "mission-capacity",
+    "ultra": false
+  },
+  {
+    "endTimestamp": 1790006400,
+    "id": "ultra-9-20",
+    "message": "80% OFF HEN HOUSES!",
+    "multiplier": 0.2,
+    "startTimestamp": 1789920000,
+    "type": "hab-sale",
+    "ultra": true
   }
 ]
