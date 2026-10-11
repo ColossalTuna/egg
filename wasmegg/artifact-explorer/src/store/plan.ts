@@ -10,6 +10,7 @@ import { parseBudgetInput } from '@/store/budget-input';
 import type { HumilityVisit } from '@/lib/plan/read';
 import type { HumilityMissionsVisit } from '@/lib/plan/schema';
 
+// Predates the humility missions rename; kept so a plan loaded before the update survives it.
 const PLAN_LOCALSTORAGE_KEY = 'humility_plan';
 
 // Bumped when the persisted shape changes. A mismatch discards rather than migrates: the plan is

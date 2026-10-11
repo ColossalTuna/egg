@@ -112,6 +112,9 @@ const HUMILITY_MISSIONS_FILENAME_MAX_LABEL_LENGTH = 80;
 //   `.`, `_`, `-` is dropped, which covers path separators, the characters Windows reserves
 //   (`: * ? " < > |`), control characters and emoji, while names in any language survive as the
 //   planner wrote them;
+// - before that filter, marks that do not follow a letter, digit or mark are dropped, such as the
+//   variation selector after an emoji; checked first, while the emoji is still there to precede
+//   it, so `Plan⭐️` loses the selector rather than leaving it stuck to the `n`;
 // - runs of `_` / `-` collapse to the first one, and leading or trailing `.`, `_`, `-` are trimmed;
 // - the result is capped at 80 code points, so a cut never splits a surrogate pair, and trimmed
 //   again at the cut.
@@ -126,6 +129,7 @@ export function humilityMissionsFilename(planLabel: string): string {
     planLabel
       .trim()
       .replace(/\s+/g, '_')
+      .replace(/(?<![\p{L}\p{M}\p{N}])\p{M}+/gu, '')
       .replace(/[^\p{L}\p{M}\p{N}._-]/gu, '')
   );
   label = clean(Array.from(label).slice(0, HUMILITY_MISSIONS_FILENAME_MAX_LABEL_LENGTH).join(''));

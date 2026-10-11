@@ -134,6 +134,8 @@ const stageable = computed(() =>
 const matchesPlan = computed(() => !missionsStore.file || fileMatchesPlan(missionsStore.file, planVisitIds.value));
 
 function visitName(visit: HumilityMissionsVisit): string {
+  // A file from another plan says nothing about this plan's visit count.
+  if (!matchesPlan.value) return `H${visit.visitIndex + 1}`;
   return `H${visit.visitIndex + 1} of ${planVisitIds.value.length}`;
 }
 

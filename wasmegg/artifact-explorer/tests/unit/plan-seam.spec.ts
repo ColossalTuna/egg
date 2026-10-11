@@ -597,6 +597,12 @@ describe('naming the humility missions file', () => {
     expect(humilityMissionsFilename('///')).toBe('humility-missions.json');
     // Emoji are neither letters nor digits.
     expect(humilityMissionsFilename('💎🚀')).toBe('humility-missions.json');
+    // The emoji's variation selector is a mark, but with the emoji gone it has nothing to modify.
+    expect(humilityMissionsFilename('⭐️')).toBe('humility-missions.json');
+    expect(humilityMissionsFilename('❤️ plan')).toBe('humility-missions-plan.json');
+    expect(humilityMissionsFilename('Plan ⭐️')).toBe('humility-missions-Plan.json');
+    expect(humilityMissionsFilename('Plan⭐️')).toBe('humility-missions-Plan.json');
+    expect(humilityMissionsFilename('a❤️b')).toBe('humility-missions-ab.json');
   });
 
   it('keeps letters and digits from any script', () => {
