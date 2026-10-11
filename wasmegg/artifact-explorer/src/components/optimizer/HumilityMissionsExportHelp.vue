@@ -49,7 +49,14 @@
               }}
             </p>
 
-            <!-- SCREENSHOT: the ascension planner's Rockets action with "From the artifact explorer" goes here. -->
+            <img
+              :src="importScreenshot"
+              width="526"
+              height="321"
+              class="w-full h-auto rounded-md border border-gray-200"
+              loading="lazy"
+              alt="The ascension planner's From the artifact explorer box with a humility missions file loaded and one visit staged into the plan."
+            />
 
             <ol class="list-decimal pl-5 space-y-1 text-sm text-gray-700">
               <li>Open the ascension planner and load the same plan this file was exported from.</li>
@@ -87,6 +94,7 @@ import { defineComponent } from 'vue';
 import { Dialog as HeadlessDialog, DialogOverlay, DialogTitle, TransitionChild, TransitionRoot } from '@headlessui/vue';
 import { XIcon } from '@heroicons/vue/solid';
 
+import importScreenshot from '@/assets/humility-missions-import.webp';
 import { idToTool } from 'lib/tools';
 
 const plannerUrl = idToTool.get('ascension-planner')?.url ?? '/ascension-planner/';
@@ -112,6 +120,7 @@ export default defineComponent({
     const close = () => emit('close');
     return {
       plannerUrl,
+      importScreenshot,
       close,
     };
   },
