@@ -64,6 +64,24 @@ function unwrapPlanEnvelope(json: Record<string, unknown>): Record<string, unkno
   return json;
 }
 
+// The plan's name as the planner's library export wrote it, so the page and the exported humility
+// missions file can say which plan they belong to. Only the single-plan envelope carries one; a
+// bare save, a library export, or a blank name gives `undefined` and the caller falls back to the
+// filename.
+export function planEnvelopeName(json: unknown): string | undefined {
+  if (!isRecord(json) || json.type !== 'plan' || !isRecord(json.data)) return undefined;
+  if (typeof json.name !== 'string') return undefined;
+  const name = json.name.trim();
+  return name === '' ? undefined : name;
+}
+
+// The label a loaded plan goes by: the planner's own name for it when the export carries one, which
+// is also what the planner shows back when the humility missions file is loaded there, else the
+// file's name without its `.json`.
+export function planLabelFor(json: unknown, filename: string): string {
+  return planEnvelopeName(json) ?? filename.replace(/\.json$/i, '');
+}
+
 // Validated rather than cast: the file is picked by the user and a missing `endState` further in
 // would show up as a budget of NaN rather than as a message they can act on.
 export function parsePlanSave(json: unknown): PlanSave {

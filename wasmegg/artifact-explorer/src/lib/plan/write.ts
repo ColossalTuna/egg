@@ -1,4 +1,4 @@
-// Project solved visits into humility-plan.json. OptimizerSolution contains Maps
+// Project solved visits into the humility missions file. OptimizerSolution contains Maps
 // that JSON.stringify would lose; export only the fields the planner needs.
 
 import { ei, getArtifactTierPropsFromId } from 'lib';
@@ -101,6 +101,35 @@ export function projectSolvedVisit(args: {
     gemBudget,
     effort,
   };
+}
+
+const HUMILITY_MISSIONS_FILENAME_MAX_LABEL_LENGTH = 80;
+
+// `humility-missions-<plan>.json`, so repeated exports from different plans are told apart by name
+// rather than by the browser's ` (1)` suffix. The label is made filename-safe:
+// - trimmed, and each whitespace run becomes `_` (as the planner's own library export names files);
+// - anything other than letters, marks and digits in any script (`\p{L}`, `\p{M}`, `\p{N}`) or
+//   `.`, `_`, `-` is dropped, which covers path separators, the characters Windows reserves
+//   (`: * ? " < > |`), control characters and emoji, while names in any language survive as the
+//   planner wrote them;
+// - runs of `_` / `-` collapse to the first one, and leading or trailing `.`, `_`, `-` are trimmed;
+// - the result is capped at 80 code points, so a cut never splits a surrogate pair, and trimmed
+//   again at the cut.
+// A label with nothing left after that gives plain `humility-missions.json`.
+export function humilityMissionsFilename(planLabel: string): string {
+  const clean = (s: string) =>
+    s
+      .replace(/([_-])[_-]+/g, '$1')
+      .replace(/^[._-]+/, '')
+      .replace(/[._-]+$/, '');
+  let label = clean(
+    planLabel
+      .trim()
+      .replace(/\s+/g, '_')
+      .replace(/[^\p{L}\p{M}\p{N}._-]/gu, '')
+  );
+  label = clean(Array.from(label).slice(0, HUMILITY_MISSIONS_FILENAME_MAX_LABEL_LENGTH).join(''));
+  return label === '' ? 'humility-missions.json' : `humility-missions-${label}.json`;
 }
 
 export function buildHumilityPlanFile(planLabel: string, visits: HumilityPlanVisit[]): HumilityPlanFile {

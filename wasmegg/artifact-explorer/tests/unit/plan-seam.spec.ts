@@ -12,10 +12,12 @@ import {
   gemBudgetFor,
   localTimestampInTimezone,
   parsePlanSave,
+  planEnvelopeName,
+  planLabelFor,
   PlanSaveError,
   sliceHumilityVisits,
 } from '@/lib/plan/read';
-import { buildHumilityPlanFile, projectSolvedVisit } from '@/lib/plan/write';
+import { buildHumilityPlanFile, humilityMissionsFilename, projectSolvedVisit } from '@/lib/plan/write';
 import { HUMILITY_PLAN_SCHEMA, type HumilityPlanFile } from '@/lib/plan/schema';
 import type { LaunchSolution, OptimizerSolution, SlotSummary } from '@/lib/types';
 import { getLocalTimestampInTimezone } from '../../../ascension-planner/src/lib/events';
@@ -69,6 +71,31 @@ describe('reading a plan save', () => {
     // checked, so an unreadable save inside a readable envelope is still rejected.
     expect(() => parsePlanSave({ ...wrapped, data: { ...bare, version: 2 } })).toThrow(/version 2/);
     expect(() => parsePlanSave({ version: 1, type: 'plan' })).toThrow(PlanSaveError);
+  });
+
+  it("names the plan after the envelope's own name, and only the single-plan envelope's", () => {
+    const bare = fixture('ascension-plan.json') as object;
+    const wrapped = { version: 1, type: 'plan', name: '  my-cycle  ', timestamp: 0, data: bare };
+
+    expect(planEnvelopeName(wrapped)).toBe('my-cycle');
+    expect(planEnvelopeName(bare)).toBeUndefined();
+    expect(planEnvelopeName({ version: 1, type: 'library', name: 'all', plans: [{ name: 'a', data: bare }] })).toBe(
+      undefined
+    );
+    // A blank or missing name falls back to the filename rather than labelling the plan with nothing.
+    expect(planEnvelopeName({ ...wrapped, name: '   ' })).toBeUndefined();
+    expect(planEnvelopeName({ ...wrapped, name: undefined })).toBeUndefined();
+    expect(planEnvelopeName({ version: 1, type: 'plan', name: 'no data' })).toBeUndefined();
+  });
+
+  it("labels the plan by the envelope's name, else by the filename without `.json`", () => {
+    const bare = fixture('ascension-plan.json') as object;
+    const wrapped = { version: 1, type: 'plan', name: 'my-cycle', timestamp: 0, data: bare };
+
+    expect(planLabelFor(wrapped, 'plan-export.json')).toBe('my-cycle');
+    expect(planLabelFor(bare, 'plan-export.json')).toBe('plan-export');
+    expect(planLabelFor(bare, 'Plan-Export.JSON')).toBe('Plan-Export');
+    expect(planLabelFor({ ...wrapped, name: '  ' }, 'fallback.json')).toBe('fallback');
   });
 
   it('sends a whole-library export back rather than guessing which plan was meant', () => {
@@ -546,6 +573,48 @@ async function storeWithVisit(index: number) {
 function solvedAt(visitId: string) {
   return { ...humilityPlan.visits[0], visitId };
 }
+
+describe('naming the humility missions file', () => {
+  it('names the file after the plan', () => {
+    expect(humilityMissionsFilename('my-cycle')).toBe('humility-missions-my-cycle.json');
+  });
+
+  it('turns whitespace into underscores and drops parentheses', () => {
+    expect(humilityMissionsFilename('My Cycle (1)')).toBe('humility-missions-My_Cycle_1.json');
+    expect(humilityMissionsFilename('  Cycle \t two  ')).toBe('humility-missions-Cycle_two.json');
+  });
+
+  it('strips path separators and reserved characters, and collapses what they leave behind', () => {
+    expect(humilityMissionsFilename('../a/b\\c:d*e?f"g<h>i|j')).toBe('humility-missions-abcdefghij.json');
+    expect(humilityMissionsFilename('Cycle - v2 / final')).toBe('humility-missions-Cycle_v2_final.json');
+    expect(humilityMissionsFilename('.hidden.')).toBe('humility-missions-hidden.json');
+    expect(humilityMissionsFilename('a\u0000b\u001fc')).toBe('humility-missions-abc.json');
+  });
+
+  it('falls back to the plain name when nothing in the label survives', () => {
+    expect(humilityMissionsFilename('')).toBe('humility-missions.json');
+    expect(humilityMissionsFilename('   ')).toBe('humility-missions.json');
+    expect(humilityMissionsFilename('///')).toBe('humility-missions.json');
+    // Emoji are neither letters nor digits.
+    expect(humilityMissionsFilename('💎🚀')).toBe('humility-missions.json');
+  });
+
+  it('keeps letters and digits from any script', () => {
+    expect(humilityMissionsFilename('Восхождение 3')).toBe('humility-missions-Восхождение_3.json');
+    expect(humilityMissionsFilename('昇天 計画 2')).toBe('humility-missions-昇天_計画_2.json');
+    expect(humilityMissionsFilename('Ascensión 2')).toBe('humility-missions-Ascensión_2.json');
+    // Devanagari vowel signs are combining marks, not letters, and the word is unreadable without them.
+    expect(humilityMissionsFilename('हिन्दी 2')).toBe('humility-missions-हिन्दी_2.json');
+  });
+
+  it('caps a long name at 80 characters', () => {
+    expect(humilityMissionsFilename('x'.repeat(200))).toBe(`humility-missions-${'x'.repeat(80)}.json`);
+    // A cut that lands on a separator does not leave it dangling before the extension.
+    expect(humilityMissionsFilename(`${'x'.repeat(79)} tail`)).toBe(`humility-missions-${'x'.repeat(79)}.json`);
+    // Counted in code points, so an astral letter at the cut is kept whole rather than halved.
+    expect(humilityMissionsFilename(`${'x'.repeat(79)}𝒜𝒜`)).toBe(`humility-missions-${'x'.repeat(79)}𝒜.json`);
+  });
+});
 
 describe('pointing the optimizer at a visit', () => {
   it('starts off the plan, so loading a file does not swap the budgets under a selection', async () => {

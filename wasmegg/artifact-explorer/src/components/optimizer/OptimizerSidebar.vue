@@ -42,14 +42,20 @@
             </select>
           </div>
 
-          <button
-            type="button"
-            :disabled="solvedCount === 0 || exportBlocked"
-            class="w-full flex items-center justify-center px-3 py-1.5 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-            @click="onExportPlan"
-          >
-            Export {{ solvedCount }} solved visit{{ solvedCount === 1 ? '' : 's' }}
-          </button>
+          <div>
+            <button
+              type="button"
+              :disabled="solvedCount === 0 || exportBlocked"
+              :title="exportDisabledReason"
+              class="w-full flex items-center justify-center px-3 py-1.5 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+              @click="onExportPlan"
+            >
+              Export missions for {{ solvedCount }} visit{{ solvedCount === 1 ? '' : 's' }}
+            </button>
+            <button type="button" class="mt-1 text-xs text-blue-500 hover:text-blue-600" @click="openExportHelp">
+              How to use this file
+            </button>
+          </div>
 
           <button
             type="button"
@@ -60,8 +66,15 @@
           </button>
         </template>
 
-        <p v-else class="text-xs text-gray-400">Plan Humility missions using each visit's budgets.</p>
+        <p v-else class="text-xs text-gray-400">
+          Load a plan exported from the ascension planner to budget Humility missions for each visit.
+        </p>
       </div>
+      <humility-missions-export-help
+        :open="exportHelpOpen"
+        :exported="exportHelpAfterExport"
+        @close="closeExportHelp"
+      />
     </section>
 
     <section>
@@ -351,8 +364,10 @@ import {
   formatEIValue,
   fuelTankSizes,
   getArtifactTierPropsFromId,
+  getLocalStorage,
   isDurationNormalizable,
   parseDurationDays,
+  setLocalStorage,
   spaceshipList,
 } from 'lib';
 import BaseIcon from 'ui/components/BaseIcon.vue';
@@ -360,6 +375,7 @@ import BaseInput from 'ui/components/BaseInput.vue';
 import PlayerIdForm from 'ui/components/PlayerIdForm.vue';
 import LootDataCredit from '@/components/LootDataCredit.vue';
 import OptimizerSettingRow from './OptimizerSettingRow.vue';
+import HumilityMissionsExportHelp from './HumilityMissionsExportHelp.vue';
 
 import {
   config,
@@ -413,9 +429,12 @@ import {
   setVisitFuelBudget,
   solvedVisitCount,
 } from '@/store/plan';
-import { parsePlanSave, PlanSaveError, sliceHumilityVisits } from '@/lib/plan/read';
+import { parsePlanSave, planLabelFor, PlanSaveError, sliceHumilityVisits } from '@/lib/plan/read';
 import { normalizeBudgetInput } from '@/store/budget-input';
-import { buildHumilityPlanFile } from '@/lib/plan/write';
+import { buildHumilityPlanFile, humilityMissionsFilename } from '@/lib/plan/write';
+
+// Set the first time the export help is dismissed, so it opens unprompted only once.
+const HUMILITY_MISSIONS_EXPORT_HELP_SEEN_LOCALSTORAGE_KEY = 'humilityMissionsExportHelpSeen';
 
 function downloadJson(filename: string, body: unknown): void {
   const url = URL.createObjectURL(new Blob([JSON.stringify(body, null, 2)], { type: 'application/json' }));
@@ -450,7 +469,7 @@ const effortMeta: Record<EffortLevel, { short: string; label: string; hint: stri
 };
 
 export default defineComponent({
-  components: { BaseIcon, BaseInput, PlayerIdForm, LootDataCredit, OptimizerSettingRow },
+  components: { BaseIcon, BaseInput, PlayerIdForm, LootDataCredit, OptimizerSettingRow, HumilityMissionsExportHelp },
   props: {
     playerId: { type: String, default: '' },
     exportBlocked: { type: Boolean, default: false },
@@ -645,8 +664,9 @@ export default defineComponent({
       if (!file) return;
       planLoadError.value = '';
       try {
-        const save = parsePlanSave(JSON.parse(await file.text()));
-        setLoadedPlan(file.name.replace(/\.json$/i, ''), sliceHumilityVisits(save));
+        const json: unknown = JSON.parse(await file.text());
+        const save = parsePlanSave(json);
+        setLoadedPlan(planLabelFor(json, file.name), sliceHumilityVisits(save));
       } catch (err) {
         planLoadError.value =
           err instanceof PlanSaveError ? err.message : `Could not read that file: ${(err as Error).message}`;
@@ -682,11 +702,34 @@ export default defineComponent({
       clearLoadedPlan();
     }
 
+    const exportDisabledReason = computed(() => {
+      if (solvedVisitCount.value === 0) return 'Solve at least one visit first.';
+      if (props.exportBlocked) return 'Unavailable while a solve is running or the settings are invalid.';
+      return undefined;
+    });
+
+    // What to do with the downloaded file: shown after the first export, and on request after that.
+    const exportHelpOpen = ref(false);
+    // Whether the help was opened by an export, so it only says the file is downloading when it is.
+    const exportHelpAfterExport = ref(false);
+    function openExportHelp() {
+      exportHelpAfterExport.value = false;
+      exportHelpOpen.value = true;
+    }
+    function closeExportHelp() {
+      exportHelpOpen.value = false;
+      setLocalStorage(HUMILITY_MISSIONS_EXPORT_HELP_SEEN_LOCALSTORAGE_KEY, Date.now());
+    }
+
     function onExportPlan() {
       const plan = loadedPlan.value;
       if (!plan || props.exportBlocked) return;
       const solved = plan.visits.map(v => plan.solved[v.visitId]).filter(v => v !== undefined);
-      downloadJson('humility-plan.json', buildHumilityPlanFile(plan.label, solved));
+      downloadJson(humilityMissionsFilename(plan.label), buildHumilityPlanFile(plan.label, solved));
+      if (getLocalStorage(HUMILITY_MISSIONS_EXPORT_HELP_SEEN_LOCALSTORAGE_KEY) === undefined) {
+        exportHelpAfterExport.value = true;
+        exportHelpOpen.value = true;
+      }
     }
 
     return {
@@ -726,6 +769,11 @@ export default defineComponent({
       onVisitPicked,
       solvedCount: solvedVisitCount,
       onExportPlan,
+      exportDisabledReason,
+      exportHelpOpen,
+      exportHelpAfterExport,
+      openExportHelp,
+      closeExportHelp,
       onUnloadPlan,
       EFFORT_LEVELS,
       effortMeta,
