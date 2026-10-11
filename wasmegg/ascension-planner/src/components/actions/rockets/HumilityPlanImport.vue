@@ -4,7 +4,10 @@
       <div>
         <span class="text-xs font-bold uppercase tracking-wider text-indigo-700">From the artifact explorer</span>
         <p v-if="!planStore.file" class="text-[11px] text-gray-500 mt-0.5">
-          Import solved visits from <code>humility-plan.json</code>.
+          Import a humility missions file exported from the artifact explorer's mission optimizer.
+        </p>
+        <p v-else-if="!matchesPlan" class="text-[11px] text-amber-700 mt-0.5">
+          This file was exported from "{{ planStore.file.planLabel }}". None of its visits are in the current plan.
         </p>
         <p v-else class="text-[11px] text-gray-500 mt-0.5">
           {{ planStore.file.planLabel }} — {{ planStore.file.visits.length }} solved visit{{
@@ -107,6 +110,7 @@ import { useActionsStore } from '@/stores/actions';
 import { useHumilityPlanStore } from '@/stores/humilityPlan';
 import { previewLaunchDurations, type LaunchDurations } from '@/lib/humilityPlanStage';
 import {
+  fileMatchesPlan,
   humilityVisitIds,
   launchLabel,
   stageableVisitIds,
@@ -126,6 +130,9 @@ const stageable = computed(() =>
   planStore.file ? stageableVisitIds(planStore.file, planVisitIds.value) : new Set<string>()
 );
 
+// When no visit matches, the header says so once instead of every card giving a reason.
+const matchesPlan = computed(() => !planStore.file || fileMatchesPlan(planStore.file, planVisitIds.value));
+
 function visitName(visit: HumilityPlanVisit): string {
   return `H${visit.visitIndex + 1} of ${planVisitIds.value.length}`;
 }
@@ -133,6 +140,7 @@ function visitName(visit: HumilityPlanVisit): string {
 const unavailableReasons = computed(() => {
   const inPlan = new Set(planVisitIds.value);
   const reasons = new Map<string, string>();
+  if (!matchesPlan.value) return reasons;
   for (const visit of planStore.file?.visits ?? []) {
     if (stageable.value.has(visit.visitId)) continue;
     reasons.set(

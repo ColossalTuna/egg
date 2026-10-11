@@ -168,6 +168,12 @@ export function stageableVisitIds(file: HumilityPlanFile, planVisitIds: readonly
   return stageable;
 }
 
+/** False when none of the file's visits are in the plan, e.g. it came from another plan. */
+export function fileMatchesPlan(file: HumilityPlanFile, planVisitIds: readonly string[]): boolean {
+  const inPlan = new Set(planVisitIds);
+  return file.visits.some(visit => inPlan.has(visit.visitId));
+}
+
 /** Insert after the visit's actions so their fuel and research apply; null if missing. */
 export function humilityVisitInsertIndex(actions: readonly Action[], visitId: string): number | null {
   const run = humilityVisitRuns(actions).find(r => r.visitId === visitId);
@@ -215,12 +221,12 @@ function requireString(value: unknown, field: string): asserts value is string {
 
 export function parseHumilityPlan(json: unknown): HumilityPlanFile {
   if (!isRecord(json)) {
-    throw new HumilityPlanError('Not a Humility plan: expected a JSON object.');
+    throw new HumilityPlanError('Not a humility missions file: expected a JSON object.');
   }
   const file = json;
   if (file.schema !== HUMILITY_PLAN_SCHEMA) {
     throw new HumilityPlanError(
-      "That is not a Humility plan file. Export one from the artifact explorer's mission optimizer."
+      "That is not a humility missions file. Export one from the artifact explorer's mission optimizer."
     );
   }
   if (file.schemaVersion !== HUMILITY_PLAN_SCHEMA_VERSION) {
@@ -230,9 +236,9 @@ export function parseHumilityPlan(json: unknown): HumilityPlanFile {
     );
   }
   if (!Array.isArray(file.visits) || file.visits.length === 0) {
-    throw new HumilityPlanError('That Humility plan has no solved visits in it.');
+    throw new HumilityPlanError('That humility missions file has no solved visits in it.');
   }
-  if (file.source !== 'artifact-explorer') throw new HumilityPlanError('Unknown Humility plan source.');
+  if (file.source !== 'artifact-explorer') throw new HumilityPlanError('Unknown humility missions file source.');
   requireString(file.planLabel, 'plan label');
   requireNumber(file.generatedAt, 'generation timestamp');
   const ids = new Set<string>();

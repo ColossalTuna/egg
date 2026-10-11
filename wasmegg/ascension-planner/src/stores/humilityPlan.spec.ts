@@ -4,12 +4,15 @@
 const noopStorage = { getItem: () => null, setItem: () => undefined, removeItem: () => undefined };
 (globalThis as { localStorage?: Storage }).localStorage ??= noopStorage as unknown as Storage;
 
+import { readFileSync } from 'node:fs';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createBaseEngineState, getSimulationContext } from '@/engine/adapter';
 import { simulate } from '@/engine/simulate';
+import { resetAllStores } from '@/lib/modes';
 import { exportPlanData, importPlanLogic } from '@/stores/actions/io';
+import { useHumilityPlanStore } from '@/stores/humilityPlan';
 import { createEmptySnapshot } from '@/types';
 import type { Action } from '@/types';
 
@@ -43,5 +46,23 @@ describe('the tag staged actions carry', () => {
     // By id, not by position: the import prepends a `start_ascension` when a plan does not open
     // with one, so the tagged action is not where it was put.
     expect(imported.actions.find((a: Action) => a.id === 'store_tagged')?.sourceTag).toBe(TAG);
+  });
+});
+
+describe('switching plans', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  it('unloads the file, which belongs to the plan it was exported from', async () => {
+    const fixture = new URL('../../../artifact-explorer/tests/fixtures/humility-plan.json', import.meta.url);
+    const store = useHumilityPlanStore();
+    store.load(JSON.parse(readFileSync(fixture, 'utf8')));
+    store.drift = [{ egg: 'curiosity', ours: 1, theirs: 2 }];
+    expect(store.file).not.toBeNull();
+
+    // Every mode flow (library load, start from scratch, plan future, continue, reconcile) starts here.
+    await resetAllStores();
+
+    expect(store.file).toBeNull();
+    expect(store.drift).toEqual([]);
   });
 });

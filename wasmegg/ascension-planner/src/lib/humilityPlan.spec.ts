@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
+  fileMatchesPlan,
   fuelShortfalls,
   humilityVisitIds,
   humilityVisitInsertIndex,
@@ -225,6 +226,17 @@ describe('finding the visits a file was solved for', () => {
     expect(stageable(actions.filter(a => a.id !== 'shift_a1b2c3d'))).toEqual(new Set());
 
     expect(stageable(actions.filter(a => a.id !== 'shift_e5e5e5e'))).toEqual(new Set(['shift_a1b2c3d']));
+  });
+
+  it('tells a file from another plan apart from one that has lost some visits', () => {
+    const file = humilityPlan();
+    const matches = (plan: Action[]) => fileMatchesPlan(file, humilityVisitIds(plan));
+    expect(matches(actions)).toBe(true);
+    // A partial match keeps the per-visit reasons, even when nothing is stageable.
+    expect(matches(actions.filter(a => a.id !== 'shift_a1b2c3d'))).toBe(true);
+    // No visit in common: the file came from another plan.
+    expect(matches(actions.filter(a => a.id !== 'shift_a1b2c3d' && a.id !== 'shift_e5e5e5e'))).toBe(false);
+    expect(fileMatchesPlan(file, [])).toBe(false);
   });
 });
 
