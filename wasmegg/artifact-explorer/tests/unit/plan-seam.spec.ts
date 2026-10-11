@@ -1,5 +1,5 @@
 // The artifact-explorer half of the ascension-planner seam, exercised against the two fixtures in
-// `tests/fixtures/`. `wasmegg/ascension-planner/src/lib/humilityPlan.spec.ts` reads the same files
+// `tests/fixtures/`. `wasmegg/ascension-planner/src/lib/humilityMissions.spec.ts` reads the same files
 // from the other side; see the README beside them for why there is only one copy.
 
 import { readFileSync } from 'node:fs';
@@ -17,8 +17,8 @@ import {
   PlanSaveError,
   sliceHumilityVisits,
 } from '@/lib/plan/read';
-import { buildHumilityPlanFile, humilityMissionsFilename, projectSolvedVisit } from '@/lib/plan/write';
-import { HUMILITY_PLAN_SCHEMA, type HumilityPlanFile } from '@/lib/plan/schema';
+import { buildHumilityMissionsFile, humilityMissionsFilename, projectSolvedVisit } from '@/lib/plan/write';
+import { HUMILITY_MISSIONS_SCHEMA, type HumilityMissionsFile } from '@/lib/plan/schema';
 import type { LaunchSolution, OptimizerSolution, SlotSummary } from '@/lib/types';
 import { getLocalTimestampInTimezone } from '../../../ascension-planner/src/lib/events';
 
@@ -29,7 +29,7 @@ function fixture(name: string): unknown {
 }
 
 const planSave = () => parsePlanSave(fixture('ascension-plan.json'));
-const humilityPlan = fixture('humility-plan.json') as HumilityPlanFile;
+const humilityMissions = fixture('humility-missions.json') as HumilityMissionsFile;
 
 // 2026-03-01T12:00:00Z, the fixture's ascension start.
 const ASCENSION_START = Date.UTC(2026, 2, 1, 12, 0, 0) / 1000;
@@ -422,14 +422,14 @@ function solutionOf(runs: LaunchSolution[], overrides: Partial<OptimizerSolution
   };
 }
 
-describe('writing a humility plan', () => {
+describe('writing a humility missions file', () => {
   const Spaceship = ei.MissionInfo.Spaceship;
   const DurationType = ei.MissionInfo.DurationType;
   const SHIP_IN_A_BOTTLE = 25 as ei.ArtifactSpec.Name;
 
   it('reproduces the checked-in file for the first visit', () => {
     const [visit] = sliceHumilityVisits(planSave());
-    const expected = humilityPlan.visits[0];
+    const expected = humilityMissions.visits[0];
 
     const solved = projectSolvedVisit({
       visit,
@@ -537,18 +537,18 @@ describe('writing a humility plan', () => {
   });
 
   it('assembles a file the planner will accept, ordered by visit', () => {
-    const file = buildHumilityPlanFile('ascension-plan', [humilityPlan.visits[1], humilityPlan.visits[0]]);
-    expect(file.schema).toBe(HUMILITY_PLAN_SCHEMA);
-    expect(file.schemaVersion).toBe(humilityPlan.schemaVersion);
+    const file = buildHumilityMissionsFile('ascension-plan', [humilityMissions.visits[1], humilityMissions.visits[0]]);
+    expect(file.schema).toBe(HUMILITY_MISSIONS_SCHEMA);
+    expect(file.schemaVersion).toBe(humilityMissions.schemaVersion);
     expect(file.visits.map(v => v.visitIndex)).toEqual([0, 1]);
   });
 
   it('survives JSON.stringify, which the solution it projects does not', () => {
     // `OptimizerSolution` is full of Maps, which stringify as `{}`. The export is a projection for
     // exactly this reason, and this is the assertion that keeps it one.
-    const file = buildHumilityPlanFile('ascension-plan', humilityPlan.visits);
-    const roundTripped = JSON.parse(JSON.stringify(file)) as HumilityPlanFile;
-    expect(roundTripped.visits).toEqual(humilityPlan.visits);
+    const file = buildHumilityMissionsFile('ascension-plan', humilityMissions.visits);
+    const roundTripped = JSON.parse(JSON.stringify(file)) as HumilityMissionsFile;
+    expect(roundTripped.visits).toEqual(humilityMissions.visits);
   });
 });
 
@@ -571,7 +571,7 @@ async function storeWithVisit(index: number) {
 
 // A recorded answer, of the shape the export carries. Only the join key matters here.
 function solvedAt(visitId: string) {
-  return { ...humilityPlan.visits[0], visitId };
+  return { ...humilityMissions.visits[0], visitId };
 }
 
 describe('naming the humility missions file', () => {

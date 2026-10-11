@@ -431,7 +431,7 @@ import {
 } from '@/store/plan';
 import { parsePlanSave, planLabelFor, PlanSaveError, sliceHumilityVisits } from '@/lib/plan/read';
 import { normalizeBudgetInput } from '@/store/budget-input';
-import { buildHumilityPlanFile, humilityMissionsFilename } from '@/lib/plan/write';
+import { buildHumilityMissionsFile, humilityMissionsFilename } from '@/lib/plan/write';
 
 // Set the first time the export help is dismissed, so it opens unprompted only once.
 const HUMILITY_MISSIONS_EXPORT_HELP_SEEN_LOCALSTORAGE_KEY = 'humilityMissionsExportHelpSeen';
@@ -725,7 +725,7 @@ export default defineComponent({
       const plan = loadedPlan.value;
       if (!plan || props.exportBlocked) return;
       const solved = plan.visits.map(v => plan.solved[v.visitId]).filter(v => v !== undefined);
-      downloadJson(humilityMissionsFilename(plan.label), buildHumilityPlanFile(plan.label, solved));
+      downloadJson(humilityMissionsFilename(plan.label), buildHumilityMissionsFile(plan.label, solved));
       if (getLocalStorage(HUMILITY_MISSIONS_EXPORT_HELP_SEEN_LOCALSTORAGE_KEY) === undefined) {
         exportHelpAfterExport.value = true;
         exportHelpOpen.value = true;

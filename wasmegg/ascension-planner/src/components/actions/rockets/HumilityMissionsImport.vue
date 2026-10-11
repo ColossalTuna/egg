@@ -3,15 +3,15 @@
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div>
         <span class="text-xs font-bold uppercase tracking-wider text-indigo-700">From the artifact explorer</span>
-        <p v-if="!planStore.file" class="text-[11px] text-gray-500 mt-0.5">
+        <p v-if="!missionsStore.file" class="text-[11px] text-gray-500 mt-0.5">
           Import a humility missions file exported from the artifact explorer's mission optimizer.
         </p>
         <p v-else-if="!matchesPlan" class="text-[11px] text-amber-700 mt-0.5">
-          This file was exported from "{{ planStore.file.planLabel }}". None of its visits are in the current plan.
+          This file was exported from "{{ missionsStore.file.planLabel }}". None of its visits are in the current plan.
         </p>
         <p v-else class="text-[11px] text-gray-500 mt-0.5">
-          {{ planStore.file.planLabel }} — {{ planStore.file.visits.length }} solved visit{{
-            planStore.file.visits.length === 1 ? '' : 's'
+          {{ missionsStore.file.planLabel }} — {{ missionsStore.file.visits.length }} solved visit{{
+            missionsStore.file.visits.length === 1 ? '' : 's'
           }}
         </p>
       </div>
@@ -19,14 +19,14 @@
         <label
           class="px-2 py-1 text-xs rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 cursor-pointer"
         >
-          {{ planStore.file ? 'Load another…' : 'Choose file…' }}
+          {{ missionsStore.file ? 'Load another…' : 'Choose file…' }}
           <input type="file" accept=".json,application/json" class="hidden" @change="onFilePicked" />
         </label>
         <button
-          v-if="planStore.file"
+          v-if="missionsStore.file"
           type="button"
           class="px-2 py-1 text-xs rounded-md text-gray-500 hover:text-gray-700"
-          @click="planStore.clear()"
+          @click="missionsStore.clear()"
         >
           Close
         </button>
@@ -35,12 +35,12 @@
 
     <p v-if="error" class="text-xs text-red-600">{{ error }}</p>
 
-    <ul v-if="planStore.file" class="space-y-2">
+    <ul v-if="missionsStore.file" class="space-y-2">
       <li
-        v-for="visit in planStore.file.visits"
+        v-for="visit in missionsStore.file.visits"
         :key="visit.visitId"
         class="rounded-md border bg-white p-2.5"
-        :class="planStore.isStaged(visit) ? 'border-indigo-400 ring-1 ring-indigo-300' : 'border-gray-200'"
+        :class="missionsStore.isStaged(visit) ? 'border-indigo-400 ring-1 ring-indigo-300' : 'border-gray-200'"
       >
         <div class="flex flex-wrap items-baseline justify-between gap-2">
           <span class="text-xs font-bold text-gray-800">{{ visitName(visit) }}</span>
@@ -81,7 +81,7 @@
             :disabled="!stageable.has(visit.visitId)"
             @click="onStage(visit)"
           >
-            {{ planStore.isStaged(visit) ? 'Restage' : 'Stage into plan' }}
+            {{ missionsStore.isStaged(visit) ? 'Restage' : 'Stage into plan' }}
           </button>
           <span v-if="unavailableReasons.get(visit.visitId)" class="text-[11px] text-amber-700">
             {{ unavailableReasons.get(visit.visitId) }}
@@ -90,10 +90,10 @@
       </li>
     </ul>
 
-    <div v-if="planStore.drift.length > 0" class="rounded-md border border-red-300 bg-red-50 p-2">
+    <div v-if="missionsStore.drift.length > 0" class="rounded-md border border-red-300 bg-red-50 p-2">
       <p class="text-[11px] font-bold text-red-700">Fuel amounts differ. Using this planner's values.</p>
       <ul class="mt-1 space-y-0.5">
-        <li v-for="d in planStore.drift" :key="d.egg" class="text-[11px] text-red-700">
+        <li v-for="d in missionsStore.drift" :key="d.egg" class="text-[11px] text-red-700">
           {{ d.egg }}: here {{ formatNumber(d.ours, 2) }}, in the file {{ formatNumber(d.theirs, 2) }}
         </li>
       </ul>
@@ -107,19 +107,19 @@ import { formatProbability, getTargetName } from 'lib';
 
 import { getSimulationContext } from '@/engine/adapter';
 import { useActionsStore } from '@/stores/actions';
-import { useHumilityPlanStore } from '@/stores/humilityPlan';
-import { previewLaunchDurations, type LaunchDurations } from '@/lib/humilityPlanStage';
+import { useHumilityMissionsStore } from '@/stores/humilityMissions';
+import { previewLaunchDurations, type LaunchDurations } from '@/lib/humilityMissionsStage';
 import {
   fileMatchesPlan,
   humilityVisitIds,
   launchLabel,
   stageableVisitIds,
-  HumilityPlanError,
-  type HumilityPlanVisit,
-} from '@/lib/humilityPlan';
+  HumilityMissionsError,
+  type HumilityMissionsVisit,
+} from '@/lib/humilityMissions';
 import { formatDuration, formatNumber } from '@/lib/format';
 
-const planStore = useHumilityPlanStore();
+const missionsStore = useHumilityMissionsStore();
 const actionsStore = useActionsStore();
 const error = ref('');
 
@@ -127,13 +127,13 @@ const error = ref('');
 const planVisitIds = computed(() => humilityVisitIds(actionsStore.actions));
 
 const stageable = computed(() =>
-  planStore.file ? stageableVisitIds(planStore.file, planVisitIds.value) : new Set<string>()
+  missionsStore.file ? stageableVisitIds(missionsStore.file, planVisitIds.value) : new Set<string>()
 );
 
 // When no visit matches, the header says so once instead of every card giving a reason.
-const matchesPlan = computed(() => !planStore.file || fileMatchesPlan(planStore.file, planVisitIds.value));
+const matchesPlan = computed(() => !missionsStore.file || fileMatchesPlan(missionsStore.file, planVisitIds.value));
 
-function visitName(visit: HumilityPlanVisit): string {
+function visitName(visit: HumilityMissionsVisit): string {
   return `H${visit.visitIndex + 1} of ${planVisitIds.value.length}`;
 }
 
@@ -141,7 +141,7 @@ const unavailableReasons = computed(() => {
   const inPlan = new Set(planVisitIds.value);
   const reasons = new Map<string, string>();
   if (!matchesPlan.value) return reasons;
-  for (const visit of planStore.file?.visits ?? []) {
+  for (const visit of missionsStore.file?.visits ?? []) {
     if (stageable.value.has(visit.visitId)) continue;
     reasons.set(
       visit.visitId,
@@ -156,7 +156,7 @@ const unavailableReasons = computed(() => {
 const launchDurations = computed(() => {
   const context = getSimulationContext();
   const durations = new Map<string, LaunchDurations>();
-  for (const visit of planStore.file?.visits ?? []) {
+  for (const visit of missionsStore.file?.visits ?? []) {
     if (!stageable.value.has(visit.visitId)) continue;
     const preview = previewLaunchDurations(actionsStore.actions, visit, context);
     if (preview) durations.set(visit.visitId, preview);
@@ -176,7 +176,7 @@ watch(
   { immediate: true }
 );
 
-function totalShips(visit: HumilityPlanVisit): number {
+function totalShips(visit: HumilityMissionsVisit): number {
   return visit.launches.reduce((sum, l) => sum + l.count, 0);
 }
 
@@ -188,19 +188,19 @@ async function onFilePicked(event: Event) {
   if (!file) return;
   error.value = '';
   try {
-    planStore.load(JSON.parse(await file.text()));
+    missionsStore.load(JSON.parse(await file.text()));
   } catch (err) {
     error.value =
-      err instanceof HumilityPlanError ? err.message : `Could not read that file: ${(err as Error).message}`;
+      err instanceof HumilityMissionsError ? err.message : `Could not read that file: ${(err as Error).message}`;
   }
 }
 
-async function onStage(visit: HumilityPlanVisit) {
+async function onStage(visit: HumilityMissionsVisit) {
   error.value = '';
   try {
-    await planStore.stage(visit, { equipEarningsSet: swapSets[visit.visitId] === true });
+    await missionsStore.stage(visit, { equipEarningsSet: swapSets[visit.visitId] === true });
   } catch (err) {
-    error.value = err instanceof HumilityPlanError ? err.message : (err as Error).message;
+    error.value = err instanceof HumilityMissionsError ? err.message : (err as Error).message;
   }
 }
 </script>

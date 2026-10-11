@@ -7,25 +7,25 @@ import { computed, ref } from 'vue';
 
 import {
   fuelDrift,
-  parseHumilityPlan,
+  parseHumilityMissions,
   resolveLaunches,
   type FuelDrift,
-  type HumilityPlanFile,
-  type HumilityPlanVisit,
-} from '@/lib/humilityPlan';
+  type HumilityMissionsFile,
+  type HumilityMissionsVisit,
+} from '@/lib/humilityMissions';
 import { fuelForLaunches } from '@/lib/rockets/launches';
-import { humilitySourceTag, stageHumilityVisit, type StageOptions } from '@/lib/humilityPlanStage';
+import { humilitySourceTag, stageHumilityVisit, type StageOptions } from '@/lib/humilityMissionsStage';
 import { createBaseEngineState, getSimulationContext } from '@/engine/adapter';
 import { useActionsStore } from './actions';
 import { useInitialStateStore } from './initialState';
 import { computeSnapshot } from '@/engine/compute';
 
-export const useHumilityPlanStore = defineStore('humilityPlan', () => {
-  const file = ref<HumilityPlanFile | null>(null);
+export const useHumilityMissionsStore = defineStore('humilityMissions', () => {
+  const file = ref<HumilityMissionsFile | null>(null);
   const drift = ref<FuelDrift[]>([]);
 
   function load(json: unknown) {
-    file.value = parseHumilityPlan(json);
+    file.value = parseHumilityMissions(json);
     drift.value = [];
   }
 
@@ -42,11 +42,11 @@ export const useHumilityPlanStore = defineStore('humilityPlan', () => {
     return tags;
   });
 
-  function isStaged(visit: HumilityPlanVisit): boolean {
+  function isStaged(visit: HumilityMissionsVisit): boolean {
     return stagedTags.value.has(humilitySourceTag(visit.visitId));
   }
 
-  async function stage(visit: HumilityPlanVisit, options: StageOptions = {}) {
+  async function stage(visit: HumilityMissionsVisit, options: StageOptions = {}) {
     const actionsStore = useActionsStore();
     const base = createBaseEngineState(actionsStore._initialSnapshot);
     const context = getSimulationContext();

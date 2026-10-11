@@ -19,7 +19,7 @@ beforeEach(async () => {
   store.setMaxGoldenEggCostEnabled(false);
 });
 function recordAll() {
-  const solved = fixture('humility-plan.json').visits[0];
+  const solved = fixture('humility-missions.json').visits[0];
   for (const visit of plan.loadedPlan.value!.visits) plan.recordSolvedVisit({ ...solved, visitId: visit.visitId });
 }
 

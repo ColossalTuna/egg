@@ -8,7 +8,7 @@ import { ei, formatDuration, getLocalStorage, parseDurationDays, setLocalStorage
 import { parseBudgetInput } from '@/store/budget-input';
 
 import type { HumilityVisit } from '@/lib/plan/read';
-import type { HumilityPlanVisit } from '@/lib/plan/schema';
+import type { HumilityMissionsVisit } from '@/lib/plan/schema';
 
 const PLAN_LOCALSTORAGE_KEY = 'humility_plan';
 
@@ -40,7 +40,7 @@ export interface LoadedPlan {
   // the loaded save exactly as the page does with no plan at all.
   currentVisitId: string | null;
   settings: Record<string, VisitSettings>;
-  solved: Record<string, HumilityPlanVisit>;
+  solved: Record<string, HumilityMissionsVisit>;
 }
 
 function newVisitSettings(): VisitSettings {
@@ -201,7 +201,7 @@ export function setVisitGemCostInput(visitId: string, value: string): void {
   );
 }
 
-export function recordSolvedVisit(visit: HumilityPlanVisit): void {
+export function recordSolvedVisit(visit: HumilityMissionsVisit): void {
   const plan = loadedPlan.value;
   if (!plan) return;
   plan.solved[visit.visitId] = visit;
@@ -241,7 +241,7 @@ interface PersistedPlan {
   currentVisitId: string | null;
   visits: PersistedVisit[];
   settings: Record<string, VisitSettings>;
-  solved: Record<string, HumilityPlanVisit>;
+  solved: Record<string, HumilityMissionsVisit>;
 }
 
 function persistPlan(): void {

@@ -14,11 +14,11 @@ import {
   launchSchedule,
   stageableVisitIds,
   fuelDrift,
-  HumilityPlanError,
-  parseHumilityPlan,
+  HumilityMissionsError,
+  parseHumilityMissions,
   resolveLaunches,
-  type HumilityPlanFile,
-} from './humilityPlan';
+  type HumilityMissionsFile,
+} from './humilityMissions';
 import { fuelForLaunches, launchCost } from './rockets/launches';
 import { DURATION_NAMES, DurationType, SHIP_INFO, Spaceship, VIRTUE_FUEL_REQUIREMENTS } from './missions';
 import { VIRTUE_EGGS } from '@/types';
@@ -26,23 +26,24 @@ import type { Action } from '@/types';
 
 const FIXTURES = new URL('../../../artifact-explorer/tests/fixtures/', import.meta.url).pathname;
 
-const humilityPlan = () => parseHumilityPlan(JSON.parse(readFileSync(FIXTURES + 'humility-plan.json', 'utf8')));
+const humilityMissions = () =>
+  parseHumilityMissions(JSON.parse(readFileSync(FIXTURES + 'humility-missions.json', 'utf8')));
 const planSave = JSON.parse(readFileSync(FIXTURES + 'ascension-plan.json', 'utf8')) as { actions: Action[] };
 
-describe('parsing a humility plan', () => {
+describe('parsing a humility missions file', () => {
   it('accepts the fixture the explorer writes', () => {
-    const file = humilityPlan();
+    const file = humilityMissions();
     expect(file.visits.map(v => v.visitId)).toEqual(['shift_a1b2c3d', 'shift_e5e5e5e']);
   });
 
   it('refuses anything that is not this schema, at this version', () => {
-    const file = humilityPlan() as HumilityPlanFile;
-    expect(() => parseHumilityPlan({ ...file, schema: 'something.else' })).toThrow(HumilityPlanError);
-    expect(() => parseHumilityPlan({ ...file, schemaVersion: 2 })).toThrow(/version 2/);
-    expect(() => parseHumilityPlan({ ...file, visits: [] })).toThrow(/no solved visits/);
+    const file = humilityMissions() as HumilityMissionsFile;
+    expect(() => parseHumilityMissions({ ...file, schema: 'something.else' })).toThrow(HumilityMissionsError);
+    expect(() => parseHumilityMissions({ ...file, schemaVersion: 2 })).toThrow(/version 2/);
+    expect(() => parseHumilityMissions({ ...file, visits: [] })).toThrow(/no solved visits/);
   });
   it.each([null, [], { visitId: 'v1' }])('rejects a malformed visit before it reaches the panel: %j', visit => {
-    expect(() => parseHumilityPlan({ ...humilityPlan(), visits: [visit] })).toThrow(HumilityPlanError);
+    expect(() => parseHumilityMissions({ ...humilityMissions(), visits: [visit] })).toThrow(HumilityMissionsError);
   });
 
   it.each([
@@ -62,9 +63,9 @@ describe('parsing a humility plan', () => {
     ['launches', null],
     ['launches', [null]],
   ])('validates %s before accepting the file', (field, value) => {
-    const file = humilityPlan();
+    const file = humilityMissions();
     (file.visits[0] as unknown as Record<string, unknown>)[field] = value;
-    expect(() => parseHumilityPlan(file)).toThrow(HumilityPlanError);
+    expect(() => parseHumilityMissions(file)).toThrow(HumilityMissionsError);
   });
 
   it.each([
@@ -79,30 +80,30 @@ describe('parsing a humility plan', () => {
     { duration: 'TUTORIAL' },
     { ship: 'missing' },
   ])('validates each launch while loading: %j', fields => {
-    const file = humilityPlan();
+    const file = humilityMissions();
     Object.assign(file.visits[0].launches[0], fields);
-    expect(() => parseHumilityPlan(file)).toThrow(HumilityPlanError);
+    expect(() => parseHumilityMissions(file)).toThrow(HumilityMissionsError);
   });
 
   it('rejects duplicate visit ids and indices', () => {
-    const file = humilityPlan();
+    const file = humilityMissions();
     file.visits[1].visitId = file.visits[0].visitId;
-    expect(() => parseHumilityPlan(file)).toThrow(/Duplicate/);
+    expect(() => parseHumilityMissions(file)).toThrow(/Duplicate/);
     file.visits[1].visitId = 'different';
     file.visits[1].visitIndex = file.visits[0].visitIndex;
-    expect(() => parseHumilityPlan(file)).toThrow(/Duplicate/);
+    expect(() => parseHumilityMissions(file)).toThrow(/Duplicate/);
   });
 
   it('accepts an empty launch list for a solution satisfied by existing inventory', () => {
-    const file = humilityPlan();
+    const file = humilityMissions();
     file.visits[0].launches = [];
-    expect(parseHumilityPlan(file).visits[0].launches).toEqual([]);
+    expect(parseHumilityMissions(file).visits[0].launches).toEqual([]);
   });
 });
 
 describe("mapping the wire format onto this app's enums", () => {
   it('reads ships and durations by name, not by number', () => {
-    const [visit] = humilityPlan().visits;
+    const [visit] = humilityMissions().visits;
     const launches = resolveLaunches(visit);
     expect(launches).toEqual([
       { ship: Spaceship.HENERPRISE, duration: DurationType.LONG, targetAfxId: 25, count: 4 },
@@ -114,25 +115,25 @@ describe("mapping the wire format onto this app's enums", () => {
     // The collision this seam exists to avoid: the protobuf numbers EPIC 2 and TUTORIAL 3, this
     // app numbers EPIC 3. A file carrying the integer 3 would mean two different missions.
     expect(DurationType.EPIC).toBe(3);
-    const [visit] = humilityPlan().visits;
+    const [visit] = humilityMissions().visits;
     const withInteger = { ...visit, launches: [{ ...visit.launches[0], duration: 3 as unknown as string }] };
-    expect(() => resolveLaunches(withInteger)).toThrow(HumilityPlanError);
+    expect(() => resolveLaunches(withInteger)).toThrow(HumilityMissionsError);
   });
 
   it('rejects a duration it cannot plan rather than defaulting one', () => {
-    const [visit] = humilityPlan().visits;
+    const [visit] = humilityMissions().visits;
     const tutorial = { ...visit, launches: [{ ...visit.launches[0], duration: 'TUTORIAL' }] };
     expect(() => resolveLaunches(tutorial)).toThrow(/TUTORIAL/);
   });
 
   it('rejects an unknown ship rather than dropping it from the plan', () => {
-    const [visit] = humilityPlan().visits;
+    const [visit] = humilityMissions().visits;
     const bogus = { ...visit, launches: [{ ...visit.launches[0], ship: 'CHICKEN_TWELVE' }] };
     expect(() => resolveLaunches(bogus)).toThrow(/CHICKEN_TWELVE/);
   });
 
   it('lists a launch under the names the mission grid uses', () => {
-    const [visit] = humilityPlan().visits;
+    const [visit] = humilityMissions().visits;
     expect(visit.launches.map(launchLabel)).toEqual([
       `${DURATION_NAMES[DurationType.LONG]} ${SHIP_INFO[Spaceship.HENERPRISE].displayName}`,
       `${DURATION_NAMES[DurationType.EPIC]} ${SHIP_INFO[Spaceship.ATREGGIES].displayName}`,
@@ -143,17 +144,17 @@ describe("mapping the wire format onto this app's enums", () => {
   });
 
   it('rejects a count that would launch nothing or a fraction of a ship', () => {
-    const [visit] = humilityPlan().visits;
+    const [visit] = humilityMissions().visits;
     for (const count of [0, -1, 1.9, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
       const bad = { ...visit, launches: [{ ...visit.launches[0], count }] };
-      expect(() => resolveLaunches(bad)).toThrow(HumilityPlanError);
+      expect(() => resolveLaunches(bad)).toThrow(HumilityMissionsError);
     }
   });
 });
 
 describe('fuel', () => {
   it("adds back the Humility the explorer strips, from this app's own table", () => {
-    const [visit] = humilityPlan().visits;
+    const [visit] = humilityMissions().visits;
     const ours = fuelForLaunches(resolveLaunches(visit));
 
     // The file has no humility key at all; the tank is charged for it here, so an importer that
@@ -168,13 +169,13 @@ describe('fuel', () => {
 
   it('agrees with the explorer on the four eggs it does report', () => {
     // This is the tripwire, and it passing is the claim that the two tables have not drifted.
-    for (const visit of humilityPlan().visits) {
+    for (const visit of humilityMissions().visits) {
       expect(fuelDrift(visit, fuelForLaunches(resolveLaunches(visit)))).toEqual([]);
     }
   });
 
   it('reports drift instead of reconciling it', () => {
-    const [visit] = humilityPlan().visits;
+    const [visit] = humilityMissions().visits;
     const ours = fuelForLaunches(resolveLaunches(visit));
     const drifted = { ...visit, fuelRequired: { ...visit.fuelRequired, curiosity: ours.curiosity * 1.5 } };
     expect(fuelDrift(drifted, ours)).toEqual([
@@ -183,7 +184,7 @@ describe('fuel', () => {
   });
 
   it('does not mistake float noise for drift', () => {
-    const [visit] = humilityPlan().visits;
+    const [visit] = humilityMissions().visits;
     const ours = fuelForLaunches(resolveLaunches(visit));
     const nudged = { ...visit, fuelRequired: { ...visit.fuelRequired, curiosity: ours.curiosity * (1 + 1e-12) } };
     expect(fuelDrift(nudged, ours)).toEqual([]);
@@ -200,10 +201,10 @@ describe('finding the visits a file was solved for', () => {
     expect(humilityVisitIds(actions.slice(0, 3))).toEqual(['shift_a1b2c3d']);
   });
 
-  it('matches every visit id the explorer wrote into the plan file', () => {
+  it('matches every visit id the explorer wrote into the humility missions file', () => {
     // The join key, end to end: what the explorer put in the file is findable in the save it read.
     const ids = new Set(humilityVisitIds(actions));
-    for (const visit of humilityPlan().visits) {
+    for (const visit of humilityMissions().visits) {
       expect(ids.has(visit.visitId)).toBe(true);
     }
   });
@@ -217,7 +218,7 @@ describe('finding the visits a file was solved for', () => {
   });
 
   it('withholds every visit after one the plan has lost, not just that one', () => {
-    const file = humilityPlan();
+    const file = humilityMissions();
     const stageable = (plan: Action[]) => stageableVisitIds(file, humilityVisitIds(plan));
     expect(stageable(actions)).toEqual(new Set(['shift_a1b2c3d', 'shift_e5e5e5e']));
 
@@ -229,7 +230,7 @@ describe('finding the visits a file was solved for', () => {
   });
 
   it('tells a file from another plan apart from one that has lost some visits', () => {
-    const file = humilityPlan();
+    const file = humilityMissions();
     const matches = (plan: Action[]) => fileMatchesPlan(file, humilityVisitIds(plan));
     expect(matches(actions)).toBe(true);
     // A partial match keeps the per-visit reasons, even when nothing is stageable.
@@ -242,7 +243,7 @@ describe('finding the visits a file was solved for', () => {
 
 describe('what staging a visit costs', () => {
   it('stores only what the tank is short of, not the whole requirement', () => {
-    const [visit] = humilityPlan().visits;
+    const [visit] = humilityMissions().visits;
     const required = fuelForLaunches(resolveLaunches(visit));
 
     expect(fuelShortfalls(required, required)).toEqual([]);
@@ -254,7 +255,7 @@ describe('what staging a visit costs', () => {
   });
 
   it('schedules the makespan here, because the FTL level it depends on lives here', () => {
-    const [visit] = humilityPlan().visits;
+    const [visit] = humilityMissions().visits;
     const launches = resolveLaunches(visit);
     const totalShips = launches.reduce((sum, l) => sum + l.count, 0);
 
@@ -266,7 +267,7 @@ describe('what staging a visit costs', () => {
   });
 
   it("prices the launch from this app's ship prices", () => {
-    const [visit] = humilityPlan().visits;
+    const [visit] = humilityMissions().visits;
     const launches = resolveLaunches(visit);
     expect(launchCost(launches)).toBe(launches.reduce((cost, l) => cost + SHIP_INFO[l.ship].price * l.count, 0));
     expect(launchCost(launches)).toBeGreaterThan(0);

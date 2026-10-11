@@ -18,13 +18,15 @@ import { fuelForLaunches, launchCost } from './rockets/launches';
 import {
   fuelShortfalls,
   humilityVisitInsertIndex,
-  HumilityPlanError,
+  HumilityMissionsError,
   launchSchedule,
   resolveLaunches,
-  type HumilityPlanVisit,
+  type HumilityMissionsVisit,
   type ResolvedLaunch,
-} from './humilityPlan';
+} from './humilityMissions';
 
+// The `humility-plan:` prefix predates the humility missions rename and is kept so existing planner
+// saves keep their staged markers.
 export function humilitySourceTag(visitId: string): string {
   return `humility-plan:${visitId}`;
 }
@@ -33,7 +35,9 @@ function validateTank(amounts: Record<VirtueEgg, number>, level: number): void {
   const capacity = TANK_CAPACITIES[level];
   const total = Object.values(amounts).reduce((sum, amount) => sum + amount, 0);
   if (capacity === undefined || !Number.isFinite(total) || total > capacity + capacity * 1e-12) {
-    throw new HumilityPlanError(`This import would overflow the fuel tank (${total} eggs; capacity ${capacity ?? 0}).`);
+    throw new HumilityMissionsError(
+      `This import would overflow the fuel tank (${total} eggs; capacity ${capacity ?? 0}).`
+    );
   }
 }
 
@@ -103,7 +107,7 @@ export interface LaunchDurations {
 /** How long the visit's launch would take from where it will be inserted, on each set. */
 export function previewLaunchDurations(
   actions: readonly Action[],
-  visit: HumilityPlanVisit,
+  visit: HumilityMissionsVisit,
   context: SimulationContext
 ): LaunchDurations | null {
   const tag = humilitySourceTag(visit.visitId);
@@ -136,7 +140,7 @@ export interface StageOptions {
 /** Build and validate a replacement without mutating the live plan. */
 export function stageHumilityVisit(
   original: Action[],
-  visit: HumilityPlanVisit,
+  visit: HumilityMissionsVisit,
   base: EngineState,
   context: SimulationContext,
   options: StageOptions = {}
@@ -149,7 +153,7 @@ export function stageHumilityVisit(
   );
   let launchIndex = humilityVisitInsertIndex(actions, visit.visitId);
   if (launchIndex === null)
-    throw new HumilityPlanError(`This plan no longer has the visit ${visit.label} was solved for.`);
+    throw new HumilityMissionsError(`This plan no longer has the visit ${visit.label} was solved for.`);
   let arrivalIndex = actions.findIndex(action => action.id === visit.visitId);
   let previous = actions[launchIndex - 1].endState;
   const launches = resolveLaunches(visit);

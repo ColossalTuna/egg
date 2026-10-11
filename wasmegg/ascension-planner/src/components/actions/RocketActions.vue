@@ -12,7 +12,7 @@
       :tank-level="fuelTankStore.tankLevel"
     />
 
-    <HumilityPlanImport />
+    <HumilityMissionsImport />
 
     <!-- Mission Grid -->
     <MissionGrid :ftl-level="ftlLevel" :earnings-per-second="earningsPerSecond" />
@@ -85,7 +85,7 @@ import { formatDuration } from '@/lib/format';
 import { getTimeToSave } from '@/engine/apply';
 
 import FuelTankGraphic from './rockets/FuelTankGraphic.vue';
-import HumilityPlanImport from './rockets/HumilityPlanImport.vue';
+import HumilityMissionsImport from './rockets/HumilityMissionsImport.vue';
 import MissionGrid from './rockets/MissionGrid.vue';
 import MissionSummary from './rockets/MissionSummary.vue';
 

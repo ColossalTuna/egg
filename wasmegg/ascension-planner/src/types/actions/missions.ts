@@ -5,7 +5,7 @@ import type { VirtueEgg } from './virtue';
  *
  * `targetAfxId` is an `ei.ArtifactSpec.Name`, the protobuf's own numbering, shared with lib and
  * with the artifact explorer, so there is no second copy of it here to drift. It is recorded and
- * displayed and changes no calculation. Only the Humility plan import writes it; entries built by
+ * displayed and changes no calculation. Only the humility missions import writes it; entries built by
  * hand in Rocket Actions have no target and leave it absent.
  *
  * Optional and additive, so plans saved before it existed keep loading and the plan-save version

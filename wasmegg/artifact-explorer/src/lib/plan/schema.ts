@@ -4,8 +4,9 @@
 
 import { ei } from 'lib';
 
-export const HUMILITY_PLAN_SCHEMA = 'eggverse.humility-plan';
-export const HUMILITY_PLAN_SCHEMA_VERSION = 1;
+// The id predates the humility missions rename and is kept so existing exported files keep parsing.
+export const HUMILITY_MISSIONS_SCHEMA = 'eggverse.humility-plan';
+export const HUMILITY_MISSIONS_SCHEMA_VERSION = 1;
 
 // The only version of AP's plan save this reader understands.
 export const SUPPORTED_PLAN_SAVE_VERSION = 1;
@@ -60,10 +61,10 @@ export const AP_FTL_RESEARCH_ID = 'afx_mission_time';
 export const AP_ZEROG_RESEARCH_ID = 'afx_mission_capacity';
 
 // ---------------------------------------------------------------------------
-// `humility-plan.json`, this app's output
+// The humility missions file, this app's output
 // ---------------------------------------------------------------------------
 
-export interface HumilityPlanTarget {
+export interface HumilityMissionsTarget {
   nodeId: string;
   targetAfxId: ei.ArtifactSpec.Name;
   probability: number;
@@ -72,26 +73,26 @@ export interface HumilityPlanTarget {
 
 // One launch line. Aggregated on (ship, duration, targetAfxId): targeting is a first-class axis
 // of the optimizer's model, so a `{ship, duration, count}` triple cannot express its answer.
-export interface HumilityPlanLaunch {
+export interface HumilityMissionsLaunch {
   ship: string; // ei.MissionInfo.Spaceship name
   duration: string; // ei.MissionInfo.DurationType name
   targetAfxId: ei.ArtifactSpec.Name;
   count: number;
 }
 
-export interface HumilityPlanVisit {
+export interface HumilityMissionsVisit {
   // The id of the AP action that entered Humility, and the join key on import. For a plan that
   // starts on Humility, the `start_ascension` id.
   visitId: string;
   visitIndex: number;
   label: string;
 
-  targets: HumilityPlanTarget[];
+  targets: HumilityMissionsTarget[];
   // For this visit only, not for the cycle: one legendary of a target satisfies the whole cycle,
   // so the product over visits would overstate the result.
   jointProbability: number;
 
-  launches: HumilityPlanLaunch[];
+  launches: HumilityMissionsLaunch[];
 
   makespanSeconds: number;
   rawMakespanSeconds: number;
@@ -103,13 +104,13 @@ export interface HumilityPlanVisit {
   effort: string;
 }
 
-export interface HumilityPlanFile {
-  schema: typeof HUMILITY_PLAN_SCHEMA;
+export interface HumilityMissionsFile {
+  schema: typeof HUMILITY_MISSIONS_SCHEMA;
   schemaVersion: number;
   source: 'artifact-explorer';
   generatedAt: number;
   planLabel: string;
-  visits: HumilityPlanVisit[];
+  visits: HumilityMissionsVisit[];
 }
 
 // ---------------------------------------------------------------------------

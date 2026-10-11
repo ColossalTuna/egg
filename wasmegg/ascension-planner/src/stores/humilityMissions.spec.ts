@@ -12,7 +12,7 @@ import { createBaseEngineState, getSimulationContext } from '@/engine/adapter';
 import { simulate } from '@/engine/simulate';
 import { resetAllStores } from '@/lib/modes';
 import { exportPlanData, importPlanLogic } from '@/stores/actions/io';
-import { useHumilityPlanStore } from '@/stores/humilityPlan';
+import { useHumilityMissionsStore } from '@/stores/humilityMissions';
 import { createEmptySnapshot } from '@/types';
 import type { Action } from '@/types';
 
@@ -53,8 +53,8 @@ describe('switching plans', () => {
   beforeEach(() => setActivePinia(createPinia()));
 
   it('unloads the file, which belongs to the plan it was exported from', async () => {
-    const fixture = new URL('../../../artifact-explorer/tests/fixtures/humility-plan.json', import.meta.url);
-    const store = useHumilityPlanStore();
+    const fixture = new URL('../../../artifact-explorer/tests/fixtures/humility-missions.json', import.meta.url);
+    const store = useHumilityMissionsStore();
     store.load(JSON.parse(readFileSync(fixture, 'utf8')));
     store.drift = [{ egg: 'curiosity', ours: 1, theirs: 2 }];
     expect(store.file).not.toBeNull();

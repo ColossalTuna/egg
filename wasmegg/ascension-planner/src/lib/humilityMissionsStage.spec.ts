@@ -6,11 +6,11 @@ import { createEmptySnapshot, createSimAction, type Action, type CurrentFarmStat
 import { useActionsStore } from '@/stores/actions';
 import { exportPlanData } from '@/stores/actions/io';
 import { useInitialStateStore } from '@/stores/initialState';
-import { useHumilityPlanStore } from '@/stores/humilityPlan';
+import { useHumilityMissionsStore } from '@/stores/humilityMissions';
 import { simulate } from '@/engine/simulate';
-import { humilitySourceTag, previewLaunchDurations, stageHumilityVisit } from './humilityPlanStage';
+import { humilitySourceTag, previewLaunchDurations, stageHumilityVisit } from './humilityMissionsStage';
 import { fuelForLaunches } from './rockets/launches';
-import { resolveLaunches, type HumilityPlanVisit } from './humilityPlan';
+import { resolveLaunches, type HumilityMissionsVisit } from './humilityMissions';
 
 vi.hoisted(() => vi.stubGlobal('localStorage', { getItem: () => null, setItem() {}, removeItem() {} }));
 beforeEach(() => setActivePinia(createPinia()));
@@ -36,7 +36,7 @@ function plan(eggs: VirtueEgg[] = ['curiosity', 'humility']): Action[] {
   ];
 }
 
-function visit(ship = 'CHICKEN_ONE', count = 6): HumilityPlanVisit {
+function visit(ship = 'CHICKEN_ONE', count = 6): HumilityMissionsVisit {
   return {
     visitId: 'humility',
     visitIndex: 0,
@@ -184,7 +184,7 @@ describe('staging a Humility visit', () => {
     const once = stage(plan(), visit(), base);
     actions.actions = once;
     const before = JSON.stringify(actions.actions);
-    await expect(useHumilityPlanStore().stage(visit('ATREGGIES', 1))).rejects.toThrow(/overflow/);
+    await expect(useHumilityMissionsStore().stage(visit('ATREGGIES', 1))).rejects.toThrow(/overflow/);
     expect(JSON.stringify(actions.actions)).toBe(before);
   });
 
@@ -226,7 +226,9 @@ describe('staging a Humility visit', () => {
     actions._initialSnapshot = { ...createEmptySnapshot(), ...base };
     actions.actions = stage(twoVisitPlan(), { ...visit('ATREGGIES', 1), visitId: 'h1' }, base);
     const before = JSON.stringify(actions.actions);
-    await expect(useHumilityPlanStore().stage({ ...visit('ATREGGIES', 3), visitId: 'h2' })).rejects.toThrow(/overflow/);
+    await expect(useHumilityMissionsStore().stage({ ...visit('ATREGGIES', 3), visitId: 'h2' })).rejects.toThrow(
+      /overflow/
+    );
     expect(JSON.stringify(actions.actions)).toBe(before);
   });
 
@@ -272,12 +274,12 @@ describe('staging a Humility visit', () => {
     const actions = useActionsStore();
     actions._initialSnapshot = { ...createEmptySnapshot(), ...baseState() };
     actions.actions = plan(['integrity', 'humility']);
-    await useHumilityPlanStore().stage(visit('BCR'));
+    await useHumilityMissionsStore().stage(visit('BCR'));
     verifyFuelEggs(actions.actions);
     const fuel = actions.actions.find(a => a.type === 'store_fuel' && a.payload.egg === 'integrity')!;
     expect(fuel.dependsOn).toContain(actions.actions[0].id);
     expect(actions.actions[0].dependents).toContain(fuel.id);
-    expect(useHumilityPlanStore().isStaged(visit())).toBe(true);
+    expect(useHumilityMissionsStore().isStaged(visit())).toBe(true);
   });
 
   it('preserves the initial farm and snapshot except for the starting egg, including on export', async () => {
@@ -312,7 +314,7 @@ describe('staging a Humility visit', () => {
     ];
     const existingActionId = actions.actions[1].id;
     const v = { ...visit('BCR'), visitId: 'start' };
-    await useHumilityPlanStore().stage(v);
+    await useHumilityMissionsStore().stage(v);
     const expectedFarm = { ...farm, eggType: ei.Egg.INTEGRITY };
     expect(initialState.currentFarmState).toEqual(expectedFarm);
     expect(actions._initialSnapshot).toEqual({ ...snapshot, currentEgg: 'integrity' });
@@ -325,7 +327,7 @@ describe('staging a Humility visit', () => {
     const exported = exportPlanData(actions.actions, actions._initialSnapshot!);
     expect(exported.initialState.currentFarmState).toEqual(expectedFarm);
     expect(exported.actions[0].payload).toEqual(start.payload);
-    await useHumilityPlanStore().stage(v);
+    await useHumilityMissionsStore().stage(v);
     expect(initialState.currentFarmState).toEqual(expectedFarm);
     expect(actions.actions.filter(a => a.id === existingActionId)).toHaveLength(1);
     expect(farm.eggType).toBe(ei.Egg.HUMILITY);
@@ -340,7 +342,7 @@ describe('staging a Humility visit', () => {
     actions.actions = plan(['humility']);
     const v = { ...visit('ATREGGIES', 1), visitId: actions.actions[0].id };
     const before = JSON.stringify({ actions: actions.actions, snapshot: actions._initialSnapshot });
-    await expect(useHumilityPlanStore().stage(v)).rejects.toThrow(/overflow/);
+    await expect(useHumilityMissionsStore().stage(v)).rejects.toThrow(/overflow/);
     expect(JSON.stringify({ actions: actions.actions, snapshot: actions._initialSnapshot })).toBe(before);
   });
 });

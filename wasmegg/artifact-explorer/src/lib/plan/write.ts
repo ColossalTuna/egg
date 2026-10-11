@@ -8,12 +8,12 @@ import type { OptimizerSolution } from '@/lib/types';
 import type { HumilityVisit } from './read';
 import {
   durationEnumName,
-  HUMILITY_PLAN_SCHEMA,
-  HUMILITY_PLAN_SCHEMA_VERSION,
-  type HumilityPlanFile,
-  type HumilityPlanLaunch,
-  type HumilityPlanTarget,
-  type HumilityPlanVisit,
+  HUMILITY_MISSIONS_SCHEMA,
+  HUMILITY_MISSIONS_SCHEMA_VERSION,
+  type HumilityMissionsFile,
+  type HumilityMissionsLaunch,
+  type HumilityMissionsTarget,
+  type HumilityMissionsVisit,
   NON_HUMILITY_EGG_IDS,
   spaceshipEnumName,
   type VirtueEgg,
@@ -24,8 +24,8 @@ const EGG_NAME_BY_ID = new Map<ei.Egg, VirtueEgg>(NON_HUMILITY_EGG_IDS.map(([nam
 // Launches of the same ship, duration and target are one row: AP flies them identically, and the
 // solver may reach the same option from more than one slot. Sorted on the same tuple so the file
 // is a function of the plan rather than of the order the solver happened to emit its choices in.
-function aggregateLaunches(solution: OptimizerSolution): { launches: HumilityPlanLaunch[]; gemCost: number } {
-  const byKey = new Map<string, { sort: [number, number, number]; launch: HumilityPlanLaunch }>();
+function aggregateLaunches(solution: OptimizerSolution): { launches: HumilityMissionsLaunch[]; gemCost: number } {
+  const byKey = new Map<string, { sort: [number, number, number]; launch: HumilityMissionsLaunch }>();
   let gemCost = 0;
 
   for (const run of solution.choiceHistory) {
@@ -70,7 +70,7 @@ function fuelRequiredOf(solution: OptimizerSolution): Partial<Record<VirtueEgg, 
   return fuel;
 }
 
-function targetsOf(solution: OptimizerSolution): HumilityPlanTarget[] {
+function targetsOf(solution: OptimizerSolution): HumilityMissionsTarget[] {
   return solution.perTarget.map(target => ({
     nodeId: target.nodeId,
     targetAfxId: getArtifactTierPropsFromId(target.nodeId).afx_id,
@@ -84,7 +84,7 @@ export function projectSolvedVisit(args: {
   solution: OptimizerSolution;
   effort: string;
   gemBudget: number;
-}): HumilityPlanVisit {
+}): HumilityMissionsVisit {
   const { visit, solution, effort, gemBudget } = args;
   const { launches, gemCost } = aggregateLaunches(solution);
   return {
@@ -132,10 +132,10 @@ export function humilityMissionsFilename(planLabel: string): string {
   return label === '' ? 'humility-missions.json' : `humility-missions-${label}.json`;
 }
 
-export function buildHumilityPlanFile(planLabel: string, visits: HumilityPlanVisit[]): HumilityPlanFile {
+export function buildHumilityMissionsFile(planLabel: string, visits: HumilityMissionsVisit[]): HumilityMissionsFile {
   return {
-    schema: HUMILITY_PLAN_SCHEMA,
-    schemaVersion: HUMILITY_PLAN_SCHEMA_VERSION,
+    schema: HUMILITY_MISSIONS_SCHEMA,
+    schemaVersion: HUMILITY_MISSIONS_SCHEMA_VERSION,
     source: 'artifact-explorer',
     generatedAt: Date.now(),
     planLabel,
