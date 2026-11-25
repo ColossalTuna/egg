@@ -112,7 +112,7 @@ describe('parsing a humility missions file', () => {
   it('caps the ships one visit may launch', () => {
     const file = humilityMissions();
     file.visits[0].launches[0].count = MAX_SHIPS_PER_VISIT;
-    expect(() => parseHumilityMissions(file)).toThrow(/more than 1,000,000 ships/);
+    expect(() => parseHumilityMissions(file)).toThrow(/more than 100,000,000 ships.*shorter window/);
     file.visits[0].launches = [{ ...file.visits[0].launches[0], count: MAX_SHIPS_PER_VISIT }];
     expect(parseHumilityMissions(file).visits[0].launches[0].count).toBe(MAX_SHIPS_PER_VISIT);
   });

@@ -141,7 +141,10 @@ describe('staging a Humility visit', () => {
     const actions = plan(['humility']);
     actions[0].id = 'start';
     const result = stage(actions, v);
-    const opened = result.filter(a => a.type === 'shift' && a.sourceTag === humilitySourceTag('start'));
+    // The tagged shift onto Humility is the visit's own arrival (the moved start's), not a fuel phase.
+    const opened = result.filter(
+      a => a.type === 'shift' && a.sourceTag === humilitySourceTag('start') && a.payload.toEgg !== 'humility'
+    );
     expect(opened.length).toBeGreaterThan(0);
     for (const opening of opened) {
       const index = result.indexOf(opening);

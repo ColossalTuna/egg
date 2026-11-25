@@ -13,11 +13,14 @@ export const HUMILITY_MISSIONS_SCHEMA = 'eggverse.humility-plan';
 export const HUMILITY_MISSIONS_SCHEMA_VERSION = 1;
 
 /**
- * The most ships one visit may launch. Far above anything a real window holds (a million of the
- * shortest mission is years of slot time), and low enough that a crafted count cannot stall the
- * schedule or the fuel arithmetic.
+ * The most ships one visit may launch: 100,000,000. The explorer puts no bound on its window, so this
+ * is set where no window it can realistically be given reaches: three slots of the shortest mission
+ * (Chicken One SHORT, 20 minutes) take over a thousand years to fly this many, and the explorer's own
+ * packer keeps one entry per ship, so it runs out of memory long before. Everything this planner does
+ * with a visit is grouped by duration, so the cap costs nothing below it; it is there so a crafted
+ * count (1e9 and up) cannot stall the page.
  */
-export const MAX_SHIPS_PER_VISIT = 1_000_000;
+export const MAX_SHIPS_PER_VISIT = 100_000_000;
 
 // Appended to every "this file names something this planner does not know" message: the usual
 // cause is two deployments of different ages, not a damaged file.
@@ -129,7 +132,8 @@ export function resolveLaunches(visit: HumilityMissionsVisit): ResolvedLaunch[] 
     if (ships > MAX_SHIPS_PER_VISIT) {
       throw new HumilityMissionsError(
         `Visit "${visit.label}" launches more than ${MAX_SHIPS_PER_VISIT.toLocaleString('en-US')} ships, ` +
-          'more than any real window holds. The file is damaged or was not written by the artifact explorer.'
+          'the most this planner stages in one visit. Re-solve it in the artifact explorer with a shorter window ' +
+          'and export again.'
       );
     }
     const targetAfxId = launch.targetAfxId;
@@ -347,7 +351,8 @@ function toPlanState(plan: readonly string[] | PlanVisitState): PlanVisitState {
  * Identity: the visit ids must be the plan's. A file visit the plan no longer has withholds every
  * later one (the answers were solved as a sequence); a plan that shares the file's visits up to one
  * and then has a Humility visit the file does not know in that one's place is another plan (or was
- * rebuilt), and nothing in the file applies.
+ * rebuilt), and nothing in the file applies, unless an earlier shared visit's basis still matches
+ * the plan, which shows the plan is the file's own with that visit deleted.
  *
  * Inputs: a visit carrying a `basis` is stageable only while the plan still gives it that basis.
  * A visit from an older file has no basis to check, so once an earlier visit of the same file has
@@ -365,15 +370,24 @@ export function assessFile(file: HumilityMissionsFile, plan: readonly string[] |
     return { matches: false, mismatch: 'None of its visits are in the current plan.', reasons };
   }
   // The plan follows the file up to a visit, then has a Humility visit the file does not know where
-  // the file's next one was: it diverged from the plan the file was solved against.
+  // the file's next one was: it diverged from the plan the file was solved against. By ids alone that
+  // looks the same as a plan that lost the file's visit and has a later, unsolved one move up into its
+  // place, so the stricter reading is kept unless an earlier shared visit vouches for the plan: its
+  // recorded basis is one the plan still gives it. Then the plan is the one the file was solved
+  // against, the unknown visit is the plan's own, and the missing one is only gone (withheld below).
   let followed = false;
+  let vouched = false;
   for (const visit of file.visits) {
     if (position.has(visit.visitId)) {
       followed = true;
+      const candidates = state.bases?.get(visit.visitId);
+      if (visit.basis && candidates && candidates.length > 0 && staleBasisReason(visit, candidates) === null) {
+        vouched = true;
+      }
       continue;
     }
     const occupant = state.ids[visit.visitIndex];
-    if (followed && occupant !== undefined && !fileIds.has(occupant)) {
+    if (followed && !vouched && occupant !== undefined && !fileIds.has(occupant)) {
       for (const v of file.visits) reasons.set(v.visitId, 'The file does not come from this plan.');
       return {
         matches: false,
@@ -486,18 +500,32 @@ export interface LaunchSchedule {
   /** The busiest slot: the time from the first launch until the last mission returns. */
   totalSeconds: number;
   totalMissions: number;
+  /**
+   * True when a target was given, the schedule is longer than it, and the packer ran out of search
+   * before it could either match the target or prove it cannot be matched at these durations. The
+   * explorer's packing may still exist; staging says so rather than blaming the FTL level.
+   */
+  searchLimited: boolean;
 }
 
 // Packer tolerances, relative to the capacity like the explorer's, so float summation order never
 // turns an exact fit into an overflow.
 const REL_EPS = 1e-9;
 const REL_GRAIN = 2 ** -40;
-// Work caps, in candidate splits tried. The probe at the explorer's own makespan gets a large one,
-// since an arrangement there is known to exist; the bisection below it gets the explorer's.
+// Work caps, in candidate splits tried. The probe at the explorer's own makespan gets a large one per
+// split order, since an arrangement there is known to exist; the bisection below it gets the explorer's.
 const TARGET_PROBE_STEPS = 2_000_000;
 const SEARCH_PROBE_STEPS = 50_000;
 const SEARCH_PROBES = 40;
 const SEARCH_ABS_GAP = 0.5;
+
+/**
+ * The order a node tries its splits in. `even` fills the emptiest slot first, so the most even splits
+ * come first; `explorer` is the explorer's `packWitness` order (fewest into the emptiest slot first).
+ * Neither dominates: a packing one order reaches within its budget the other can miss, which is why
+ * the probe at the explorer's makespan tries both.
+ */
+type SplitOrder = 'even' | 'explorer';
 
 /**
  * Exact three-slot packing of `counts[j]` missions of `durations[j]` under `capacity`, as per-slot
@@ -509,7 +537,8 @@ function packCounts(
   durations: number[],
   counts: number[],
   capacity: number,
-  stepBudget: number
+  stepBudget: number,
+  order: SplitOrder = 'even'
 ): number[][] | null | undefined {
   const eps = REL_EPS * capacity;
   const grain = REL_GRAIN * capacity;
@@ -518,7 +547,12 @@ function packCounts(
   const active = durations.map((_, j) => j).filter(j => counts[j] > 0 && durations[j] > 0);
   for (const j of durations.keys()) if (counts[j] > 0 && !(durations[j] > 0)) witness[j][0] = counts[j];
   active.sort((a, b) => durations[b] - durations[a]);
-  for (const j of active) if (durations[j] > capacity + eps) return null;
+  let big = 0;
+  for (const j of active) {
+    if (durations[j] > capacity + eps) return null;
+    if (durations[j] > capacity / 2 + eps) big += counts[j];
+  }
+  if (big > NUM_SLOTS) return null;
   const suffix = new Array<number>(active.length + 1).fill(0);
   for (let t = active.length - 1; t >= 0; t--) suffix[t] = suffix[t + 1] + counts[active[t]] * durations[active[t]];
   if (suffix[0] > NUM_SLOTS * capacity + eps) return null;
@@ -526,59 +560,122 @@ function packCounts(
   const infeasible = new Set<string>();
   let steps = 0;
   let exhausted = false;
-  const search = (t: number, loads: number[], slots: number[]): boolean => {
+  // Loads are kept sorted ascending (l0 <= l1 <= l2) so the memo key is canonical; s0..s2 carry the
+  // real slot of each position so the witness is recorded in caller terms.
+  const search = (t: number, l0: number, l1: number, l2: number, s0: number, s1: number, s2: number): boolean => {
     if (t === active.length) return true;
-    if (NUM_SLOTS * capacity - loads[0] - loads[1] - loads[2] + eps < suffix[t]) return false;
-    const key = `${t}#${cell(loads[0])},${cell(loads[1])},${cell(loads[2])}`;
+    if (NUM_SLOTS * capacity - l0 - l1 - l2 + eps < suffix[t]) return false;
+    const key = `${t}#${cell(l0)},${cell(l1)},${cell(l2)}`;
     if (infeasible.has(key)) return false;
     const j = active[t];
     const c = counts[j];
     const d = durations[j];
     const room = (load: number) => Math.max(0, Math.floor((capacity - load + eps) / d));
-    const [room0, room1, room2] = [room(loads[0]), room(loads[1]), room(loads[2])];
-    // Fill the emptiest slot first: the most-even splits are tried first.
-    for (let x0 = Math.min(c, room0); x0 >= Math.max(0, c - room1 - room2); x0--) {
-      const rest = c - x0;
-      for (let x1 = Math.min(rest, room1); x1 >= Math.max(0, rest - room2); x1--) {
-        if (++steps > stepBudget) {
-          exhausted = true;
-          return false;
+    const room0 = room(l0);
+    const room1 = room(l1);
+    const room2 = room(l2);
+    const tryX = (x0: number, x1: number): boolean => {
+      const x2 = c - x0 - x1;
+      const a = l0 + x0 * d;
+      const b = l1 + x1 * d;
+      const e = l2 + x2 * d;
+      // Sort the three new loads, carrying their slots.
+      let p0 = a,
+        q0 = s0,
+        p1 = b,
+        q1 = s1,
+        p2 = e,
+        q2 = s2;
+      if (p0 > p1) [p0, p1, q0, q1] = [p1, p0, q1, q0];
+      if (p1 > p2) [p1, p2, q1, q2] = [p2, p1, q2, q1];
+      if (p0 > p1) [p0, p1, q0, q1] = [p1, p0, q1, q0];
+      if (!search(t + 1, p0, p1, p2, q0, q1, q2)) return false;
+      witness[j][s0] = x0;
+      witness[j][s1] = x1;
+      witness[j][s2] = x2;
+      return true;
+    };
+    const x0Lo = Math.max(0, c - room1 - room2);
+    const x0Hi = Math.min(c, room0);
+    if (order === 'even') {
+      for (let x0 = x0Hi; x0 >= x0Lo; x0--) {
+        const rest = c - x0;
+        for (let x1 = Math.min(rest, room1); x1 >= Math.max(0, rest - room2); x1--) {
+          if (++steps > stepBudget) {
+            exhausted = true;
+            return false;
+          }
+          if (tryX(x0, x1)) return true;
+          if (exhausted) return false;
         }
-        const x = [x0, x1, rest - x1];
-        const next = loads.map((load, k) => load + x[k] * d);
-        const order = [0, 1, 2].sort((a, b) => next[a] - next[b]);
-        if (
-          search(
-            t + 1,
-            order.map(k => next[k]),
-            order.map(k => slots[k])
-          )
-        ) {
-          for (let k = 0; k < NUM_SLOTS; k++) witness[j][slots[k]] = x[k];
-          return true;
+      }
+    } else {
+      for (let x0 = x0Lo; x0 <= x0Hi; x0++) {
+        const rest = c - x0;
+        for (let x1 = Math.max(0, rest - room2); x1 <= Math.min(rest, room1); x1++) {
+          if (++steps > stepBudget) {
+            exhausted = true;
+            return false;
+          }
+          if (tryX(x0, x1)) return true;
+          if (exhausted) return false;
         }
-        if (exhausted) return false;
       }
     }
     infeasible.add(key);
     return false;
   };
-  const packs = search(0, [0, 0, 0], [0, 1, 2]);
+  const packs = search(0, 0, 0, 0, 0, 1, 2);
   if (exhausted) return undefined;
   return packs ? witness : null;
 }
 
-/** Longest first into the emptiest slot. */
+/**
+ * Longest first into the emptiest slot, a group at a time: a slot takes ships until it passes the
+ * next emptiest, and slots within a ship of each other take turns in bulk. Close to placing one ship
+ * at a time (it is only the seed and upper bound of the search), without walking every ship.
+ */
 function lptCounts(durations: number[], counts: number[]): number[][] {
   const witness = durations.map(() => [0, 0, 0]);
   const load = [0, 0, 0];
   const order = durations.map((_, j) => j).sort((a, b) => durations[b] - durations[a]);
   for (const j of order) {
     const d = Math.max(0, durations[j]);
-    for (let k = 0; k < counts[j]; k++) {
-      const slot = load[0] <= load[1] ? (load[0] <= load[2] ? 0 : 2) : load[1] <= load[2] ? 1 : 2;
-      load[slot] += d;
-      witness[j][slot]++;
+    let left = counts[j];
+    if (!(d > 0)) {
+      witness[j][0] += left;
+      continue;
+    }
+    while (left > 0) {
+      const slots = [0, 1, 2].sort((a, b) => load[a] - load[b] || a - b);
+      const [lo, mid, hi] = slots;
+      if (load[hi] - load[lo] < d && left >= NUM_SLOTS) {
+        // Within a ship of each other: whole rounds keep the order, so hand them out together.
+        const rounds = Math.floor(left / NUM_SLOTS);
+        for (const slot of slots) {
+          witness[j][slot] += rounds;
+          load[slot] += rounds * d;
+        }
+        left -= rounds * NUM_SLOTS;
+        continue;
+      }
+      if (load[mid] - load[lo] < d && left >= 2) {
+        // The two emptiest are within a ship of each other and well below the third: they alternate.
+        const pairs = Math.min(Math.floor(left / 2), Math.floor((load[hi] - load[mid]) / d));
+        if (pairs > 0) {
+          for (const slot of [lo, mid]) {
+            witness[j][slot] += pairs;
+            load[slot] += pairs * d;
+          }
+          left -= pairs * 2;
+          continue;
+        }
+      }
+      // The emptiest slot takes ships until it passes the next emptiest.
+      const take = Math.min(left, Math.max(1, Math.floor((load[mid] - load[lo]) / d) + 1));
+      witness[j][lo] += take;
+      load[lo] += take * d;
+      left -= take;
     }
   }
   return witness;
@@ -594,9 +691,14 @@ function slotLoads(witness: number[][], durations: number[]): number[] {
  * The arrangement with the smallest busiest slot this search finds: LPT, then (when given) the
  * explorer's own makespan, then a bisection between the best so far and the lower bound. The probe
  * at `targetSeconds` is what makes this at least as good as the explorer: its packing exists at
- * that capacity, so an exact search finds one there too.
+ * that capacity, so an exact search finds one there too, given the steps. The probe tries both split
+ * orders; `searchLimited` is set when both ran out of steps without matching the target.
  */
-function minimalCounts(durations: number[], counts: number[], targetSeconds?: number): number[][] {
+function minimalCounts(
+  durations: number[],
+  counts: number[],
+  targetSeconds?: number
+): { witness: number[][]; searchLimited: boolean } {
   let best = lptCounts(durations, counts);
   let hi = Math.max(...slotLoads(best, durations));
   let total = 0;
@@ -608,8 +710,8 @@ function minimalCounts(durations: number[], counts: number[], targetSeconds?: nu
   });
   let lo = Math.max(longest, total / NUM_SLOTS);
   const gap = Math.max(REL_EPS * hi, SEARCH_ABS_GAP);
-  const tryAt = (capacity: number, steps: number): number[][] | null | undefined => {
-    const witness = packCounts(durations, counts, capacity, steps);
+  const tryAt = (capacity: number, steps: number, order?: SplitOrder): number[][] | null | undefined => {
+    const witness = packCounts(durations, counts, capacity, steps, order);
     if (witness) {
       const max = Math.max(...slotLoads(witness, durations));
       if (max < hi) {
@@ -622,9 +724,15 @@ function minimalCounts(durations: number[], counts: number[], targetSeconds?: nu
 
   // The explorer's figure is rounded to whole seconds, so allow it the half second it may have lost.
   // Once the explorer's own makespan is matched, the staged visit fits its window: stop there.
+  let searchLimited = false;
   if (targetSeconds !== undefined && Number.isFinite(targetSeconds)) {
-    if (targetSeconds + SEARCH_ABS_GAP < hi) tryAt(targetSeconds + SEARCH_ABS_GAP, TARGET_PROBE_STEPS);
-    if (hi <= targetSeconds + SEARCH_ABS_GAP) return best;
+    const capacity = targetSeconds + SEARCH_ABS_GAP;
+    if (capacity < hi) {
+      let probe = tryAt(capacity, TARGET_PROBE_STEPS, 'even');
+      if (probe === undefined) probe = tryAt(capacity, TARGET_PROBE_STEPS, 'explorer');
+      searchLimited = probe === undefined;
+    }
+    if (hi <= capacity) return { witness: best, searchLimited: false };
   }
   for (let probe = 0; probe < SEARCH_PROBES && hi - lo > gap; probe++) {
     const mid = probe === 0 ? lo : lo + (hi - lo) / 2;
@@ -633,7 +741,20 @@ function minimalCounts(durations: number[], counts: number[], targetSeconds?: nu
     if (witness === null) lo = mid;
     else hi = Math.min(hi, Math.max(Math.max(...slotLoads(witness, durations)), mid));
   }
-  return best;
+  const matched = targetSeconds !== undefined && hi <= targetSeconds + SEARCH_ABS_GAP;
+  return { witness: best, searchLimited: searchLimited && !matched };
+}
+
+// The import panel previews every stageable visit's launch on every plan edit, and staging repeats
+// the schedule; the launches and FTL level rarely change between those calls, so the packing is kept.
+const SCHEDULE_CACHE_SIZE = 64;
+const scheduleCache = new Map<string, LaunchSchedule>();
+
+function cloneSchedule(schedule: LaunchSchedule): LaunchSchedule {
+  return {
+    ...schedule,
+    slots: schedule.slots.map(slot => ({ ...slot, launches: slot.launches.map(launch => ({ ...launch })) })),
+  };
 }
 
 /**
@@ -641,16 +762,21 @@ function minimalCounts(durations: number[], counts: number[], targetSeconds?: nu
  *
  * Local to the import, rather than the mission grid's LPT `scheduleMissions`, because a staged visit
  * has to fit the window the explorer solved it for: given `targetSeconds` (the file's makespan), the
- * schedule is never longer than the explorer's own packing when the durations agree. A schedule that
- * lands a fraction of a second past `targetSeconds` is float noise against the explorer's rounding and
- * is reported as `targetSeconds`. Missions are grouped by duration, so the work does not grow with the
- * number of ships.
+ * schedule is no longer than the explorer's own packing when the durations agree, unless the search
+ * runs out of steps first, which `searchLimited` reports. A schedule that lands a fraction of a second
+ * past `targetSeconds` is float noise against the explorer's rounding and is reported as
+ * `targetSeconds`. Missions are grouped by duration, so the work does not grow with the number of
+ * ships, and results are cached by launches, FTL level and target.
  */
 export function launchSchedule(
   launches: readonly ResolvedLaunch[],
   ftlLevel: number,
   targetSeconds?: number
 ): LaunchSchedule {
+  const key = `${ftlLevel}|${targetSeconds}|${launches.map(l => `${l.ship}.${l.duration}.${l.count}`).join(',')}`;
+  const cached = scheduleCache.get(key);
+  if (cached) return cloneSchedule(cached);
+
   const groups: ScheduledLaunch[][] = [];
   const durations: number[] = [];
   const counts: number[] = [];
@@ -668,7 +794,7 @@ export function launchSchedule(
     groups[j].push({ ship, duration, durationSeconds, count });
   }
 
-  const witness = minimalCounts(durations, counts, targetSeconds);
+  const { witness, searchLimited } = minimalCounts(durations, counts, targetSeconds);
   const slots = Array.from({ length: NUM_SLOTS }, () => ({ launches: [] as ScheduledLaunch[], totalSeconds: 0 }));
   witness.forEach((perSlot, j) => {
     // Hand the group's ships out to its slots in launch order.
@@ -690,7 +816,10 @@ export function launchSchedule(
   if (targetSeconds !== undefined && totalSeconds > targetSeconds && totalSeconds - targetSeconds < 1) {
     totalSeconds = targetSeconds;
   }
-  return { slots, totalSeconds, totalMissions };
+  const schedule = { slots, totalSeconds, totalMissions, searchLimited };
+  if (scheduleCache.size >= SCHEDULE_CACHE_SIZE) scheduleCache.delete(scheduleCache.keys().next().value!);
+  scheduleCache.set(key, cloneSchedule(schedule));
+  return schedule;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
