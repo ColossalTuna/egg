@@ -39,13 +39,17 @@ export interface PlanSaveAction {
   type: string;
   totalTimeSeconds: number;
   payload?: unknown;
+  // Set by AP on actions it inserted when staging a humility missions file, as
+  // `${STAGED_SOURCE_TAG_PREFIX}<visitId>`. Absent on everything the player added.
+  sourceTag?: string;
   endState: PlanSaveEndState;
 }
 
 export interface PlanSave {
   version: number;
   initialState: {
-    epicResearchLevels: Record<string, number>;
+    // AP omits the whole map on a save with no epic research bought.
+    epicResearchLevels?: Record<string, number>;
   };
   virtueState?: {
     ascensionDate?: string;
@@ -58,6 +62,9 @@ export interface PlanSave {
 // AP's epic research ids, as they appear in `initialState.epicResearchLevels`.
 export const AP_FTL_RESEARCH_ID = 'afx_mission_time';
 export const AP_ZEROG_RESEARCH_ID = 'afx_mission_capacity';
+
+// AP's `humilitySourceTag` prefix (humilityMissionsStage.ts), marking the actions a staged visit added.
+export const STAGED_SOURCE_TAG_PREFIX = 'humility-plan:';
 
 // ---------------------------------------------------------------------------
 // The humility missions file, this app's output
@@ -79,6 +86,23 @@ export interface HumilityMissionsLaunch {
   count: number;
 }
 
+// The visit inputs the explorer read off the plan when it solved, so the importer can tell whether
+// the plan still poses the same question. Every figure is copied unchanged from the `HumilityVisit`
+// the solve ran against; see its field docs in read.ts for what each one means.
+export interface HumilityMissionsVisitBasis {
+  bankValue: number;
+  earningsPerSecond: number;
+  tankLevel: number;
+  plannedDurationSeconds: number;
+  // The four tanked eggs, all present. No humility key, as for `fuelRequired`.
+  fuelByEgg: Partial<Record<VirtueEgg, number>>;
+}
+
+// What `gemBudget` holds when the solve ran with no gem limit. JSON has no Infinity (it writes null,
+// which AP rejects), so "unlimited" is the largest finite double: AP's number check accepts it and no
+// real gem cost reaches it, so `gemCost > gemBudget` stays false.
+export const GEM_BUDGET_UNLIMITED = Number.MAX_VALUE;
+
 export interface HumilityMissionsVisit {
   // The id of the AP action that entered Humility, and the join key on import. For a plan that
   // starts on Humility, the `start_ascension` id.
@@ -93,14 +117,26 @@ export interface HumilityMissionsVisit {
 
   launches: HumilityMissionsLaunch[];
 
+  // The busiest slot's load, with each mission floored at the effort's launch period, and the same
+  // slot's load at the missions' own durations. Both at `epicResearchFTLLevel`.
   makespanSeconds: number;
   rawMakespanSeconds: number;
   // No humility key. The importer re-derives all five figures from AP's own table and treats
   // these four as a cross-check.
   fuelRequired: Partial<Record<VirtueEgg, number>>;
+  // Total gem price of every launch in the visit.
   gemCost: number;
+  // The TOTAL gem budget for the visit: what all of its launches together may spend, not a price cap
+  // on each ship. `GEM_BUDGET_UNLIMITED` when the solve had no gem limit. Always finite.
   gemBudget: number;
   effort: string;
+
+  // The FTL level the solve priced durations at. The importer compares it with the plan's own level
+  // and warns on a mismatch. Absent in files from builds before it was written; also absent when the
+  // writer was given no level and the plan carried none.
+  epicResearchFTLLevel?: number;
+  // The visit inputs the solve read. Absent in files from builds before it was written.
+  basis?: HumilityMissionsVisitBasis;
 }
 
 export interface HumilityMissionsFile {

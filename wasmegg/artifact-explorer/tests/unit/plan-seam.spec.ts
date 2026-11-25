@@ -315,11 +315,27 @@ describe('reading a malformed plan save', () => {
     expect(() => sliceHumilityVisits(parsePlanSave(blind))).toThrow(/onlineEarnings/);
   });
 
-  it('reads absent epic research as level zero', () => {
-    // AP omits the whole map on a save with no epic research bought, and a default of anything
-    // else silently lengthens every mission the optimizer prices.
+  it('reads absent epic research as unknown, not as level zero', () => {
+    // AP omits the whole map on a save with no epic research bought. The visit then says nothing,
+    // so the save's (or the typed) level applies; a fabricated zero here would override the save's
+    // real level and lengthen every mission the optimizer prices.
     const plan = raw();
     const [first] = sliceHumilityVisits(parsePlanSave({ ...plan, initialState: {} }));
+    expect(first.epicResearchFTLLevel).toBeUndefined();
+    expect(first.epicResearchZerogLevel).toBeUndefined();
+  });
+
+  it('reads a key missing from a present epic research map as level zero, as AP does (SAT-SEAM-14)', () => {
+    // AP's hydrate replaces its whole map with the plan's, so a key the map lacks is level 0 to AP
+    // (humilityMissionsStage `?? 0`, RocketActions `|| 0`). Reading it as unknown let the explorer
+    // solve at the save's FTL while AP staged at 0: launches about 2.2x longer, plus a warning.
+    const plan = raw();
+    const levels = { ...(plan.initialState.epicResearchLevels as Record<string, number>) };
+    delete levels.afx_mission_time;
+    delete levels.afx_mission_capacity;
+    const [first] = sliceHumilityVisits(
+      parsePlanSave({ ...plan, initialState: { ...plan.initialState, epicResearchLevels: levels } })
+    );
     expect(first.epicResearchFTLLevel).toBe(0);
     expect(first.epicResearchZerogLevel).toBe(0);
   });
@@ -435,6 +451,7 @@ describe('writing a humility missions file', () => {
       visit,
       effort: 'medium',
       gemBudget: expected.gemBudget,
+      epicResearchFTLLevel: 55,
       solution: solutionOf(
         [
           launch(Spaceship.ATREGGIES, DurationType.EPIC, SHIP_IN_A_BOTTLE, 9),
@@ -456,6 +473,10 @@ describe('writing a humility missions file', () => {
             },
           ],
           jointProbability: 0.87,
+          // The fixture's figures are the minimized packing at FTL 55: 9 Atreggies EPIC (155520 s)
+          // and 4 Henerprise LONG (77760 s) over three slots, busiest slot 8 * 77760 s.
+          timeUnitsUsed: 622080,
+          runningTimeSeconds: 622080,
         }
       ),
     });
@@ -467,6 +488,16 @@ describe('writing a humility missions file', () => {
     const { gemCost: expectedGemCost, ...expectedRest } = expected;
     expect(solvedRest).toEqual(expectedRest);
     expect(Math.abs(gemCost / expectedGemCost - 1)).toBeLessThan(1e-12);
+
+    // The fixture's two makespans are equal (no mission is under the effort floor), so it cannot tell
+    // them apart on its own. A solution where the floor binds keeps each figure in its own field.
+    const floored = projectSolvedVisit({
+      visit,
+      effort: 'medium',
+      gemBudget: expected.gemBudget,
+      solution: solutionOf([], { timeUnitsUsed: 950400, runningTimeSeconds: 933120 }),
+    });
+    expect([floored.makespanSeconds, floored.rawMakespanSeconds]).toEqual([950400, 933120]);
   });
 
   it('crosses ships and durations as enum names, never as integers', () => {
