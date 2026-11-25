@@ -8,9 +8,21 @@ import { exportPlanData } from '@/stores/actions/io';
 import { useInitialStateStore } from '@/stores/initialState';
 import { useHumilityMissionsStore } from '@/stores/humilityMissions';
 import { simulate } from 'lib/planners/engine/simulate';
-import { humilitySourceTag, previewLaunchDurations, stageHumilityVisit } from './humilityMissionsStage';
+import {
+  humilitySourceTag,
+  importPlanState,
+  previewLaunchDurations,
+  stageHumilityVisit,
+} from './humilityMissionsStage';
 import { fuelForLaunches } from 'lib/planners/rockets/launches';
-import { resolveLaunches, type HumilityMissionsVisit } from './humilityMissions';
+import {
+  launchSchedule,
+  planVisitBases,
+  resolveLaunches,
+  stageableVisitIds,
+  type HumilityMissionsFile,
+  type HumilityMissionsVisit,
+} from './humilityMissions';
 
 vi.hoisted(() => vi.stubGlobal('localStorage', { getItem: () => null, setItem() {}, removeItem() {} }));
 beforeEach(() => setActivePinia(createPinia()));
@@ -239,6 +251,56 @@ describe('staging a Humility visit', () => {
     expect(result[index + 1].type).toBe('wait_for_time');
     expect(result[index + 1].totalTimeSeconds).toBe(172800 - 2400);
     expect(result[index + 1].sourceTag).toBe(humilitySourceTag('humility'));
+  });
+
+  it('adds no wait for a remainder of under a second', () => {
+    const result = stage(plan(), { ...visit(), makespanSeconds: 2400.4 });
+    expect(result.some(a => a.type === 'wait_for_time')).toBe(false);
+  });
+
+  it('stages no launch for a visit with nothing to launch, and clears an earlier staging of it', () => {
+    const once = stage(plan(), visit());
+    const empty = stage(once, { ...visit(), launches: [], makespanSeconds: 0 });
+    expect(empty.some(a => a.type === 'launch_missions')).toBe(false);
+    expect(empty.some(a => a.sourceTag === humilitySourceTag('humility'))).toBe(false);
+  });
+
+  it('overlaps the time spent saving gems with the missions instead of adding it', () => {
+    const base = baseState();
+    base.population = 1e9;
+    // No bank set: the launch has to be saved for.
+    const actions = plan().filter(a => a.type !== 'modify_bank');
+    const v = visit('ATREGGIES', 3);
+    const schedule = launchSchedule(resolveLaunches(v), 0).totalSeconds;
+    const result = stage(actions, { ...v, makespanSeconds: schedule }, base);
+    const launch = result.find(a => a.type === 'launch_missions')!;
+    const saving = launch.totalTimeSeconds - (launch.type === 'launch_missions' ? launch.payload.totalTimeSeconds : 0);
+    expect(saving).toBeGreaterThan(0);
+    expect(launch.totalTimeSeconds).toBeCloseTo(Math.max(saving, schedule), 6);
+  });
+
+  it('refuses a visit whose plan inputs changed since the solve, and restages one that is unchanged', () => {
+    const solvedOn = simulate(plan(), getSimulationContext(), baseState());
+    const v = { ...visit(), basis: planVisitBases(solvedOn).get('humility')! };
+    const once = stage(plan(), v);
+    // Restaging the same file into the plan it already staged into is fine.
+    expect(() => stage(once, v)).not.toThrow();
+    const edited = [...plan(), createSimAction('wait_for_time', { totalTimeSeconds: 3600 })];
+    expect(() => stage(edited, v)).toThrow(/changed since H1 was solved \(.*the time already planned on Humility\)/);
+    // And the panel offers it for restaging too.
+    const file = { visits: [v] } as unknown as HumilityMissionsFile;
+    expect(stageableVisitIds(file, importPlanState(once, getSimulationContext(), baseState()))).toEqual(
+      new Set(['humility'])
+    );
+  });
+
+  it('stages at the plan FTL level with a warning when the solve used another', () => {
+    const context = getSimulationContext();
+    const result = stageHumilityVisit(plan(), { ...visit(), epicResearchFTLLevel: 30 }, baseState(), context);
+    expect(result.actions.some(a => a.type === 'launch_missions')).toBe(true);
+    const level = context.epicResearchLevels['afx_mission_time'] ?? 0;
+    expect(result.warnings).toEqual([expect.stringMatching(new RegExp(`FTL level 30.*FTL level ${level}`))]);
+    expect(stageHumilityVisit(plan(), visit(), baseState(), context).warnings).toEqual([]);
   });
 
   it('does not add a negative wait when launches exceed the exported window', () => {

@@ -7,7 +7,7 @@
           Import a humility missions file exported from the artifact explorer's mission optimizer.
         </p>
         <p v-else-if="!matchesPlan" class="text-[11px] text-amber-700 mt-0.5">
-          This file was exported from "{{ missionsStore.file.planLabel }}". None of its visits are in the current plan.
+          This file was exported from "{{ missionsStore.file.planLabel }}". {{ missionsStore.assessment?.mismatch }}
         </p>
         <p v-else class="text-[11px] text-gray-500 mt-0.5">
           {{ missionsStore.file.planLabel }} — {{ missionsStore.file.visits.length }} solved visit{{
@@ -58,9 +58,11 @@
         </ul>
 
         <p v-if="visit.gemCost > visit.gemBudget" class="mt-1 text-[11px] text-amber-700">
-          Total: {{ formatNumber(visit.gemCost, 2) }} gems; plan budget: {{ formatNumber(visit.gemBudget, 2) }}.
-          Purchase limits apply per ship.
+          This visit's launches cost {{ formatNumber(visit.gemCost, 2) }} gems in total, more than its total gem budget
+          of {{ formatNumber(visit.gemBudget, 2) }}.
         </p>
+
+        <p v-if="ftlWarning(visit)" class="mt-1 text-[11px] text-amber-700">{{ ftlWarning(visit) }}</p>
 
         <p
           v-if="launchDurations.get(visit.visitId)?.withEarningsSet !== undefined"
@@ -90,6 +92,10 @@
       </li>
     </ul>
 
+    <ul v-if="missionsStore.warnings.length > 0" class="space-y-0.5">
+      <li v-for="(warning, i) in missionsStore.warnings" :key="i" class="text-[11px] text-amber-700">{{ warning }}</li>
+    </ul>
+
     <div v-if="missionsStore.drift.length > 0" class="rounded-md border border-red-300 bg-red-50 p-2">
       <p class="text-[11px] font-bold text-red-700">Fuel amounts differ. Using this planner's values.</p>
       <ul class="mt-1 space-y-0.5">
@@ -110,10 +116,9 @@ import { useActionsStore } from '@planner/stores/actions';
 import { useHumilityMissionsStore } from '@planner/stores/humilityMissions';
 import { previewLaunchDurations, type LaunchDurations } from '@planner/lib/humilityMissionsStage';
 import {
-  fileMatchesPlan,
-  humilityVisitIds,
+  ftlMismatchWarning,
   launchLabel,
-  stageableVisitIds,
+  visitPositionLabel,
   HumilityMissionsError,
   type HumilityMissionsVisit,
 } from '@planner/lib/humilityMissions';
@@ -123,37 +128,34 @@ const missionsStore = useHumilityMissionsStore();
 const actionsStore = useActionsStore();
 const error = ref('');
 
-// Use the current plan's visit count.
-const planVisitIds = computed(() => humilityVisitIds(actionsStore.actions));
+// The plan's visits now, and which of the file's still apply to it (identity and solve inputs).
+const planVisitIds = computed(() => missionsStore.planState.ids);
+const assessment = computed(() => missionsStore.assessment);
 
-const stageable = computed(() =>
-  missionsStore.file ? stageableVisitIds(missionsStore.file, planVisitIds.value) : new Set<string>()
-);
+const stageable = computed(() => {
+  const ids = new Set<string>();
+  if (!missionsStore.file || !assessment.value?.matches) return ids;
+  for (const visit of missionsStore.file.visits)
+    if (!assessment.value.reasons.has(visit.visitId)) ids.add(visit.visitId);
+  return ids;
+});
 
-// When no visit matches, the header says so once instead of every card giving a reason.
-const matchesPlan = computed(() => !missionsStore.file || fileMatchesPlan(missionsStore.file, planVisitIds.value));
+// When the file does not match, the header says so once instead of every card giving a reason.
+const matchesPlan = computed(() => !missionsStore.file || assessment.value?.matches !== false);
 
 function visitName(visit: HumilityMissionsVisit): string {
-  // A file from another plan says nothing about this plan's visit count.
+  // A file from another plan says nothing about this plan's visits.
   if (!matchesPlan.value) return `H${visit.visitIndex + 1}`;
-  return `H${visit.visitIndex + 1} of ${planVisitIds.value.length}`;
+  return visitPositionLabel(visit, planVisitIds.value);
 }
 
-const unavailableReasons = computed(() => {
-  const inPlan = new Set(planVisitIds.value);
-  const reasons = new Map<string, string>();
-  if (!matchesPlan.value) return reasons;
-  for (const visit of missionsStore.file?.visits ?? []) {
-    if (stageable.value.has(visit.visitId)) continue;
-    reasons.set(
-      visit.visitId,
-      inPlan.has(visit.visitId)
-        ? 'An earlier solved visit is no longer in the plan.'
-        : 'This visit is no longer in the plan.'
-    );
-  }
-  return reasons;
-});
+const unavailableReasons = computed(() =>
+  matchesPlan.value ? (assessment.value?.reasons ?? new Map<string, string>()) : new Map<string, string>()
+);
+
+function ftlWarning(visit: HumilityMissionsVisit): string | null {
+  return ftlMismatchWarning(visit, getSimulationContext().epicResearchLevels['afx_mission_time'] ?? 0);
+}
 
 const launchDurations = computed(() => {
   const context = getSimulationContext();

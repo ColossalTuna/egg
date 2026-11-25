@@ -6,8 +6,14 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
+  assessFile,
   fileMatchesPlan,
+  ftlMismatchWarning,
   fuelShortfalls,
+  MAX_SHIPS_PER_VISIT,
+  planVisitBases,
+  planVisitState,
+  visitPositionLabel,
   humilityVisitIds,
   humilityVisitInsertIndex,
   launchLabel,
@@ -19,7 +25,8 @@ import {
   resolveLaunches,
   type HumilityMissionsFile,
 } from './humilityMissions';
-import { fuelForLaunches, launchCost } from 'lib/planners/rockets/launches';
+import { fuelForLaunches, launchCost, launchEntries } from 'lib/planners/rockets/launches';
+import { scheduleMissions } from 'lib/planners/rockets/scheduler';
 import { DURATION_NAMES, DurationType, SHIP_INFO, Spaceship, FUEL_REQUIREMENTS } from './missions';
 import { VIRTUE_EGGS } from '@/types';
 import type { Action } from '@/types';
@@ -92,6 +99,46 @@ describe('parsing a humility missions file', () => {
     file.visits[1].visitId = 'different';
     file.visits[1].visitIndex = file.visits[0].visitIndex;
     expect(() => parseHumilityMissions(file)).toThrow(/Duplicate/);
+  });
+
+  it('names a version mismatch when the file uses a ship, duration or target this planner does not know', () => {
+    for (const fields of [{ ship: 'NEW_SHIP' }, { duration: 'TUTORIAL' }, { targetAfxId: 99999 }]) {
+      const file = humilityMissions();
+      Object.assign(file.visits[0].launches[0], fields);
+      expect(() => parseHumilityMissions(file)).toThrow(/newer artifact explorer.*re-export/);
+    }
+  });
+
+  it('caps the ships one visit may launch', () => {
+    const file = humilityMissions();
+    file.visits[0].launches[0].count = MAX_SHIPS_PER_VISIT;
+    expect(() => parseHumilityMissions(file)).toThrow(/more than 1,000,000 ships/);
+    file.visits[0].launches = [{ ...file.visits[0].launches[0], count: MAX_SHIPS_PER_VISIT }];
+    expect(parseHumilityMissions(file).visits[0].launches[0].count).toBe(MAX_SHIPS_PER_VISIT);
+  });
+
+  it('reads the FTL level and basis newer explorers write, and still loads files without them', () => {
+    const file = humilityMissions();
+    expect(file.visits[0].epicResearchFTLLevel).toBe(55);
+    expect(file.visits[0].basis?.tankLevel).toBe(6);
+    for (const visit of file.visits) {
+      delete visit.epicResearchFTLLevel;
+      delete visit.basis;
+    }
+    expect(parseHumilityMissions(file).visits).toHaveLength(2);
+  });
+
+  it.each([
+    ['epicResearchFTLLevel', 61],
+    ['epicResearchFTLLevel', 1.5],
+    ['basis', 'x'],
+    ['basis', { bankValue: 1, earningsPerSecond: 1, tankLevel: 0.5, plannedDurationSeconds: 0, fuelByEgg: {} }],
+    ['basis', { bankValue: -1, earningsPerSecond: 1, tankLevel: 1, plannedDurationSeconds: 0, fuelByEgg: {} }],
+    ['basis', { bankValue: 1, earningsPerSecond: 1, tankLevel: 1, plannedDurationSeconds: 0, fuelByEgg: { bogus: 1 } }],
+  ])('validates the optional %s when it is there', (field, value) => {
+    const file = humilityMissions();
+    (file.visits[0] as unknown as Record<string, unknown>)[field] = value;
+    expect(() => parseHumilityMissions(file)).toThrow(HumilityMissionsError);
   });
 
   it('accepts an empty launch list for a solution satisfied by existing inventory', () => {
@@ -241,6 +288,69 @@ describe('finding the visits a file was solved for', () => {
   });
 });
 
+describe('whether the plan still poses the question the file answers', () => {
+  const actions = planSave.actions;
+
+  it("reads each visit's inputs exactly as the explorer does, so the fixture's own plan is never stale", () => {
+    // The fixture's `basis` is the explorer reader's output on the fixture plan; AP's reading of the same
+    // end states must agree with it, or every file would be flagged as stale.
+    const bases = planVisitBases(actions);
+    for (const visit of humilityMissions().visits) expect(bases.get(visit.visitId)).toEqual(visit.basis);
+    expect(stageableVisitIds(humilityMissions(), planVisitState(actions))).toEqual(
+      new Set(['shift_a1b2c3d', 'shift_e5e5e5e'])
+    );
+  });
+
+  it('withholds a visit whose inputs changed, and says which', () => {
+    const edited = actions.map(a =>
+      a.id === 'wait_b1b1b1b' ? { ...a, totalTimeSeconds: a.totalTimeSeconds + 3600 } : a
+    ) as Action[];
+    const assessment = assessFile(humilityMissions(), planVisitState(edited));
+    expect(assessment.matches).toBe(true);
+    expect(assessment.reasons.get('shift_a1b2c3d')).toMatch(/time already planned on Humility/);
+    // The second visit has inputs of its own, and those did not move.
+    expect(assessment.reasons.has('shift_e5e5e5e')).toBe(false);
+  });
+
+  it('calls a plan with every visit changed not this plan', () => {
+    const edited = actions.map(a => ({ ...a, endState: { ...a.endState, tankLevel: 1 } })) as Action[];
+    expect(fileMatchesPlan(humilityMissions(), planVisitState(edited))).toBe(false);
+  });
+
+  it('does not take a plan that shares the first visit and then goes elsewhere for the file’s plan', () => {
+    const file = humilityMissions();
+    expect(fileMatchesPlan(file, ['shift_a1b2c3d', 'somewhere_else'])).toBe(false);
+    expect(stageableVisitIds(file, ['shift_a1b2c3d', 'somewhere_else'])).toEqual(new Set());
+    // A Humility visit added after the solved ones changes nothing.
+    expect(stageableVisitIds(file, ['shift_a1b2c3d', 'shift_e5e5e5e', 'later'])).toEqual(
+      new Set(['shift_a1b2c3d', 'shift_e5e5e5e'])
+    );
+  });
+
+  it('withholds later visits of an older file once an earlier one is staged', () => {
+    const file = humilityMissions();
+    for (const visit of file.visits) delete visit.basis;
+    const state = { ids: ['shift_a1b2c3d', 'shift_e5e5e5e'], staged: new Set(['shift_a1b2c3d']) };
+    expect(stageableVisitIds(file, state)).toEqual(new Set(['shift_a1b2c3d']));
+    expect(assessFile(file, state).reasons.get('shift_e5e5e5e')).toMatch(
+      /earlier visit from this file has been staged/
+    );
+  });
+
+  it('labels a visit by its place in the plan now', () => {
+    const [visit] = humilityMissions().visits;
+    expect(visitPositionLabel(visit, ['new', 'shift_a1b2c3d', 'shift_e5e5e5e'])).toBe('H2 of 3');
+    expect(visitPositionLabel(visit, ['other'])).toBe('H1');
+  });
+
+  it('warns, naming both levels, when the solve used another FTL level', () => {
+    const [visit] = humilityMissions().visits;
+    expect(ftlMismatchWarning(visit, 55)).toBeNull();
+    expect(ftlMismatchWarning(visit, 40)).toMatch(/FTL level 55.*FTL level 40/);
+    expect(ftlMismatchWarning({ ...visit, epicResearchFTLLevel: undefined }, 40)).toBeNull();
+  });
+});
+
 describe('what staging a visit costs', () => {
   it('stores only what the tank is short of, not the whole requirement', () => {
     const [visit] = humilityMissions().visits;
@@ -264,6 +374,48 @@ describe('what staging a visit costs', () => {
     expect(noFtl.totalSeconds).toBeGreaterThan(0);
     // FTL shortens the file's figure, so copying `makespanSeconds` across would overstate the plan.
     expect(launchSchedule(launches, 60).totalSeconds).toBeLessThan(noFtl.totalSeconds);
+  });
+
+  it("is never longer than the explorer's packing of the same missions", () => {
+    // 2 x 16 h, 2 x 12 h, 3 x 8 h: LPT needs 115200 s, an exact packing 100800 s.
+    const launches = resolveLaunches({
+      ...humilityMissions().visits[0],
+      launches: [
+        { ship: 'GALEGGTICA', duration: 'LONG', targetAfxId: 0, count: 2 },
+        { ship: 'MILLENIUM_CHICKEN', duration: 'EPIC', targetAfxId: 0, count: 2 },
+        { ship: 'BCR', duration: 'EPIC', targetAfxId: 0, count: 3 },
+      ],
+    });
+    expect(scheduleMissions(launchEntries(launches, 0)).totalSeconds).toBe(115200);
+    expect(launchSchedule(launches, 0).totalSeconds).toBe(100800);
+    expect(launchSchedule(launches, 0, 100800).totalSeconds).toBe(100800);
+    const schedule = launchSchedule(launches, 0, 100800);
+    expect(schedule.slots.map(slot => slot.totalSeconds).sort()).toEqual([100800, 100800, 86400]);
+    expect(schedule.slots.flatMap(slot => slot.launches).reduce((n, l) => n + l.count, 0)).toBe(7);
+  });
+
+  it("never reports more than the explorer's rounded makespan for the same missions", () => {
+    const [visit] = humilityMissions().visits;
+    const launches = resolveLaunches(visit);
+    // 3 Atreggies EPIC at FTL 55 is 155520 s give or take float noise. The explorer rounds its figure to
+    // whole seconds, so a schedule a fraction of a second over it is that rounding, and is reported as it.
+    const atreggies = resolveLaunches({ ...visit, launches: [{ ...visit.launches[1], count: 3 }] });
+    expect(launchSchedule(atreggies, 55).totalSeconds).toBeCloseTo(155520, 6);
+    expect(launchSchedule(atreggies, 55, 155519.6).totalSeconds).toBe(155519.6);
+    expect(launchSchedule(atreggies, 55, 155518).totalSeconds).toBeCloseTo(155520, 6);
+    const schedule = launchSchedule(launches, 55, visit.makespanSeconds).totalSeconds;
+    expect(schedule).toBeLessThanOrEqual(visit.makespanSeconds);
+    expect(schedule).toBeCloseTo(visit.makespanSeconds, 6);
+  });
+
+  it('schedules a huge fleet without walking every ship', () => {
+    const t0 = performance.now();
+    const schedule = launchSchedule(
+      [{ ship: Spaceship.CHICKEN_ONE, duration: DurationType.SHORT, targetAfxId: 0, count: 1e7 }],
+      0
+    );
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(schedule.totalMissions).toBe(1e7);
   });
 
   it("prices the launch from this app's ship prices", () => {

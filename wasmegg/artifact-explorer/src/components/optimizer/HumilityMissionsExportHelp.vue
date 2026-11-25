@@ -57,16 +57,21 @@
                   ascension planner
                 </a>
               </li>
-              <li>Load the same plan this file was exported from.</li>
-              <li>Edit a Humility visit if the last stop is not Humility.</li>
+              <li>Load the same plan this file was exported from, unchanged.</li>
               <li>Open the Rockets tab.</li>
               <li>Use the "From the artifact explorer" dialog to load the downloaded file.</li>
-              <li>Stage each visit into the plan all at once or individually.</li>
+              <li>Stage a visit into the plan.</li>
             </ol>
 
             <p class="text-xs text-gray-500">
-              These solutions will only load into the plan that they were generated against; a different plan will not
-              load them.
+              A visit stages only while the plan still gives it what it was solved against: the same Humility visits,
+              and for that visit the same bank, earnings, tank and time already planned there. A plan that has been
+              edited since the export, or a different plan, will not take it, and the planner says why.
+            </p>
+            <p class="text-xs text-gray-500">
+              Staging a visit changes the time, gems and fuel every later visit was solved against, so stage the first
+              one, export the updated plan, and solve the next visit again from it. If the planner's FTL level differs
+              from the one used here, it stages anyway with a warning, and mission durations follow the planner.
             </p>
 
             <div class="flex items-center justify-between gap-3 pt-1">
