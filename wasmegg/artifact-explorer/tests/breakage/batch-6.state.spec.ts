@@ -70,7 +70,8 @@ describe('STA-10 missing epic research in plan overrides the save', () => {
       })
     );
     plan.setCurrentVisit(plan.loadedPlan.value!.visits[0].visitId);
-    expect(plan.activePlanVisit.value!.epicResearchFTLLevel).toBe(0);
+    // Reader contract (changed with the STA-10 fix): a plan that says nothing leaves the level undefined.
+    expect(plan.activePlanVisit.value!.epicResearchFTLLevel).toBeUndefined();
     // BREAKAGE STA-10: expected the save's 60 (the plan said nothing), actual 0
     expect(store.effectiveConfig.value.epicResearchFTLLevel).toBe(60);
   });
