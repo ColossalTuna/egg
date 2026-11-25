@@ -21,8 +21,8 @@ export function loadHighs(): Promise<MilpSolve> {
   cached ??= highsLoader({ locateFile: () => wasmLocation })
     .then((highs): MilpSolve => {
       return (model, limits) => {
-        // Serialized outside the `try` on purpose: the backstop below is for HiGHS
-        // throwing, not for laundering a crash in our own writer into `unknown`.
+        // Serialized outside the `try` on purpose: the wrapper below names HiGHS as the failing party, which
+        // a crash in our own writer is not.
         const lp = writeLp(model);
         let raw: RawHighsSolution;
         try {
@@ -31,10 +31,12 @@ export function loadHighs(): Promise<MilpSolve> {
             mip_max_nodes: limits.maxNodes,
             mip_rel_gap: limits.relGap,
           } as Parameters<typeof highs.solve>[1]);
-        } catch {
-          // HiGHS can throw out of `Highs_run` on a model it reads perfectly well
-          // ("HiGHS error -1"). See SPEC.md section 8.
-          return { status: 'unknown', objective: 0, columnValues: new Float64Array(model.columnCount) };
+        } catch (error: unknown) {
+          // HiGHS can throw out of `Highs_run` on a model it reads perfectly well ("HiGHS error -1"). That
+          // is a failed solve, not an answer: it propagates, so the caller reports an error instead of
+          // recording an empty plan as a success (STA-13). See SPEC.md section 8.
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(`HiGHS failed: ${reason}`, { cause: error });
         }
         return readSolution(model, raw);
       };

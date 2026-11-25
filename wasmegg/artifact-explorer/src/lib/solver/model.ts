@@ -5,21 +5,25 @@ import type { LaunchOption, RecipeDAG } from '../types';
 import { fuelCostOnAxis, normalizeProblem, type FuelAxis, type PlanProblem } from './types';
 import { qOf } from '../objective';
 
-// Stand-ins for a bound no budget gives; see SPEC.md section 2. `UNBOUNDED_PER_SLOT` is `milp.ts`'s column
-// bound and lives here so `boundsFollowFromRows` below can read the same number.
+// Stand-in for a group total no budget bounds at all: a zero-duration mission that burns nothing
+// budgeted. Any positive duration bounds a group through the time budget instead, and that bound is
+// used as it is, however large; see SPEC.md section 2.
 const UNBOUNDED_GROUP = 1e9;
-export const UNBOUNDED_PER_SLOT = 1e6;
 
 export interface Group {
   // Normalized: a fraction of each fuel budget, and of one slot's horizon. One
   // entry per `Model.fuelAxes`, in that order.
   fuelFractions: number[];
+  // Gems per launch as a fraction of the total gem budget; 0 when there is no gem cap.
+  gemFraction: number;
   timeFraction: number;
   timeSeconds: number;
   yieldByItem: number[];
   legendaryByTarget: number[];
   cap: number;
-  members: number[]; // original option indices, ascending; output lands on members[0]
+  // Original option indices. Output lands on members[0], which is the cheapest member (by gem cost, then
+  // by raw duration, then by index), so the plan is a function of the option set, not of its order.
+  members: number[];
 }
 
 export interface Model {
@@ -39,6 +43,8 @@ export interface Model {
   // load-bearing downstream, but the axes themselves make a model self-describing.
   fuelAxes: readonly FuelAxis[];
   timeCapacitySeconds: number;
+  // Total gem cap across every launch; Infinity when the problem sets none.
+  gemBudget: number;
   // Upper bound per craft column; Infinity where nothing bounds it.
   craftCaps: number[];
   craftPrices: number[];
@@ -50,6 +56,9 @@ type Entry = [string, number];
 
 interface Candidate {
   fuelFractions: number[];
+  gemFraction: number;
+  cost: number;
+  rawTime: number;
   timeFraction: number;
   timeSeconds: number;
   yieldEntries: Entry[]; // sorted by item id
@@ -76,9 +85,17 @@ function cmpFractions(a: number[], b: number[]): number {
   return a.length - b.length;
 }
 
+// Total on numbers that may be Infinity, where plain subtraction gives NaN for two equal infinities.
+function cmpNumber(a: number, b: number): number {
+  return a === b ? 0 : a < b ? -1 : 1;
+}
+
 function cmpKey(a: Candidate, b: Candidate): number {
   const fuel = cmpFractions(a.fuelFractions, b.fuelFractions);
   if (fuel !== 0) return fuel;
+  // Under a gem cap two prices are two different resources drawn; without one `gemFraction` is 0 for
+  // every option and cost decides only which member a merged group launches (`members[0]`).
+  if (a.gemFraction !== b.gemFraction) return a.gemFraction - b.gemFraction;
   if (a.timeFraction !== b.timeFraction) return a.timeFraction - b.timeFraction;
   return cmpEntries(a.yieldEntries, b.yieldEntries) || cmpEntries(a.legendaryEntries, b.legendaryEntries);
 }
@@ -149,12 +166,12 @@ export function maxLaunches(capacity: number, unitCost: number): number {
   return (n + 1) * unitCost <= capacity ? n + 1 : n;
 }
 
-// Whether the rows alone bound this group's columns. They do not when a zero fraction leaves `perSlotCap`
-// or `cap` on a stand-in, and a group taking another's launches on is the one thing that can walk a column
-// into such a cap. A positive duration whose slot-row bound is under `UNBOUNDED_PER_SLOT` settles it: every other
-// term in either minimum is then that bound or smaller.
-export function boundsFollowFromRows(grp: Group, timeCapacitySeconds: number): boolean {
-  return grp.timeSeconds > 0 && maxLaunches(timeCapacitySeconds, grp.timeSeconds) <= UNBOUNDED_PER_SLOT;
+// Whether the rows alone bound this group's columns. They do not when a zero duration leaves `cap` on the
+// stand-in, and a group taking another's launches on is the one thing that can walk a column into such a
+// cap. A positive duration settles it: the slot row then bounds every per-slot column by
+// `maxLaunches(timeCapacitySeconds, timeSeconds)`, which is derived from the time budget and used as is.
+export function boundsFollowFromRows(grp: Group, _timeCapacitySeconds?: number): boolean {
+  return grp.timeSeconds > 0;
 }
 
 // `taker` dominates `given` when every launch of `given` could have been flown as a `taker` in the same
@@ -164,6 +181,9 @@ export function boundsFollowFromRows(grp: Group, timeCapacitySeconds: number): b
 function dominates(taker: Group, given: Group): boolean {
   if (taker.timeSeconds > given.timeSeconds) return false;
   let strict = taker.timeSeconds < given.timeSeconds;
+  // Gems are one more budget drawn per launch: a dearer taker cannot absorb a cheaper group's launches.
+  if (taker.gemFraction > given.gemFraction) return false;
+  if (taker.gemFraction < given.gemFraction) strict = true;
   // Every axis, not the total: drawing less of one egg does not excuse drawing more of another, or a
   // pruned group's launches would land on a dominator the player cannot fuel.
   for (let a = 0; a < taker.fuelFractions.length; a++) {
@@ -219,10 +239,24 @@ export function buildModel(raw: PlanProblem): Model {
   };
   for (const t of targets) visit(t);
 
+  // A craftable needs at least one ingredient, and under a craft budget it needs a price. A node that has
+  // neither is not crafted at all rather than crafted for free: an ingredient-less recipe would leave its
+  // craft column bounded by nothing (an unbounded scale LP and judge), and a missing, negative or non-finite
+  // price is malformed input, not a craft that costs nothing. Such a node is scored on its drops alone, and
+  // where another recipe lists it, it is an item supplied only by missions and stock. SPEC.md section 2.
+  const budget = problem.craftBudget;
+  const priceOf = (id: string): number | null => {
+    if (!budget) return 0;
+    const price = budget.unitPrices.get(id);
+    return price !== undefined && Number.isFinite(price) && price >= 0 ? price : null;
+  };
   const craftables: string[] = [];
   for (const id of orderIds) {
     const node = dag.get(id);
-    if (node && !node.isLeaf) craftables.push(id);
+    if (!node || node.isLeaf) continue;
+    if (!node.children.some(child => child.qty > 0)) continue;
+    if (priceOf(id) === null) continue;
+    craftables.push(id);
   }
   const craftIndex = new Map(craftables.map((id, i) => [id, i]));
 
@@ -266,15 +300,11 @@ export function buildModel(raw: PlanProblem): Model {
   const Qs = targets.map(t => qOf(dag.get(t)?.legendaryCraftProbability ?? 0));
   const targetCraftIdx = targets.map(t => craftIndex.get(t) ?? -1);
 
-  // A negative or non-finite price is dropped: it would be a craft that *earns*
-  // budget, on a continuous column nothing else bounds.
-  const budget = problem.craftBudget;
-  const craftPrices = craftables.map(id => {
-    const price = budget?.unitPrices.get(id) ?? 0;
-    return Number.isFinite(price) && price > 0 ? price : 0;
-  });
-  const capped = budget !== undefined && Number.isFinite(budget.capacity) && budget.capacity >= 0;
-  const craftBudgetCapacity = capped && craftPrices.some(p => p > 0) ? budget!.capacity : Infinity;
+  // Every craftable kept above has a finite non-negative price under a budget (0 without one), and
+  // `normalizeProblem` has already held the capacity to finite and non-negative. A budget whose prices are
+  // all zero writes an empty row, which `Rows.end` drops: free crafts under any cap are still free.
+  const craftPrices = craftables.map(id => priceOf(id)!);
+  const craftBudgetCapacity = budget ? budget.capacity : Infinity;
 
   // Normalized budgets: every fuel axis 1, per-slot time 1. An axis the player has nothing on
   // affords nothing: a positive cost against it is unaffordable at any count, so the option falls
@@ -282,6 +312,12 @@ export function buildModel(raw: PlanProblem): Model {
   const axes = problem.fuelAxes;
   const timeCap = problem.timeCapacityPerSlot;
   const slots = problem.slots;
+  const gemBudget = problem.gemBudget ?? Infinity;
+  const gemCapped = Number.isFinite(gemBudget);
+  // Per-egg axes list the eggs the player has a budget for, and nothing else. An egg missing from the list
+  // is an egg with no budget, not a free one: an option burning any of it is unaffordable.
+  const perEgg = axes.every(ax => ax.egg !== null);
+  const budgeted = new Set(axes.map(ax => ax.egg));
 
   const candidates: Candidate[] = [];
   problem.options.forEach((opt: LaunchOption, index: number) => {
@@ -297,6 +333,14 @@ export function buildModel(raw: PlanProblem): Model {
     }
     const costs = axes.map(ax => fuelCostOnAxis(opt, ax));
     if (costs.some(c => !Number.isFinite(c) || c < 0)) return;
+    if (perEgg) {
+      for (const [egg, amount] of opt.fuelByEgg) {
+        if (!(amount <= 0) && !budgeted.has(egg)) return;
+      }
+    }
+    if (gemCapped && !(Number.isFinite(opt.cost) && opt.cost >= 0)) return;
+    const gemCost = gemCapped ? opt.cost : 0;
+    const gemFraction = gemCost > 0 ? (gemBudget > 0 ? gemCost / gemBudget : Infinity) : 0;
     const fuelFractions = axes.map((ax, a) => (ax.capacity > 0 ? costs[a] / ax.capacity : costs[a] > 0 ? Infinity : 0));
     const timeFraction = timeCap > 0 ? opt.actualTime / timeCap : Infinity;
     if (timeFraction > 1) return;
@@ -322,15 +366,20 @@ export function buildModel(raw: PlanProblem): Model {
 
     // The tightest axis binds; an option needing more of one egg than the player has
     // gets a fraction above 1 and falls out on `cap < 1`.
+    // A positive duration bounds the group through the time budget, and that bound is taken as it is: no
+    // stand-in caps it, so a long horizon of short missions is not cut off at an arbitrary count (SOL-24).
     const cap = Math.min(
-      ...costs.map((cost, a) => (cost > 0 ? maxLaunches(axes[a].capacity, cost) : UNBOUNDED_GROUP)),
-      opt.actualTime > 0 ? maxLaunches(slots * timeCap, opt.actualTime) : UNBOUNDED_GROUP,
-      UNBOUNDED_GROUP
+      ...costs.map((cost, a) => (cost > 0 ? maxLaunches(axes[a].capacity, cost) : Infinity)),
+      gemCost > 0 ? maxLaunches(gemBudget, gemCost) : Infinity,
+      opt.actualTime > 0 ? maxLaunches(slots * timeCap, opt.actualTime) : UNBOUNDED_GROUP
     );
-    if (cap < 1) return;
+    if (!(cap >= 1)) return;
 
     candidates.push({
       fuelFractions,
+      gemFraction,
+      cost: Number.isFinite(opt.cost) ? opt.cost : Infinity,
+      rawTime: Number.isFinite(opt.rawTime) ? opt.rawTime : Infinity,
       timeFraction,
       timeSeconds: opt.actualTime,
       yieldEntries,
@@ -356,6 +405,7 @@ export function buildModel(raw: PlanProblem): Model {
     });
     groups.push({
       fuelFractions: cand.fuelFractions,
+      gemFraction: cand.gemFraction,
       timeFraction: cand.timeFraction,
       timeSeconds: cand.timeSeconds,
       yieldByItem,
@@ -364,7 +414,24 @@ export function buildModel(raw: PlanProblem): Model {
       members: [cand.index],
     });
   }
-  for (const grp of groups) grp.members.sort((a, b) => a - b);
+  // Cheapest member first: it is the one `emit` launches. Gem cost, then budgeted seconds (members share
+  // a `timeFraction`, which two durations an ulp apart can), then raw duration (the same budget, finished
+  // sooner), then index for a total order. The group's seconds are then its representative's, so the
+  // time the plan is optimized under is the time of the launch it exports (SOL-25).
+  const byIndex = new Map(candidates.map(c => [c.index, c]));
+  for (const grp of groups) {
+    grp.members.sort((a, b) => {
+      const ca = byIndex.get(a)!;
+      const cb = byIndex.get(b)!;
+      return (
+        cmpNumber(ca.cost, cb.cost) ||
+        cmpNumber(ca.timeSeconds, cb.timeSeconds) ||
+        cmpNumber(ca.rawTime, cb.rawTime) ||
+        a - b
+      );
+    });
+    grp.timeSeconds = byIndex.get(grp.members[0])!.timeSeconds;
+  }
 
   // Dropped before `craftUpperBounds`, which counts every group at its cap: fewer groups only tightens a
   // bound that stays an over-statement of what the remaining ones can supply.
@@ -383,6 +450,7 @@ export function buildModel(raw: PlanProblem): Model {
     slots,
     fuelAxes: axes,
     timeCapacitySeconds: timeCap,
+    gemBudget,
     craftCaps: craftUpperBounds(dag, targets, craftables, craftIndex, items, itemIndex, baseInventoryByItem, kept),
     craftPrices,
     craftBudgetCapacity,
