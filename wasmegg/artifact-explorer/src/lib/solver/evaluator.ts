@@ -237,11 +237,56 @@ function inventoryOf(model: Model, counts: readonly number[]): Inventory {
   return { inventoryByItem, legendaryDropsByTarget };
 }
 
+// Relative slack on a normalized budget row (fuel axes and gems both normalize to 1).
+export const BUDGET_TOL = 1e-9;
+
+// Fraction of each launch budget an allocation draws: one entry per fuel axis, then the gem budget.
+function budgetLoads(model: Model, counts: readonly number[]): { fuel: number[]; gems: number } {
+  const fuel = new Array<number>(model.fuelAxes.length).fill(0);
+  let gems = 0;
+  for (let g = 0; g < model.groups.length; g++) {
+    const n = counts[g];
+    if (!(n > 0)) continue;
+    const grp = model.groups[g];
+    for (let a = 0; a < fuel.length; a++) fuel[a] += n * grp.fuelFractions[a];
+    if (grp.gemFraction > 0) gems += n * grp.gemFraction;
+  }
+  return { fuel, gems };
+}
+
+// The total gem cap across every launch, checked exactly as the MILP's `gem` row states it.
+export function exceedsGemBudget(model: Model, counts: readonly number[]): boolean {
+  if (!Number.isFinite(model.gemBudget)) return false;
+  return budgetLoads(model, counts).gems > 1 + BUDGET_TOL;
+}
+
+// Every launch budget: each fuel axis, and the total gem cap.
+export function exceedsLaunchBudgets(model: Model, counts: readonly number[]): boolean {
+  const { fuel, gems } = budgetLoads(model, counts);
+  if (fuel.some(total => total > 1 + BUDGET_TOL)) return true;
+  return Number.isFinite(model.gemBudget) && gems > 1 + BUDGET_TOL;
+}
+
+// An allocation over the total gem cap is not a plan, so the judge scores it as one that cannot
+// succeed: -Infinity, every score 0, no crafts. The cap is a constraint of the problem, not only of
+// the MILP, and grading an unaffordable allocation as if it were affordable is the failure the craft
+// budget row above guards against for crafts.
 export function evaluateCounts(
   model: Model,
   counts: readonly number[],
   precision: EvalPrecision = EXACT_PRECISION
 ): EvalResult {
+  if (exceedsGemBudget(model, counts)) {
+    const nTargets = model.sortedTargets.length;
+    return {
+      logJoint: -Infinity,
+      scores: new Array<number>(nTargets).fill(0),
+      crafts: {
+        byCraftable: new Array<number>(model.craftables.length).fill(0),
+        byTarget: new Array<number>(nTargets).fill(0),
+      },
+    };
+  }
   const { inventoryByItem, legendaryDropsByTarget } = inventoryOf(model, counts);
   return evaluateAt(model, inventoryByItem, legendaryDropsByTarget, precision);
 }

@@ -3,7 +3,7 @@
     <div class="lg:sticky lg:top-4 self-start">
       <optimizer-sidebar
         :player-id="playerId"
-        :export-blocked="computing || !inputsValid || !!computeError"
+        :export-blocked="computing || loadingPlayer || !inputsValid || !!computeError"
         :wait-time-days="waitTimeDays"
         :time-budget-invalid="!timeBudgetValid"
         @submit-player-id="submitPlayerId"
@@ -27,8 +27,21 @@
               :plan-cost="view.planCost"
               :over-provisioned="(snapshot?.visitIndex ?? 0) > 0"
             />
+            <p v-if="noAnswerMessage && !computing" role="status" class="text-sm text-amber-700">
+              {{ noAnswerMessage }}
+            </p>
+            <p v-if="playerLoadError" role="alert" class="text-sm text-red-600">{{ playerLoadError }}</p>
+            <p v-if="planSaveFailed" role="alert" class="text-sm text-red-600">
+              The plan could not be saved in this browser's storage (it may be full). This tab keeps its answers, but
+              answers recorded since are lost if the page is reloaded.
+            </p>
+            <p v-if="planChangedInAnotherTab" role="alert" class="text-sm text-amber-700">
+              This plan was replaced or unloaded in another tab. This tab keeps its own copy; reload the page to follow
+              the other tab instead.
+            </p>
+            <p v-if="loadingPlayer" role="status" class="text-sm text-gray-500">Loading the player's save…</p>
             <p
-              v-if="computing && solutionViews.length === 0"
+              v-else-if="computing && solutionViews.length === 0"
               role="status"
               class="flex items-center gap-2 text-sm text-gray-500"
             >
@@ -72,9 +85,17 @@
 <script lang="ts">
 import { computed, defineComponent, onUnmounted, PropType, ref, shallowRef, toRefs, watch } from 'vue';
 
-import { getArtifactTierPropsFromId, getSavedPlayerID, iconURL, requestFirstContact, savePlayerID } from 'lib';
+import {
+  formatDuration,
+  getArtifactTierPropsFromId,
+  getSavedPlayerID,
+  iconURL,
+  requestFirstContact,
+  savePlayerID,
+} from 'lib';
 
 import {
+  config,
   currentOptimizerArtifactIds,
   effectiveConfig,
   effectiveFuelByEggCapacity,
@@ -90,20 +111,26 @@ import {
   effectiveWaitTimeSeconds,
   EFFORT_LAUNCH_PERIOD_SECONDS,
   missionFilters,
+  overrides,
   playerGoldenEggs,
   playerInventory,
+  playerShipsConfig,
   setPlayerData,
   setWaitTimeDays,
+  type EffortLevel,
 } from '@/store';
 import {
   activePlanVisit,
   loadedPlan,
   clearSolvedVisit,
+  planChangedInAnotherTab,
+  planSaveFailed,
   recordSolvedVisit,
+  retainSolvedVisitsMatching,
   setVisitWaitTime,
   waitTimeInputFor,
 } from '@/store/plan';
-import { gemBudgetFor } from '@/lib/plan/read';
+import { formatBudgetValue } from '@/store/budget-input';
 import { projectSolvedVisit } from '@/lib/plan/write';
 import {
   buildRecipeDag,
@@ -125,6 +152,13 @@ import { createOptimizerClient, type OptimizerClient, type OptimizerRequestInput
 import OptimizerSidebar from './optimizer/OptimizerSidebar.vue';
 import OptimizerInventoryPanel from './optimizer/OptimizerInventoryPanel.vue';
 import OptimizerSolutionCard from './optimizer/OptimizerSolutionCard.vue';
+
+// The id as the save server reads it: `requestFirstContact` drops a leading "mk2!", and the form
+// trims what is typed. Two spellings of one id fetch the same save.
+function normalizePlayerId(id: string): string {
+  const trimmed = id.trim();
+  return trimmed.startsWith('mk2!') ? trimmed.slice(4) : trimmed;
+}
 
 export default defineComponent({
   components: { OptimizerSidebar, OptimizerInventoryPanel, OptimizerSolutionCard },
@@ -149,11 +183,46 @@ export default defineComponent({
     const timeBudgetValid = computed(() => Number.isFinite(maxWaitTimeSeconds.value) && maxWaitTimeSeconds.value > 0);
 
     const playerId = ref(new URLSearchParams(window.location.search).get('playerId') || getSavedPlayerID() || '');
-    if (playerId.value) {
-      requestFirstContact(playerId.value).then(data => {
+    // True while a save is being fetched. No solve starts meanwhile: one would run on whatever inputs
+    // the page holds before the save arrives and record that answer over a good one.
+    const loadingPlayer = ref(false);
+    const playerLoadError = ref('');
+    // The player id (normalized) whose save was last loaded whole, or null when the last load failed
+    // or returned no usable save.
+    const loadedPlayerId = ref<string | null>(null);
+    // Whether the page's inputs are a real save's: there is no player id, or the id's save loaded.
+    // Otherwise they are placeholders (or another player's data), and recorded answers are neither
+    // judged against them nor replaced by an answer solved on them.
+    const playerSaveReady = computed(
+      () => !playerId.value || loadedPlayerId.value === normalizePlayerId(playerId.value)
+    );
+    const KEPT_NOTE = 'Recorded answers are kept, and results are not recorded until the save loads.';
+    let playerRequest = 0;
+    // Never rejects: a failed fetch is reported on the page, and the page then solves on the inputs it
+    // has, as it would with no player id at all, without recording what it finds.
+    async function loadPlayer(id: string): Promise<void> {
+      const request = ++playerRequest;
+      loadingPlayer.value = true;
+      playerLoadError.value = '';
+      try {
+        const data = await requestFirstContact(id);
+        if (request !== playerRequest) return;
         if (data.backup) setPlayerData(data.backup);
-      });
+        // What setPlayerData needs to replace the player's data; anything less is no save.
+        if (data.backup?.game && data.backup.artifactsDb) loadedPlayerId.value = normalizePlayerId(id);
+        else {
+          loadedPlayerId.value = null;
+          playerLoadError.value = `Could not load the save for ${id}: no save was returned. ${KEPT_NOTE}`;
+        }
+      } catch (err) {
+        if (request !== playerRequest) return;
+        loadedPlayerId.value = null;
+        playerLoadError.value = `Could not load the save for ${id}: ${err instanceof Error ? err.message : String(err)}. ${KEPT_NOTE}`;
+      } finally {
+        if (request === playerRequest) loadingPlayer.value = false;
+      }
     }
+    if (playerId.value) void loadPlayer(playerId.value);
 
     // let the settings UI show each target's prior craft count
     watch(
@@ -170,12 +239,14 @@ export default defineComponent({
     const submitPlayerId = async (id: string) => {
       playerId.value = id;
       savePlayerID(id);
-      const data = await requestFirstContact(id);
-      if (data.backup) setPlayerData(data.backup);
+      await loadPlayer(id);
     };
 
     const computing = ref(false);
     const computeError = ref('');
+    // Why the last solve's answer was not recorded for the visit (it launches nothing, or there was
+    // nothing to aim at). Empty when it was, or when there is nothing to say.
+    const noAnswerMessage = ref('');
     const computedResults = ref<OptimizerSolution[]>([]);
     const inputsValid = computed(() => timeBudgetValid.value && costBudgetsValid.value);
     // Names the field that's blocking a solve, and — for a plan visit whose time budget is empty
@@ -201,6 +272,14 @@ export default defineComponent({
       goldenEggs: number | null;
       visitIndex: number;
     } | null>(null);
+    // The parts of the ships config the solve reads, other than epic research (`enumerateLaunchOptions`
+    // and the mission durations and capacities it prices). The rest (the drop-stats target checkboxes,
+    // the legacy only-Henners/Liners flags) is display, and changing it changes no answer.
+    const solveShipsConfig = computed(() => {
+      const c = effectiveConfig.value;
+      return { shipLevels: c.shipLevels, shipVisibility: c.shipVisibility, showNodata: c.showNodata };
+    });
+
     // Compare the meaning of inputs, not their object identity or normalized spelling.
     // Launch enumeration is a deterministic function of config, targets, and effort.
     const questionKey = computed(() =>
@@ -208,7 +287,11 @@ export default defineComponent({
         priceMode: gemCostMode.value,
         visit: activePlanVisit.value?.visitId,
         targets: artifactIds.value,
-        config: effectiveConfig.value,
+        config: {
+          ...solveShipsConfig.value,
+          ftl: effectiveConfig.value.epicResearchFTLLevel,
+          zerog: effectiveConfig.value.epicResearchZerogLevel,
+        },
         crafting: effectiveCraftingLevel.value,
         previousCrafts: effectivePreviousCraftsOverride.value,
         inventory: inventoryRevision.value,
@@ -222,6 +305,43 @@ export default defineComponent({
         valid: inputsValid.value,
       })
     );
+
+    // Everything a plan visit's answer depends on that is not the visit's own: the player, their
+    // inventory and ship levels, crafting, effort and the craft cap, and whether that cap is valid.
+    // A visit's own inputs (targets, time, fuel and gem settings) are guarded in `store/plan.ts`;
+    // the visit's own epic research is left out here for the same reason. Recorded with each answer;
+    // when it changes, every answer solved under another key is dropped, other visits' included.
+    // Only what the solve reads is in it. The tank-level override is not: a plan visit budgets against
+    // its own tank (SEAM-09), and answers are only recorded for plan visits. The player id is the one
+    // the save server reads, so another spelling of the same id is the same player.
+    const inventoryFingerprint = computed(() => {
+      const inventory = playerInventory.value;
+      if (!inventory) return null;
+      return inventory.items
+        .filter(item => item.crafted > 0 || item.haveRarity.some(n => n > 0))
+        .map(item => `${item.afxId}.${item.afxLevel}:${item.haveRarity.join(',')}:${item.crafted}:${item.slotted}`)
+        .join(';');
+    });
+    const globalInputsKey = computed(() => {
+      const player = playerShipsConfig.value;
+      return JSON.stringify({
+        player: normalizePlayerId(playerId.value),
+        inventory: inventoryFingerprint.value,
+        ships: solveShipsConfig.value,
+        // What a visit that carries no epic research of its own falls back on.
+        ftl: overrides.value.epicResearchFTLLevel
+          ? config.value.epicResearchFTLLevel
+          : (player?.epicResearchFTLLevel ?? config.value.epicResearchFTLLevel),
+        zerog: overrides.value.epicResearchZerogLevel
+          ? config.value.epicResearchZerogLevel
+          : (player?.epicResearchZerogLevel ?? config.value.epicResearchZerogLevel),
+        crafting: effectiveCraftingLevel.value,
+        previousCrafts: effectivePreviousCraftsOverride.value ?? null,
+        craftBudget: craftingCostInvalid.value ? 'invalid' : (effectiveCraftingBudget.value ?? null),
+        effort: missionFilters.value.effort,
+      });
+    });
+
     const recipeDag = computed<ReturnType<typeof buildRecipeDag>>(() =>
       buildRecipeDag(
         artifactIds.value,
@@ -263,7 +383,11 @@ export default defineComponent({
         fuelByEggCapacity: effectiveFuelByEggCapacity.value ?? undefined,
         timeCapacityPerSlot: maxWaitTimeSeconds.value,
         ownedStock: playerOwnedStock.value,
+        // The effective gem mode's cap is the visit's TOTAL gem budget, and it is also the price no
+        // single ship may exceed, so it both filters the menu and caps the plan's spend. Unlimited
+        // leaves both out.
         maximumCost: maxGemCost,
+        gemBudget: maxGemCost,
         craftBudget,
       };
     });
@@ -293,7 +417,10 @@ export default defineComponent({
         visitIndex: visit?.visitIndex ?? 0,
       };
       const effort = missionFilters.value.effort;
-      const gemBudget = visit ? gemBudgetFor(visit, input.timeCapacityPerSlot) : 0;
+      // Written to the file as the cap the solve used and the FTL it priced durations at.
+      const gemBudget = input.gemBudget;
+      const epicResearchFTLLevel = effectiveConfig.value.epicResearchFTLLevel;
+      const inputsKey = globalInputsKey.value;
       computing.value = true;
       computeError.value = '';
       try {
@@ -302,6 +429,8 @@ export default defineComponent({
           requestGeneration !== generation ||
           plan !== loadedPlan.value ||
           key !== questionKey.value ||
+          inputsKey !== globalInputsKey.value ||
+          loadingPlayer.value ||
           !inputsValid.value
         )
           return;
@@ -311,29 +440,46 @@ export default defineComponent({
         }
         snapshot.value = requestedSnapshot;
         computedResults.value = finalizeSolutions(solutions, input.recipeDag);
-        // Record at the matching request's completion, never via a watcher of live UI state.
-        if (visit) {
-          const solution = computedResults.value[0];
-          if (solution) recordSolvedVisit(projectSolvedVisit({ visit, solution, effort, gemBudget }));
-          else clearSolvedVisit(visit.visitId);
+        // Record at the matching request's completion, never via a watcher of live UI state. An
+        // answer that launches nothing, or aims at nothing, is not recorded: the planner would stage
+        // an empty visit as if it had been solved.
+        const solution = computedResults.value[0];
+        const unanswered = solution ? noAnswerReason(input, solution, effort) : 'No ship set was found.';
+        noAnswerMessage.value = unanswered ?? '';
+        // On placeholder inputs (the save did not load) the answer is shown but not recorded, and the
+        // one recorded for the visit, if any, is kept.
+        if (visit && playerSaveReady.value) {
+          if (solution && unanswered === null) {
+            recordSolvedVisit(
+              projectSolvedVisit({ visit, solution, effort, gemBudget, epicResearchFTLLevel }),
+              inputsKey
+            );
+          } else clearSolvedVisit(visit.visitId);
         }
       } catch (err) {
         if (requestGeneration !== generation) return;
         computeError.value = err instanceof Error ? err.message : String(err);
+        noAnswerMessage.value = '';
         computedResults.value = [];
         snapshot.value = null;
-        if (visit) clearSolvedVisit(visit.visitId);
+        if (visit && playerSaveReady.value) clearSolvedVisit(visit.visitId);
       } finally {
         if (requestGeneration === generation) computing.value = false;
       }
     }
 
     watch(
-      [questionKey, () => loadedPlan.value],
+      [questionKey, () => loadedPlan.value, loadingPlayer],
       () => {
         ++generation; // Retire even a running request before the debounced replacement starts.
         clearTimeout(debounceTimer);
         computeError.value = '';
+        noAnswerMessage.value = '';
+        // Keep what is shown until the save arrives; the watcher fires again when it has.
+        if (loadingPlayer.value) {
+          computing.value = false;
+          return;
+        }
         computing.value = inputsValid.value;
         if (computing.value) debounceTimer = setTimeout(runCompute, 250);
         else {
@@ -344,11 +490,50 @@ export default defineComponent({
       { immediate: true, flush: 'sync' }
     );
 
+    // Drop the answers to questions the page can no longer pose. Not while a save is loading, nor
+    // after it failed to load or came back empty: the inputs are then placeholders, and only a save
+    // that loaded is what the recorded answers are judged against. Pre-flush rather than sync, so a
+    // save landing field by field is judged once, whole.
+    let checkedInputsKey: string | undefined;
+    watch(
+      [globalInputsKey, loadingPlayer, playerSaveReady],
+      () => {
+        if (loadingPlayer.value || !playerSaveReady.value || globalInputsKey.value === checkedInputsKey) return;
+        checkedInputsKey = globalInputsKey.value;
+        retainSolvedVisitsMatching(checkedInputsKey);
+      },
+      { immediate: true }
+    );
+
     onUnmounted(() => {
       ++generation;
       clearTimeout(debounceTimer);
       client?.terminate();
     });
+
+    // Why `solution` is not an answer to record, naming the limit that emptied it, or null when it is one.
+    function noAnswerReason(
+      input: OptimizerRequestInput,
+      solution: OptimizerSolution,
+      effort: EffortLevel
+    ): string | null {
+      if (input.desiredArtifactNodeIds.length === 0) return 'Pick at least one target artifact to plan for.';
+      if (solution.choiceHistory.some(run => run.numShipsLaunched > 0)) return null;
+      const time = input.timeCapacityPerSlot;
+      const floor = EFFORT_LAUNCH_PERIOD_SECONDS[effort];
+      if (floor > time) {
+        return `Nothing launches: at ${effort} effort each launch holds a slot for at least ${formatDuration(floor, true)}, longer than the ${formatDuration(time, true)} time budget. Lower the effort or raise the time budget.`;
+      }
+      const fitting = input.options.filter(o => o.actualTime <= time);
+      if (fitting.length === 0) {
+        return `Nothing launches: no mission fits in the ${formatDuration(time, true)} time budget.`;
+      }
+      const cap = input.gemBudget;
+      if (cap !== undefined && !fitting.some(o => o.cost <= cap)) {
+        return `Nothing launches: no ship costs ${formatBudgetValue(cap)} gems or less, the gem budget for this solve. Raise the gem budget or remove the limit.`;
+      }
+      return 'Nothing launches: no mission within these budgets improves the odds for the chosen targets.';
+    }
 
     function artifactDisplay(nodeId: string): { name: string; iconUrl: string } {
       const props = getArtifactTierPropsFromId(nodeId);
@@ -398,6 +583,11 @@ export default defineComponent({
       invalidBudgetMessage,
       computing,
       computeError,
+      noAnswerMessage,
+      loadingPlayer,
+      playerLoadError,
+      planChangedInAnotherTab,
+      planSaveFailed,
       playerId,
       submitPlayerId,
       playerInventory,

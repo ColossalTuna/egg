@@ -3,7 +3,7 @@
 
 import { computed, ref } from 'vue';
 
-import { ei, formatDuration, getLocalStorage, parseDurationDays, setLocalStorage } from 'lib';
+import { ei, formatDuration, fuelTankSizes, getLocalStorage, parseDurationDays, setLocalStorage } from 'lib';
 
 import { parseBudgetInput } from '@/store/budget-input';
 
@@ -16,6 +16,26 @@ const PLAN_LOCALSTORAGE_KEY = 'humility_plan';
 // Bumped when the persisted shape changes. A mismatch discards rather than migrates: the plan is
 // one file re-pick away, and a half-understood blob would solve against budgets nobody can see.
 const PLAN_STORE_VERSION = 1;
+
+// The blob this tab last wrote or read. Another tab writing the same key is what makes the stored
+// blob differ from it; see `syncFromStorage`.
+let lastSyncedBlob: string | undefined;
+
+// The global-inputs key this tab currently solves under (see `LoadedPlan.solvedInputs`), as last
+// passed to `recordSolvedVisit` or `retainSolvedVisitsMatching`. Undefined until the page has one.
+// Another tab's answers are taken in only when their key is this one; see `syncFromStorage`.
+let currentInputsKey: string | undefined;
+
+// Answers another tab stored under a key other than this tab's. Not this tab's answers: never shown,
+// counted or exported here. Kept only so that this tab's writes leave them in storage for the tab
+// that recorded them; see `syncFromStorage` and `persistPlan`.
+let parkedSolved: Record<string, HumilityMissionsVisit> = {};
+let parkedSolvedInputs: Record<string, string> = {};
+
+function clearParked(): void {
+  parkedSolved = {};
+  parkedSolvedInputs = {};
+}
 
 // banked uses per-egg fuel on arrival; full-tank uses pooled tank capacity
 // to plan fuel that has not yet been stored.
@@ -42,6 +62,11 @@ export interface LoadedPlan {
   currentVisitId: string | null;
   settings: Record<string, VisitSettings>;
   solved: Record<string, HumilityMissionsVisit>;
+  // The global inputs (effort, crafting level, player, ship levels, ...) each solved visit was
+  // answered under, as an opaque key the optimizer page builds, keyed by visit id. When those inputs
+  // change, `retainSolvedVisitsMatching` drops every answer whose key no longer matches. An answer
+  // recorded without a key is judged only by the per-visit edits below.
+  solvedInputs: Record<string, string>;
 }
 
 function newVisitSettings(): VisitSettings {
@@ -67,7 +92,16 @@ export function setLoadedPlan(label: string, visits: HumilityVisit[]): void {
   // A freshly loaded plan starts off-plan: the file says nothing about which visit the player came
   // here to solve, and guessing one would silently swap the budgets under a selection they made
   // before loading it.
-  loadedPlan.value = { label, loadedAt: Date.now(), visits, currentVisitId: null, settings: {}, solved: {} };
+  loadedPlan.value = {
+    label,
+    loadedAt: Date.now(),
+    visits,
+    currentVisitId: null,
+    settings: {},
+    solved: {},
+    solvedInputs: {},
+  };
+  clearParked();
   persistPlan();
 }
 
@@ -75,12 +109,14 @@ export function setLoadedPlan(label: string, visits: HumilityVisit[]): void {
 // and keeping them for the next file would attach one plan's budgets to another's.
 export function clearLoadedPlan(): void {
   loadedPlan.value = null;
+  clearParked();
   persistPlan();
 }
 
 // Selecting a visit repoints the one target selector on the page at that visit's saved targets. A
 // newly opened visit starts with the current targets. An explicitly emptied visit stays empty.
 export function setCurrentVisit(visitId: string | null, seedTargets: readonly string[] = []): void {
+  syncFromStorage();
   const plan = loadedPlan.value;
   if (!plan) return;
   plan.currentVisitId = visitId;
@@ -140,6 +176,7 @@ function editVisit(
   edit: (settings: VisitSettings) => void,
   asks?: (settings: VisitSettings) => number | string
 ): void {
+  syncFromStorage();
   const plan = loadedPlan.value;
   const settings = mutableSettingsFor(visitId);
   if (!plan || !settings) return;
@@ -147,7 +184,7 @@ function editVisit(
   edit(settings);
   // `!==`, not `Object.is`: an unparseable duration is NaN on both sides, and an answer to a
   // question that can no longer be posed has to go.
-  if (asks === undefined || before !== asks(settings)) delete plan.solved[visitId];
+  if (asks === undefined || before !== asks(settings)) dropSolved(plan, visitId);
   persistPlan();
 }
 
@@ -202,18 +239,60 @@ export function setVisitGemCostInput(visitId: string, value: string): void {
   );
 }
 
-export function recordSolvedVisit(visit: HumilityMissionsVisit): void {
+function dropSolved(plan: LoadedPlan, visitId: string): void {
+  delete plan.solved[visitId];
+  delete plan.solvedInputs[visitId];
+  delete parkedSolved[visitId];
+  delete parkedSolvedInputs[visitId];
+}
+
+// `inputsKey` is the global-inputs key the answer was solved under; see `LoadedPlan.solvedInputs`.
+export function recordSolvedVisit(visit: HumilityMissionsVisit, inputsKey?: string): void {
+  if (inputsKey !== undefined) currentInputsKey = inputsKey;
+  syncFromStorage();
   const plan = loadedPlan.value;
   if (!plan) return;
   plan.solved[visit.visitId] = visit;
+  if (inputsKey === undefined) delete plan.solvedInputs[visit.visitId];
+  else plan.solvedInputs[visit.visitId] = inputsKey;
   persistPlan();
 }
 
 export function clearSolvedVisit(visitId: string): void {
+  syncFromStorage();
   const plan = loadedPlan.value;
   if (!plan || !(visitId in plan.solved)) return;
-  delete plan.solved[visitId];
+  dropSolved(plan, visitId);
   persistPlan();
+}
+
+// Drops every recorded answer solved under global inputs other than `inputsKey`: an answer to a
+// question the page can no longer pose (another effort, crafting level, player, or an input that is
+// now invalid) must not be exported next to answers to the current one. Answers recorded without a
+// key are kept; nothing says what they were solved under. Answers another tab recorded under
+// `inputsKey` (held back until now, see `syncFromStorage`) are taken in.
+export function retainSolvedVisitsMatching(inputsKey: string): void {
+  currentInputsKey = inputsKey;
+  syncFromStorage();
+  const plan = loadedPlan.value;
+  if (!plan) return;
+  let changed = false;
+  for (const visitId of Object.keys(plan.solved)) {
+    const recorded = plan.solvedInputs[visitId];
+    if (recorded !== undefined && recorded !== inputsKey) {
+      dropSolved(plan, visitId);
+      changed = true;
+    }
+  }
+  for (const [visitId, answer] of Object.entries(parkedSolved)) {
+    if (parkedSolvedInputs[visitId] !== inputsKey || visitId in plan.solved) continue;
+    plan.solved[visitId] = answer;
+    plan.solvedInputs[visitId] = inputsKey;
+    delete parkedSolved[visitId];
+    delete parkedSolvedInputs[visitId];
+    changed = true;
+  }
+  if (changed) persistPlan();
 }
 
 export const solvedVisitCount = computed<number>(() => Object.keys(loadedPlan.value?.solved ?? {}).length);
@@ -243,13 +322,40 @@ interface PersistedPlan {
   visits: PersistedVisit[];
   settings: Record<string, VisitSettings>;
   solved: Record<string, HumilityMissionsVisit>;
+  solvedInputs?: Record<string, string>;
+}
+
+// Set while the last write to storage failed (quota, or storage refused outright). What this tab
+// holds is then newer than what is stored, and is lost on reload; the page says so.
+export const planSaveFailed = ref(false);
+
+// `setLocalStorage` swallows a failed write, so the write is checked by reading it back. Only a write
+// that landed becomes `lastSyncedBlob`: after a failed one storage still holds the blob last synced,
+// and the next sync must not take that older blob for another tab's write and roll this tab back.
+function writePlanBlob(str: string): void {
+  setLocalStorage(PLAN_LOCALSTORAGE_KEY, str);
+  if (getLocalStorage(PLAN_LOCALSTORAGE_KEY) === str) {
+    lastSyncedBlob = str;
+    planSaveFailed.value = false;
+  } else {
+    planSaveFailed.value = true;
+  }
 }
 
 function persistPlan(): void {
   const plan = loadedPlan.value;
   if (!plan) {
-    setLocalStorage(PLAN_LOCALSTORAGE_KEY, '');
+    writePlanBlob('');
     return;
+  }
+  // This tab's answers, plus the ones it holds back for another tab (see `parkedSolved`).
+  const solved: Record<string, HumilityMissionsVisit> = { ...plan.solved };
+  const solvedInputs: Record<string, string> = { ...plan.solvedInputs };
+  for (const [visitId, answer] of Object.entries(parkedSolved)) {
+    if (visitId in solved) continue;
+    solved[visitId] = answer;
+    const key = parkedSolvedInputs[visitId];
+    if (key !== undefined) solvedInputs[visitId] = key;
   }
   const blob: PersistedPlan = {
     version: PLAN_STORE_VERSION,
@@ -258,9 +364,10 @@ function persistPlan(): void {
     currentVisitId: plan.currentVisitId,
     visits: plan.visits.map(v => ({ ...v, fuelByEgg: Object.fromEntries(v.fuelByEgg) })),
     settings: plan.settings,
-    solved: plan.solved,
+    solved,
+    solvedInputs,
   };
-  setLocalStorage(PLAN_LOCALSTORAGE_KEY, JSON.stringify(blob));
+  writePlanBlob(JSON.stringify(blob));
 }
 
 // Settings written before a field existed come back without it. Filled from the defaults rather
@@ -273,25 +380,210 @@ function normalizeSettings(stored: Record<string, VisitSettings> | undefined): R
   return settings;
 }
 
+// ---------------------------------------------------------------------------
+// Validation of the persisted blob
+// ---------------------------------------------------------------------------
+
+// The blob is this app's own output, but it outlives builds and can be edited by hand. Each visit and
+// each recorded answer is checked on the way in and dropped if it is not one this build would write,
+// so a bad entry costs that entry, not the plan, and nothing unreadable is offered for export.
+
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return typeof x === 'object' && x !== null && !Array.isArray(x);
+}
+function isNonNegative(x: unknown): x is number {
+  return typeof x === 'number' && Number.isFinite(x) && x >= 0;
+}
+function isCount(x: unknown): x is number {
+  return Number.isInteger(x) && (x as number) >= 0;
+}
+function isProbability(x: unknown): x is number {
+  return isNonNegative(x) && x <= 1;
+}
+function isOptionalLevel(x: unknown): boolean {
+  return x === undefined || isCount(x);
+}
+function isEnumName(enumObject: object, name: unknown): boolean {
+  return typeof name === 'string' && typeof (enumObject as Record<string, unknown>)[name] === 'number';
+}
+
+function restoreVisit(raw: unknown): HumilityVisit | null {
+  if (!isRecord(raw)) return null;
+  const v = raw;
+  if (typeof v.visitId !== 'string' || v.visitId === '') return null;
+  if (!isCount(v.visitIndex) || typeof v.label !== 'string') return null;
+  if (!isNonNegative(v.plannedDurationSeconds) || !isNonNegative(v.bankValue) || !isNonNegative(v.earningsPerSecond)) {
+    return null;
+  }
+  if (!isCount(v.tankLevel) || v.tankLevel >= fuelTankSizes.length) return null;
+  if (!isOptionalLevel(v.epicResearchFTLLevel) || !isOptionalLevel(v.epicResearchZerogLevel)) return null;
+  const fuel = v.fuelByEgg ?? {};
+  if (!isRecord(fuel)) return null;
+  const fuelByEgg = new Map<ei.Egg, number>();
+  for (const [egg, amount] of Object.entries(fuel)) {
+    if (!Number.isInteger(Number(egg)) || !isNonNegative(amount)) return null;
+    fuelByEgg.set(Number(egg) as ei.Egg, amount);
+  }
+  // Fields no solve reads (the arrival date) pass through unchecked.
+  return { ...(v as unknown as HumilityVisit), fuelByEgg };
+}
+
+// The planner's own import checks, as far as this app can make them: a recorded answer that would
+// fail there, or that launches nothing or aims at nothing, is not an answer.
+function isValidSolvedVisit(raw: unknown, visitId: string): raw is HumilityMissionsVisit {
+  if (!isRecord(raw)) return false;
+  const v = raw;
+  if (v.visitId !== visitId || !isCount(v.visitIndex) || typeof v.label !== 'string') return false;
+  if (typeof v.effort !== 'string' || !isProbability(v.jointProbability)) return false;
+  if (!isNonNegative(v.makespanSeconds) || !isNonNegative(v.rawMakespanSeconds)) return false;
+  if (!isNonNegative(v.gemCost) || !isNonNegative(v.gemBudget)) return false;
+  if (!isOptionalLevel(v.epicResearchFTLLevel)) return false;
+  if (v.basis !== undefined && !isRecord(v.basis)) return false;
+  if (!isRecord(v.fuelRequired) || !Object.values(v.fuelRequired).every(isNonNegative)) return false;
+  const targets = v.targets;
+  if (!Array.isArray(targets) || targets.length === 0) return false;
+  for (const t of targets) {
+    if (!isRecord(t) || typeof t.nodeId !== 'string' || t.nodeId === '' || !isCount(t.targetAfxId)) return false;
+    if (!isProbability(t.probability) || !isNonNegative(t.expectedCrafts)) return false;
+  }
+  const launches = v.launches;
+  if (!Array.isArray(launches) || launches.length === 0) return false;
+  for (const l of launches) {
+    if (!isRecord(l) || !isEnumName(ei.MissionInfo.Spaceship, l.ship)) return false;
+    if (!isEnumName(ei.MissionInfo.DurationType, l.duration) || !isCount(l.targetAfxId)) return false;
+    if (!isCount(l.count) || l.count === 0) return false;
+  }
+  return true;
+}
+
+function parsePersistedPlan(str: string): LoadedPlan | null {
+  const parsed = JSON.parse(str) as PersistedPlan;
+  if (!parsed || parsed.version !== PLAN_STORE_VERSION || !Array.isArray(parsed.visits)) return null;
+  const visits: HumilityVisit[] = [];
+  const visitIds = new Set<string>();
+  for (const raw of parsed.visits) {
+    const visit = restoreVisit(raw);
+    if (!visit || visitIds.has(visit.visitId)) {
+      console.warn('dropping an unreadable visit from the stored plan');
+      continue;
+    }
+    visits.push(visit);
+    visitIds.add(visit.visitId);
+  }
+  const solved: Record<string, HumilityMissionsVisit> = {};
+  const solvedInputs: Record<string, string> = {};
+  const storedInputs = isRecord(parsed.solvedInputs) ? parsed.solvedInputs : {};
+  for (const [visitId, answer] of Object.entries(isRecord(parsed.solved) ? parsed.solved : {})) {
+    if (!visitIds.has(visitId) || !isValidSolvedVisit(answer, visitId)) {
+      console.warn(`dropping an unreadable recorded answer for visit ${visitId}`);
+      continue;
+    }
+    solved[visitId] = answer;
+    const key = storedInputs[visitId];
+    if (typeof key === 'string') solvedInputs[visitId] = key;
+  }
+  const currentVisitId = typeof parsed.currentVisitId === 'string' ? parsed.currentVisitId : null;
+  return {
+    label: typeof parsed.label === 'string' ? parsed.label : 'Plan',
+    loadedAt: typeof parsed.loadedAt === 'number' ? parsed.loadedAt : 0,
+    currentVisitId: currentVisitId !== null && visitIds.has(currentVisitId) ? currentVisitId : null,
+    visits,
+    settings: normalizeSettings(isRecord(parsed.settings) ? (parsed.settings as Record<string, VisitSettings>) : {}),
+    solved,
+    solvedInputs,
+  };
+}
+
 function loadPlan(): LoadedPlan | null {
   const str = getLocalStorage(PLAN_LOCALSTORAGE_KEY);
+  lastSyncedBlob = str;
   if (!str) return null;
   try {
-    const parsed = JSON.parse(str) as PersistedPlan;
-    if (!parsed || parsed.version !== PLAN_STORE_VERSION || !Array.isArray(parsed.visits)) return null;
-    return {
-      label: typeof parsed.label === 'string' ? parsed.label : 'Plan',
-      loadedAt: typeof parsed.loadedAt === 'number' ? parsed.loadedAt : 0,
-      currentVisitId: typeof parsed.currentVisitId === 'string' ? parsed.currentVisitId : null,
-      visits: parsed.visits.map(v => ({
-        ...v,
-        fuelByEgg: new Map(Object.entries(v.fuelByEgg ?? {}).map(([egg, amount]) => [Number(egg) as ei.Egg, amount])),
-      })),
-      settings: normalizeSettings(parsed.settings),
-      solved: parsed.solved ?? {},
-    };
+    return parsePersistedPlan(str);
   } catch (err) {
     console.warn(`error parsing stored plan: ${err}`);
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Other tabs
+// ---------------------------------------------------------------------------
+
+// Two tabs share one stored plan. Each write here is a read-modify-write: before changing anything,
+// a tab adopts what another tab stored for the same plan (its visit settings and recorded answers),
+// so an answer recorded in one tab is not overwritten by another tab that read the plan earlier.
+// The selected visit stays this tab's own.
+//
+// The tabs can differ in global inputs (effort, player, crafting, ...), which are per tab. So an
+// answer from another tab is taken in only when its key is this tab's `currentInputsKey`; one under
+// another key is held back (`parkedSolved`), not shown or exported here, and written back as it was.
+// This tab's own answer for a visit stays when the other tab's answer for it is under another key,
+// or when the other tab dropped it, as long as the visit's settings are unchanged and the answer is
+// under this tab's key: the other tab dropped it for its own inputs, not for these. An answer whose
+// visit settings another tab changed is gone, as an edit in this tab would have dropped it.
+function samePlan(a: LoadedPlan, b: LoadedPlan): boolean {
+  return a.label === b.label && a.loadedAt === b.loadedAt;
+}
+
+// Set when another tab stored a different plan (or unloaded it) under this one. This tab keeps its
+// own plan, and its next write replaces the other tab's, so the page says so.
+export const planChangedInAnotherTab = ref(false);
+
+function syncFromStorage(): void {
+  const plan = loadedPlan.value;
+  if (!plan) return;
+  const str = getLocalStorage(PLAN_LOCALSTORAGE_KEY);
+  if (str === undefined || str === lastSyncedBlob) return;
+  let stored: LoadedPlan | null;
+  try {
+    stored = str ? parsePersistedPlan(str) : null;
+  } catch {
+    stored = null;
+  }
+  lastSyncedBlob = str;
+  if (!stored || !samePlan(stored, plan)) {
+    planChangedInAnotherTab.value = true;
+    return;
+  }
+  const settingsChanged = (visitId: string) =>
+    JSON.stringify(stored.settings[visitId] ?? null) !== JSON.stringify(plan.settings[visitId] ?? null);
+  // This tab's own answer for the visit, if it should survive what the other tab stored for it.
+  const ownStays = (visitId: string) =>
+    visitId in plan.solved && !settingsChanged(visitId) && plan.solvedInputs[visitId] === currentInputsKey;
+  const solved: Record<string, HumilityMissionsVisit> = {};
+  const solvedInputs: Record<string, string> = {};
+  const keep = (visitId: string, answer: HumilityMissionsVisit, key: string | undefined) => {
+    solved[visitId] = answer;
+    if (key !== undefined) solvedInputs[visitId] = key;
+  };
+  clearParked();
+  for (const [visitId, answer] of Object.entries(stored.solved)) {
+    const key = stored.solvedInputs[visitId];
+    const unchanged =
+      visitId in plan.solved &&
+      plan.solvedInputs[visitId] === key &&
+      JSON.stringify(plan.solved[visitId]) === JSON.stringify(answer);
+    if (unchanged || key === currentInputsKey) keep(visitId, answer, key);
+    else {
+      if (ownStays(visitId)) keep(visitId, plan.solved[visitId], plan.solvedInputs[visitId]);
+      parkedSolved[visitId] = answer;
+      if (key !== undefined) parkedSolvedInputs[visitId] = key;
+    }
+  }
+  for (const visitId of Object.keys(plan.solved)) {
+    if (!(visitId in stored.solved) && ownStays(visitId)) {
+      keep(visitId, plan.solved[visitId], plan.solvedInputs[visitId]);
+    }
+  }
+  plan.settings = stored.settings;
+  plan.solved = solved;
+  plan.solvedInputs = solvedInputs;
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('storage', event => {
+    if (event.key !== `${window.location.pathname}_${PLAN_LOCALSTORAGE_KEY}`) return;
+    syncFromStorage();
+  });
 }

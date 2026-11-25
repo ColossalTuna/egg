@@ -55,10 +55,31 @@ carry nothing useful, and merges exact duplicates into groups under a numeric
 canonical key. Together these make the result independent of the order the user
 clicked buttons.
 
+The key is what the model reads: fuel per axis, gems per launch as a fraction of the
+total gem cap (0 for every option when there is none), the slot fraction, and the
+yields. A merged group launches its **cheapest member**, `members[0]`: lowest gem
+cost, then fewest budgeted seconds, then lowest raw duration, then lowest index. So
+two ships that differ only in price put the plan on the cheaper one (SOL-14), and
+two that differ only in raw duration under the same launch-period floor report the
+same running time whichever order they arrive in (SOL-15). The group's seconds are
+its representative's, so the time a plan is optimized under is the time of the
+launch it exports.
+
+Three inputs are malformed rather than free, and are read that way:
+
+- A craftable with no ingredient (no child with a positive quantity) is not crafted
+  at all. Its craft column would be bounded by nothing, making the scale LP and the
+  judge's craft LP unbounded (SOL-13). It is scored on its drops alone.
+- Under a craft budget, a craftable whose unit price is missing, negative or
+  non-finite is likewise not crafted (SOL-18). An explicit price of 0 is a free
+  craft and stays one.
+- With per-egg fuel axes, an option that burns an egg the list does not name is
+  dropped: an egg with no budget is an egg the player has none of (SOL-19).
+
 ### Dominance
 
 `pruneDominated` then drops a group when another can stand in for it launch for
-launch: no more fuel, no more seconds, and at least as much of every item the
+launch: no more fuel, no more gems, no more seconds, and at least as much of every item the
 conservation rows read and of every target's legendary drops. What it buys is
 columns: an integer total column plus a nonzero in every row it touches, and the
 `slots` class columns of section 2 when it was the last group of its duration.
@@ -74,9 +95,9 @@ slots by load restores it and moves nothing else. So the pruned model's optimum 
 least the full model's, and being a restriction it is also no more.
 
 That argument is about rows, so it needs the _column bounds_ to say nothing the rows
-do not. `boundsFollowFromRows` refuses a dominator whose per-slot bound is the
-`UNBOUNDED_PER_SLOT` stand-in rather than its own duration (section 2): absorbing another
-group's launches is exactly what can push a column past a cap no row implied.
+do not. `boundsFollowFromRows` refuses a zero-duration dominator, whose total sits on
+the `UNBOUNDED_GROUP` stand-in rather than on its own duration (section 2): absorbing
+another group's launches is exactly what can push a column past a cap no row implied.
 
 The relation is strict on at least one axis, so it is a strict partial order and
 every dropped group has a dominator that itself survives. Testing against the whole
@@ -101,11 +122,15 @@ Crafts stay continuous deliberately: the judge re-optimises the craft split as a
 LP for whatever allocation it is handed, so integralising crafts here would
 optimise a different objective from the one being graded.
 
-Mission columns are capped by fuel and by time, and by nothing else: a `LaunchOption`
-carries no launch limit of its own. `UNBOUNDED_PER_SLOT` and `UNBOUNDED_GROUP` stand in
-when neither budget gives a bound at all (a
-zero fraction); their values are arbitrary above the point where they stop
-binding, and only finiteness matters, since an unbounded integer column gives
+Mission columns are capped by fuel, gems and time, and by nothing else: a
+`LaunchOption` carries no launch limit of its own. A positive duration always bounds
+a group, per slot by `maxLaunches(slotSeconds, duration)` and in total by the same
+over every slot, and those bounds are derived from the time budget and used as they
+are, however large. (A fixed per-slot stand-in of 1e6 used to cap them, which cut a
+long horizon of short missions off at an arbitrary count: SOL-24.) Only a
+zero-duration mission that burns nothing budgeted has no bound at all, and
+`UNBOUNDED_GROUP` (1e9) stands in for its total, its per-slot column taking the same
+figure; only finiteness matters there, since an unbounded integer column gives
 branch-and-bound nothing to branch on.
 
 `craftUpperBounds` propagates intervals over the recipe. It counts every group at
@@ -140,7 +165,15 @@ violating a row by up to `mip_feasibility_tolerance`, which is absolute on row
 activity, so a normalized row would license overfilling a slot by that fraction of
 the whole horizon — seconds of it on a month-long plan.
 
-`price` is written only when the caller supplies a budget, from the linear per-craft
+`fuel_a` is one row per fuel axis, normalized to a budget of 1. `gem` is the
+**total** gem cap across every launch of the plan, written only when the problem
+sets `gemBudget`, normalized the same way: one launch of a group draws
+`cost / gemBudget` of it. It is a constraint of the problem, not a per-ship filter
+(a per-ship price ceiling stays upstream, on the menu), so it sits in the MILP, in
+`fitsBudgets`, and in the judge: `evaluateCounts` scores an allocation over the cap
+at `-Infinity`.
+
+`price` is written whenever the caller supplies a budget, from the linear per-craft
 prices `computeCraftUnitPrices` (`../optimizer-cost.ts`) derives; that is where the
 approximation and the direction it errs in are set out. What this model needs from it
 is one consequence: the prices over-state the bill, so a plan satisfying the row is
@@ -175,9 +208,11 @@ options only _then_, so everything governing ingestion (`small_matrix_value`,
 `large_matrix_value`, `infinite_bound`) is set too late and silently does nothing.
 
 So `Rows.end` scales instead; multiplying a row and its bounds by a positive
-constant leaves the feasible set unchanged. A row is scaled only when its smallest
+constant leaves the feasible set unchanged. A row is scaled up only when its smallest
 entry falls below `SAFE_COEFFICIENT = 1e-6`, a thousand times clear of the filter,
-so rows in ordinary magnitudes are left alone.
+and down only when its largest entry is above `SAFE_LARGE_COEFFICIENT`, so rows in
+ordinary magnitudes are left alone. Scaling down is what lets a single large price
+(1e15 golden eggs a craft, SOL-11b) be written at all.
 
 The other end of the window bounds that scaling: HiGHS _rejects_ a model carrying
 an entry above `large_matrix_value` (default 1e15), failing in the reader and
@@ -185,28 +220,30 @@ surfacing as a plan that could not be computed at all. The `score_t` rows are
 where both ends bite at once — `theta_t` runs down to ~1e-13 against a craft
 coefficient as large as `Q_CERTAIN_PROXY` (1e4), a dynamic range of ~1e17 inside
 one row — so normalizing the small side to 1 would put the other at ~2.8e16 and
-make the model unreadable. Hence
+make the model unreadable. Hence, scaling up,
 `Math.max(1, Math.min(1/smallest, SAFE_LARGE_COEFFICIENT/largest))`, where
 `SAFE_LARGE_COEFFICIENT = 1e12` keeps three decades of headroom under the reader's
-limit and the outer `max` stops a row ever being scaled _down_.
+limit; scaling down is the mirror image, never below what keeps the smallest entry at
+`SAFE_COEFFICIENT`.
 
-Tangent cuts are where this bites, and they are the only rows ever observed to leave
-the window. A cut's two entries are `+1` on `z_t` and `-theta_t * g'(s_k)` on
-`sigma_t`, evaluated at the grid point `s_k = theta_t * sigma_k`. Section 4's floor
-caps that slope at `1/SIGMA_FLOOR = 100`, but nothing bounds it from below: past
-`s ~ 400` it underflows — ~1e-179 measured — and the row's dynamic range is then wider
-than the window at any scale. `buildOaMilp` drops a slope under
-`FLAT_CUT_SLOPE = 1e-12` rather than writing it. `sigma <= 1`, so the dropped term is
-worth at most that many nats — natural-log units on the joint probability, so 0.69
-nats is a factor of two — anywhere in the feasible range, and the flat cut left behind
-can sit under `g` by the same amount, a thousandth of the envelope error the grid
-already carries.
+Tangent cuts used to be where this bit. A cut's two entries are `+1` on `z_t` and
+`-u_t * g'(s_k)` on `sigma_t`, evaluated at the grid point `s_k = u_t * sigma_k`, with
+`u_t` the unit of section 4. Section 4's floor caps that slope at
+`1/SIGMA_FLOOR = 100`. From below, the unit's ceiling bounds it now: the smallest slope
+written is `SCORE_CEILING / expm1(SCORE_CEILING)`, about 2.8e-12. Before the ceiling,
+a theta in the hundreds put grid points past `s ~ 400`, where the slope underflows to
+~1e-179 and the row cannot be written at any scale. `buildOaMilp` still drops a slope
+under `FLAT_CUT_SLOPE = 1e-12` rather than writing it, as a guard for a caller's own
+grid. The flat cut it leaves sits under the tangent by at most `slope * sigma` nats
+(natural-log units on the joint probability, so 0.69 nats is a factor of two).
 
-No scale fits such a row, so `Rows.end` throws on anything still outside
-`(1e-9, 1e15)` after scaling — for the small end and the large end alike. Handing it
-over instead deletes its smallest terms silently, and a budget row that loses its
-coefficients stops budgeting; a failed solve is the readable outcome, and it is why a
-new row in large units is not unprotected.
+No scale fits a row whose own entries span more than the window, so `Rows.end`
+throws `RowRangeError` on anything still outside `(1e-9, 1e15)` after scaling, for the
+small end and the large end alike. Handing it over instead deletes its smallest terms
+silently, and a budget row that loses its coefficients stops budgeting. Such a row comes
+from the inputs' magnitudes (a fuel axis of 1e21 against a mission costing 1, SOL-11a),
+not from a failed solve, so `solveWith` catches exactly this class and falls back to the
+MILP-free plans of section 5 instead of failing the call. Every other error propagates.
 
 ## 4. Scaling: why `sigma` and not `s`
 
@@ -216,12 +253,30 @@ HiGHS outright.
 
 Every target is therefore measured in units of its own ceiling. `theta_t` is the
 largest score `t` can reach when every other target is ignored and counts may be
-fractional (one continuous LP per target, `scaleLps`). Then `sigma_t = s_t/theta_t`
-lies in `[0, 1]` and a tangent at `sigma = a` has slope `1/a`. The grid bottoms out
-at `SIGMA_FLOOR`, so no tangent coefficient exceeds `1/SIGMA_FLOOR`.
+fractional (one continuous LP per target, `scaleLps`). The unit is
+`u_t = min(theta_t, SCORE_CEILING)`, with `SCORE_CEILING = 30`, and
+`sigma_t = s_t/u_t`. For `theta_t <= 30`, which is every target the arena and the
+instance generator have produced, `u_t = theta_t`, `sigma_t` lies in `[0, 1]`, and
+nothing below differs from the uncapped scheme. A tangent at `sigma = a` has slope
+about `1/a` at small scores. The grid bottoms out at `SIGMA_FLOOR`, so no tangent
+coefficient exceeds `1/SIGMA_FLOOR`.
+
+**Why the ceiling.** `g(30) = log(1 - e^-30)` is about -9e-14 nats, under the judge's
+`EXACT_PRECISION.gapTol`: past 30 a target is certain to every figure anything reads.
+A grid anchored on a theta far above that puts every tangent where `g` is flat to the
+last bit. The empty plan and the saturating plan then have the same envelope, and
+HiGHS returned the empty one. That happened for a single target with theta 9000
+(SOL-02), for one saturating target beside another (SOL-01), and for every certain
+craft, whose `Q_CERTAIN_PROXY` makes theta at least 1e4 (SOL-03). With the unit
+capped, the grid covers `[0.3, 30]` in `s` for such a target, where `g` still has
+curvature. A score above the unit is allowed (`sigma_t > 1`); the top tangent prices
+it, within 1e-13 nats of `g`. The ceiling also takes theta out of the `score_t`
+rows: their coefficient is `u_t <= 30` however large theta is, so owned stock of
+1e16 (theta ~1e15, SOL-12) no longer makes a row unwritable.
 
 `theta_t <= 0` means no allocation scores that target, so every plan has joint
-probability zero and the empty one is returned directly. A `sigma_t` of exactly
+probability zero and no MILP is written (section 5's fallback still runs, and finds
+nothing). A `sigma_t` of exactly
 zero produces no cut, since there is no tangent at zero — when the model wants to
 abandon a target outright, the deepest existing cut prices that decision, which is
 what makes the grid's floor load-bearing rather than decorative.
@@ -253,7 +308,9 @@ carry no curvature at all.
 
 `Q = -log(1 - p)` is `+Infinity` when a craft is certain, and infinity cannot enter
 a matrix. `Q_CERTAIN_PROXY = 1e4` is large enough that one craft saturates `g` to
-every bit of a double, and small enough to stay mid-window in the matrix. Both
+every bit of a double, and small enough to stay mid-window in the matrix. It makes
+theta at least 1e4 for any reachable certain craft, which is the case the unit's
+ceiling above exists for. Both
 matrices HiGHS is handed read that one constant — the scale LPs above and this MILP —
 so a target is never measured against one value of certainty and ranked against
 another. The judge (`evaluator.ts`) still
@@ -261,22 +318,47 @@ sees the real Infinity; the proxy only steers.
 
 ## 5. The pass
 
-One MILP under a fixed tangent grid, then decode, then judge.
+One MILP under the tangent grid, then decode and judge, then up to
+`REFINE_ROUNDS = 4` refinement rounds when there is more than one target, then a
+MILP-free fallback when nothing scored.
 
 The grid is log-spaced in units of theta because `sigma` is "fraction of
 achievable": the thirteen decades the scores span live in theta, which the
 normalization divides out. Envelope error is `(d ln10)^2 / 8` nats at `d` decades
 per cut (`envelopeErrorNats`), which sizes the point count — 50 cuts over the two
-decades down to `SIGMA_FLOOR`. `SIGMA_FLOOR` is 1e-2, a decade below any sigma ever
+decades down to `SIGMA_FLOOR`, about 1.1e-3 nats. The figure holds unchanged under
+the unit's ceiling (section 4), which moves where the grid sits in `s` for a large
+theta but not its spacing; the refinement rounds below only tighten it. `SIGMA_FLOOR` is 1e-2, a decade below any sigma ever
 measured; an earlier 1e-5 spent most of its grid where no plan has ever landed.
 The band is conditioned on the instance generator, so a materially different fleet
 or target mix is a reason to re-measure rather than to trust it.
 
-**There used to be a refinement loop here**, adding a cut per target at the MILP's
-own `sigma*` and at the judged score. A placebo round against a row-permutation of
-the identical cut set kept most of its apparent gain, so it was buying a search
-restart rather than a tighter envelope; the same budget spent on nodes buys more.
-Do not re-add it without a placebo arm.
+**Refinement.** After each solve, a target whose envelope value `z_t` sits more than
+`REFINE_TOL = 1e-9` nats above `g` at the incumbent's own `sigma_t` gets a tangent at
+that point, and the MILP is solved again. Every incumbent is judged, and the best
+judged plan is kept, so a round cannot make the answer worse. A round that adds no
+cut stops the loop: its incumbent is priced exactly by the envelope, which makes it
+optimal for the true objective up to the MILP's own gap (Kelley). A target the
+incumbent leaves unscored gets a tangent two decades below the lowest one so far,
+down to 1e-12, since there is no tangent at zero. A point within a relative 1e-5 of
+one already cut is not added again: HiGHS's primal comes back through the LP text
+rounded to about six digits, and without that test the same tangent was re-added
+every round. A single target skips the rounds: its envelope is increasing in `sigma`
+under any grid, so a round cannot move the argmax.
+
+An earlier refinement loop here was removed because a placebo round, the same cut
+set with its rows permuted, kept most of its apparent gain. This one was measured
+against a placebo arm. The arm added a duplicate of an existing grid point each round
+instead of the incumbent's tangent, which changes the model text and leaves the
+envelope unchanged. On the SOL-23 instances (two near-certain targets, theta ~9-16)
+the placebo left every gap where it was, 1.6e-6 to 5.1e-5 nats. The real rounds
+closed all four below 1e-7. The gain is the envelope, not a restart.
+
+**Fallback.** When nothing has scored above `-Infinity` (the scale LPs gave no
+usable theta, the model had a row no scale can write, or the OA incumbent was
+empty or unjudgeable), `singleGroupPlans` tries each group alone, flown as often
+as its own budgets and the slots allow, and keeps the best judged one. The empty
+plan is never accepted while a single-group plan scores positive.
 
 What comes back is a _judged_ plan, never the MILP's answer on faith: the
 incumbent is scored by `evaluator.ts`, an independent re-derivation of the
@@ -303,10 +385,15 @@ left to find.
 
 ## 6. Decode and certify
 
-Both budgets are rows of the model, so a decoded plan is feasible by construction;
-`fitsBudgets` says so out loud rather than assuming it, re-checking the fuel row
-against the rounded counts and reading the three slot loads straight off the
-MILP's own columns — the packing witness that summing over slots threw away.
+Every budget is a row of the model, so a decoded plan is feasible by construction;
+`fitsBudgets` says so out loud rather than assuming it. It re-checks the fuel rows and
+the gem cap against the rounded counts (the judge's `exceedsLaunchBudgets`), and reads
+the three slot loads straight off the MILP's own columns, the packing witness that
+summing over slots threw away. The witness is checked against the decoded counts too:
+every duration class's rounded slot columns must add up to the decoded totals of its
+groups, and stay within the column's cap. Group totals and slot columns round
+independently, so a fractional point can decode into totals its own slot columns do
+not pack (SOL-10). Such an incumbent is dropped.
 
 The craft budget is deliberately not among them: no allocation can breach it, because
 it binds on the craft split rather than on missions, and the judge re-solves that split
@@ -318,8 +405,8 @@ smaller — but because that is the arena's own packing tolerance
 anything looser certifies plans the arena calls infeasible, an arena C1 hard
 failure.
 
-`FUEL_TOL` is the same figure and not the same argument. Fuel is normalized to a
-budget of 1, so 1e-9 there is _relative_ slack where `SLOT_TOL` is absolute
+`BUDGET_TOL` (`evaluator.ts`, formerly `FUEL_TOL`) is the same figure and not the same
+argument. Fuel and gems are normalized to a budget of 1, so 1e-9 there is _relative_ slack where `SLOT_TOL` is absolute
 seconds, and the argument from the arena's packer does not carry over — it is
 justified only as float noise against a budget of 1. If fuel ever becomes the
 constraint a plan is rejected on, re-derive this one rather than trusting it.
@@ -351,6 +438,14 @@ a keystroke. Two cases are worth naming because the reading is not the obvious o
 _empty_ `fuelAxes` list is an empty tank, not an absent budget, and duplicate target ids
 are dropped, since the objective is the probability of a legendary of every _distinct_
 target and an id listed twice is one event rather than two.
+
+`gemBudget` follows the same rule. It is the total gem cost every launch of the plan
+may add up to. Absent means no total cap, which is what every caller that predates it
+gets. NaN, a negative value and `Infinity` all normalize to 0, which permits only free
+launches; "unlimited" is spelled by leaving the field out. With a cap present, an
+option whose `cost` is not a finite non-negative number is dropped. The per-ship price
+ceiling (`maximumCost` in `../optimizer-core.ts`) is a separate filter on the menu and
+is unaffected.
 
 `DEFAULT_TUNING` is `maxNodes: 1200`, which is a latency choice: quality is flat
 across every tuning ever swept (all means inside 0.005 log10), so what the number
@@ -385,6 +480,12 @@ wrong:
 - A solution's `Index` field is the column's position _in the LP file_, the order
   the reader first saw it, not the order the model built its columns in. Mapping
   through `Index` type-checks, runs, and reads the wrong columns.
+
+A throw out of `highs.solve` is a **failed solve**, and `highs.ts` rethrows it as
+`HiGHS failed: <reason>`. It used to be mapped to status `unknown` with an all-zero
+point, which `solveWith` then returned as the empty plan, and the app recorded that as
+a successful zero-launch answer (STA-13). Now the error reaches `optimizeFull`'s
+caller, which reports it.
 
 ### Presolve, and the throw it used to cause
 

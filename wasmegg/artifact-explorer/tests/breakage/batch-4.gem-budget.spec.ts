@@ -21,15 +21,19 @@ beforeEach(async () => {
   plan.setCurrentVisit(plan.loadedPlan.value!.visits[0].visitId);
 });
 
-// The exact expression at ArtifactMissionOptimizer.vue:296, which sets the exported gemBudget:
-//   const gemBudget = visit ? gemBudgetFor(visit, input.timeCapacityPerSlot) : 0;
-// where input.timeCapacityPerSlot = maxWaitTimeSeconds = effectiveWaitTimeSeconds (lines 141, 264).
-function exportedGemBudget(): number {
-  expect(COMPONENT).toContain('const gemBudget = visit ? gemBudgetFor(visit, input.timeCapacityPerSlot) : 0;');
-  expect(COMPONENT).toContain('timeCapacityPerSlot: maxWaitTimeSeconds.value,');
-  expect(COMPONENT).toContain('const maxWaitTimeSeconds = effectiveWaitTimeSeconds;');
-  return gemBudgetFor(plan.activePlanVisit.value!, store.effectiveWaitTimeSeconds.value);
+// Rewritten by K3 for the TOTAL-budget contract. The component sends the effective gem mode's cap to the
+// solve as both `maximumCost` and the total `gemBudget`, and exports `input.gemBudget`, the cap the solve
+// used (undefined in unlimited mode, which the writer turns into GEM_BUDGET_UNLIMITED):
+//   const maxGemCost = effectiveMaxGemCost.value;  ...  gemBudget: maxGemCost,
+//   const gemBudget = input.gemBudget;
+function exportedGemBudget(): number | undefined {
+  expect(COMPONENT).toContain('const maxGemCost = effectiveMaxGemCost.value;');
+  expect(COMPONENT).toContain('gemBudget: maxGemCost,');
+  expect(COMPONENT).toContain('const gemBudget = input.gemBudget;');
+  return store.effectiveMaxGemCost.value;
 }
+// The budget the plan itself gives the visit (bank plus earnings over the time budget).
+const planGemBudget = () => gemBudgetFor(plan.activePlanVisit.value!, store.effectiveWaitTimeSeconds.value);
 
 describe('SEAM-05: gemBudget is the cap the solve used', () => {
   it("plan mode: exported gemBudget equals the solve's maximumCost (control)", () => {
@@ -38,7 +42,7 @@ describe('SEAM-05: gemBudget is the cap the solve used', () => {
   });
 
   it('custom mode: exported gemBudget equals the custom cap the solve used', () => {
-    const planBudget = exportedGemBudget();
+    const planBudget = planGemBudget();
     store.setGemCostMode('custom');
     store.setGemCostInput('1e40');
     expect(store.effectiveMaxGemCost.value).toBe(1e40); // what is sent as maximumCost
@@ -57,8 +61,9 @@ describe('SEAM-05: gemBudget is the cap the solve used', () => {
     store.setGemCostMode('unlimited');
     expect(store.effectiveMaxGemCost.value).toBeUndefined(); // solver may buy any ship
     const budget = exportedGemBudget();
+    expect(budget).toBeUndefined(); // the solve ran with no gem cap (precondition rewritten by K3)
     const shipCost = 419e36; // ATREGGIES virtueGemCost
-    expect(shipCost).toBeGreaterThan(budget); // fixture plan budget is smaller (see assertion below)
+    expect(shipCost).toBeGreaterThan(planGemBudget()); // fixture plan budget is smaller (see assertion below)
     const out = projectSolvedVisit({
       visit: plan.activePlanVisit.value!,
       solution: {

@@ -32,6 +32,9 @@ export interface OptimizeArgs {
   // Golden egg cap on the plan's crafts, or absent for no cap. It has to reach both the MILP and the
   // judge's craft LP, or the cap does not bind on the craft counts the card actually prints.
   craftBudget?: CraftBudget;
+  // The TOTAL gem cost every launch of the plan may add up to, or absent for no cap. Passed through to
+  // the solve unchanged; `normalizeProblem` holds it to the budget rule (see `solver/types.ts`).
+  gemBudget?: number;
 }
 
 interface Assembly {
@@ -103,6 +106,7 @@ export async function optimizeFull(args: OptimizeArgs): Promise<OptimizerSolutio
     slots: NUM_SLOTS,
     ownedStock,
     craftBudget,
+    gemBudget: args.gemBudget,
   });
   const S = normalized.timeCapacityPerSlot;
   const axes = normalized.fuelAxes;
