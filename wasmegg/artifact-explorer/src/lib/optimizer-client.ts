@@ -70,7 +70,16 @@ export function createOptimizerClient(): OptimizerClient {
       const request: OptimizerRequest = { id, args: { ...input, options: optionsToWire(input.options) } };
       return new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
-        w.postMessage(request);
+        // A send can fail synchronously (a DataCloneError for an argument structured clone cannot copy).
+        // Nothing reached the worker, so no reply will ever settle this entry: remove it here, or a later
+        // worker crash would reject a promise that has already rejected, and the map would grow by one
+        // stranded entry per failed send.
+        try {
+          w.postMessage(request);
+        } catch (e) {
+          pending.delete(id);
+          reject(e instanceof Error ? e : new Error(String(e)));
+        }
       });
     },
     terminate() {
