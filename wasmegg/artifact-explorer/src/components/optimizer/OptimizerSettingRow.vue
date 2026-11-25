@@ -11,7 +11,7 @@
         </span>
       </div>
       <label
-        v-if="hasSave"
+        v-if="hasSave && canOverride"
         class="flex items-center gap-1 text-xs text-gray-500 cursor-pointer select-none flex-shrink-0"
       >
         <input
@@ -88,6 +88,9 @@ export default defineComponent({
     // gets its own source word ('Plan') rather than both claiming 'Save'.
     sourceLabel: { type: String, default: 'Save' },
     overridden: { type: Boolean, default: false },
+    // False where the source value is the only one that applies (a manual value would be ignored), so the row
+    // offers no Override checkbox and shows the source value whatever `overridden` says.
+    canOverride: { type: Boolean, default: true },
     saveValue: { type: Number as PropType<number | null>, default: null },
     // Per-target values, shown as a list instead of the single saveValue.
     saveEntries: {
@@ -107,16 +110,17 @@ export default defineComponent({
     'update:manual': (_n: number) => true,
   },
   setup(props) {
-    const { hasSave, overridden, saveEntries, sourceLabel, min, max } = toRefs(props);
-    // No save data → edit inline; save data + override on → edit inline.
-    const editable = computed(() => !hasSave.value || overridden.value);
+    const { hasSave, overridden, canOverride, saveEntries, sourceLabel, min, max } = toRefs(props);
+    // No save data → edit inline; save data + override on (where it can apply) → edit inline.
+    const overrideActive = computed(() => overridden.value && canOverride.value);
+    const editable = computed(() => !hasSave.value || overrideActive.value);
     const perTargetSave = computed(() => hasSave.value && saveEntries.value.length > 0);
     // Text and colour are one decision, so they are made once: branching twice on the same pair is
     // how a fourth state ends up labelled one way and coloured another. Words match the ones used
     // in the gem-cost mode selector ('Override') so the same source never reads two ways.
     const badge = computed(() => {
       if (!hasSave.value) return { text: 'Manual', class: 'bg-gray-100 text-gray-500' };
-      if (overridden.value) return { text: 'Override', class: 'bg-amber-100 text-amber-700' };
+      if (overrideActive.value) return { text: 'Override', class: 'bg-amber-100 text-amber-700' };
       return { text: sourceLabel.value, class: 'bg-green-100 text-green-700' };
     });
     const rangeMessage = computed(() =>

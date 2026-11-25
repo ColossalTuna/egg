@@ -274,6 +274,7 @@
             label="Fuel tank level"
             :has-save="sourceTankLevel !== null"
             :source-label="planSourceLabel"
+            :can-override="!planVisit"
             :overridden="overrides.tankLevel"
             :save-value="sourceTankLevel"
             :manual-value="extras.tankLevel"
@@ -284,6 +285,9 @@
             @update:overridden="setOverrideTankLevel"
             @update:manual="setTankLevel"
           />
+          <p v-if="planVisit && overrides.tankLevel" class="text-xs text-gray-400">
+            Your tank level override is ignored for plan visits; the visit's own tank is used.
+          </p>
         </div>
         <div v-if="canBudgetPerEgg" class="py-2">
           <label class="flex items-start gap-2 text-sm select-none text-gray-600 cursor-pointer">
@@ -390,6 +394,7 @@ import {
   setCraftingCostInput,
   effectiveConfig,
   effectiveFuelByEggCapacity,
+  effectiveFuelTankCapacity,
   EFFORT_LEVELS,
   type EffortLevel,
   extras,
@@ -403,6 +408,7 @@ import {
   playerShipsConfig,
   playerTankFuels,
   playerTankLevel,
+  clampTankLevel,
   setCraftingLevel,
   setEffort,
   setEpicResearchFTLLevel,
@@ -550,11 +556,21 @@ export default defineComponent({
     const sourceZerogLevel = computed(() =>
       fromVisitOrSave(activePlanVisit.value?.epicResearchZerogLevel, playerShipsConfig.value?.epicResearchZerogLevel)
     );
+    // A plan visit's own tank is what the budget uses; the override is ignored there (see effectiveFuelTankCapacity),
+    // so the row neither offers it nor shows its level.
     const shownTankLevel = computed(() => {
+      if (activePlanVisit.value) return activePlanVisit.value.tankLevel;
       const editable = sourceTankLevel.value === null || overrides.value.tankLevel;
       return editable ? extras.value.tankLevel : sourceTankLevel.value;
     });
-    const tankCapacityLabel = computed(() => formatEIValue(fuelTankSizes[shownTankLevel.value] ?? 0, { trim: true }));
+    // The label is the figure the solve budgets against. Where that is less than the tank (a plan visit in the
+    // pooled mode, with fuel already stored on arrival), the tank is shown beside it so the gap is explained.
+    const tankCapacityLabel = computed(() => {
+      const fmt = (n: number) => formatEIValue(n, { trim: true });
+      const tank = fuelTankSizes[clampTankLevel(shownTankLevel.value)];
+      const budget = effectiveFuelTankCapacity.value;
+      return budget < tank ? `${fmt(budget)} free of ${fmt(tank)}` : fmt(tank);
+    });
 
     // Per-egg amounts to budget against: the plan's bank on arrival at a visit, the save's tank
     // otherwise. Without either there is nothing to budget against and the control would be a dead

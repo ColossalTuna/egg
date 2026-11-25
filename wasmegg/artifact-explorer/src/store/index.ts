@@ -133,7 +133,7 @@ export function setPreviousCraftCount(count: number): void {
 }
 
 export function setTankLevel(level: number): void {
-  extras.value.tankLevel = level;
+  extras.value.tankLevel = clampTankLevel(level);
 }
 
 // Player data loaded from a save. Never persisted.
@@ -200,7 +200,27 @@ export const effectiveTankLevel = computed<number>(() => {
   return overrides.value.tankLevel ? extras.value.tankLevel : source;
 });
 
-export const effectiveFuelTankCapacity = computed<number>(() => fuelTankSizes[effectiveTankLevel.value]);
+// A tank level read from a save, a plan file or storage can be fractional or outside the table; the table has
+// no entry for it and a capacity of `undefined` is not a number the solver can use.
+export function clampTankLevel(level: number): number {
+  if (!Number.isFinite(level)) return 0;
+  return Math.min(fuelTankSizes.length - 1, Math.max(0, Math.floor(level)));
+}
+
+// The pooled capacity the optimizer budgets against. The tank-level override is a what-if for browsing
+// without a plan: with a plan visit active the visit's own tank is the one the plan will stage into, so
+// the override is ignored there. In the pooled (full-tank) mode fuel already stored on arrival, whatever
+// its egg, takes room from the same tank, so it is subtracted; otherwise an answer that fills the pooled
+// budget overflows the plan's tank when the planner validates it.
+export const effectiveFuelTankCapacity = computed<number>(() => {
+  const visit = activePlanVisit.value;
+  if (!visit) return fuelTankSizes[clampTankLevel(effectiveTankLevel.value)];
+  const capacity = fuelTankSizes[clampTankLevel(visit.tankLevel)];
+  if (effectiveFuelByEggCapacity.value !== null) return capacity;
+  let stored = 0;
+  for (const amount of visit.fuelByEgg.values()) if (Number.isFinite(amount) && amount > 0) stored += amount;
+  return Math.max(0, capacity - stored);
+});
 
 export const effectiveConfig = computed<ShipsConfig>(() => {
   const player = playerShipsConfig.value;
@@ -258,11 +278,11 @@ function seedOverrideValuesFromPlayerData(): void {
   }
 }
 
-function computeShipLevelFromPoints(shipType: Spaceship, points: number): number {
+function computeShipLevelFromPoints(shipType: Spaceship, tenths: number): number {
   const thresholds = shipLevelLaunchPointThresholds(shipType);
   let level = 0;
   for (; level < thresholds.length; level++) {
-    if (points < thresholds[level]) return Math.max(0, level - 1);
+    if (tenths < Math.round(thresholds[level] * 10)) return Math.max(0, level - 1);
   }
   return thresholds.length - 1;
 }
@@ -292,11 +312,16 @@ function readVirtueTankFuels(backup: ei.IBackup): Map<ei.Egg, number> | null {
 }
 
 export function setPlayerData(backup: ei.IBackup): void {
-  if (!backup.game || !backup.artifactsDb) return;
+  // A partial save cannot replace the previous player's data, and leaving that data in place would pair it
+  // with the new player's id. Drop it instead.
+  if (!backup.game || !backup.artifactsDb) {
+    clearPlayerData();
+    return;
+  }
 
   const base = newShipsConfig(backup.game);
 
-  const launchPoints: Partial<Record<Spaceship, number>> = {};
+  const launchPointTenths: Partial<Record<Spaceship, number>> = {};
   const hasLaunched: Partial<Record<Spaceship, boolean>> = {};
 
   const missions = (backup.artifactsDb.missionArchive ?? [])
@@ -305,15 +330,16 @@ export function setPlayerData(backup: ei.IBackup): void {
 
   for (const mission of missions) {
     const ship = mission.ship!;
-    let pts = 1.0;
-    if (mission.durationType === DurationType.LONG) pts = 1.4;
-    else if (mission.durationType === DurationType.EPIC) pts = 1.8;
-    launchPoints[ship] = (launchPoints[ship] ?? 0) + pts;
+    // Tenths, so that 25 LONG missions are exactly 350 and not 34.99999999999999 against a threshold of 35.
+    let pts = 10;
+    if (mission.durationType === DurationType.LONG) pts = 14;
+    else if (mission.durationType === DurationType.EPIC) pts = 18;
+    launchPointTenths[ship] = (launchPointTenths[ship] ?? 0) + pts;
     hasLaunched[ship] = true;
   }
 
   for (const shipType of spaceshipList) {
-    base.shipLevels[shipType] = computeShipLevelFromPoints(shipType, launchPoints[shipType] ?? 0);
+    base.shipLevels[shipType] = computeShipLevelFromPoints(shipType, launchPointTenths[shipType] ?? 0);
     base.shipVisibility[shipType] = shipType === Spaceship.CHICKEN_ONE ? true : (hasLaunched[shipType] ?? false);
   }
 
@@ -434,7 +460,7 @@ export function loadExtras(): ExtrasConfig {
     if (isExtrasConfig(parsed)) {
       return {
         ...parsed,
-        tankLevel: parsed.tankLevel ?? fuelTankSizes.length - 1,
+        tankLevel: clampTankLevel(parsed.tankLevel ?? fuelTankSizes.length - 1),
       };
     }
   } catch (err) {
@@ -559,7 +585,7 @@ export const craftingCostInvalid = computed(
 export const costBudgetsValid = computed(() => !gemCostInvalid.value && !craftingCostInvalid.value);
 
 // Non-finite is dropped rather than clamped: `Math.max(0, NaN)` is NaN, and a NaN or Infinity capacity
-// reads downstream as "no cap" — the checkbox would stay on with nothing enforcing it.
+// is not a usable cap (`normalizeProblem` throws on it), so the setter keeps the previous value.
 export function setMaxGoldenEggCost(cost: number): void {
   if (!Number.isFinite(cost)) return;
   craftingDraft.value = null;
@@ -580,7 +606,7 @@ export function loadMissionFilters(): MissionFilters {
         ...parsed,
         effort: isEffortLevel(parsed.effort) ? parsed.effort : 'medium',
         maxGemCostEnabled: parsed.maxGemCostEnabled ?? false,
-        maxGemCost: parsed.maxGemCost ?? 0,
+        maxGemCost: parsed.maxGemCost ?? newMissionFilters().maxGemCost,
         maxGoldenEggCostEnabled: parsed.maxGoldenEggCostEnabled ?? false,
         maxGoldenEggCost: parsed.maxGoldenEggCost ?? DEFAULT_MAX_GOLDEN_EGG_COST,
         waitTimeDays: parsed.waitTimeDays ?? DEFAULT_WAIT_TIME_DAYS,
