@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { ei, getArtifactTierPropsFromId, Inventory, multiCraftCost, singleCraftCost } from 'lib';
+import { allPossibleTiers, ei, getArtifactTierPropsFromId, Inventory, multiCraftCost, singleCraftCost } from 'lib';
 
 import {
+  computeCraftUnitPrices,
   computePlanCraftingCost,
   craftCostOf,
   craftingPriceParamsOf,
@@ -10,6 +11,7 @@ import {
   craftChainCost,
 } from '@/lib/optimizer-cost';
 import { computeCraftChainTree } from '@/lib/optimizer-tree';
+import { generateRecipeDag } from '@/lib/problem-inputs';
 import { lt1, lt2, lt3, lt4, makeNode, makeSolution, totemDag } from './spec-helpers';
 import type { RecipeDAG } from '@/lib/types';
 
@@ -35,6 +37,27 @@ function inventoryWithCrafts(crafts: [ei.ArtifactSpec.Level, number][]): Invento
 describe('craftingPriceParamsOf', () => {
   it('returns the tier’s crafting price params', () => {
     expect(craftingPriceParamsOf(lt4)).toBe(paramsOf(lt4));
+  });
+});
+
+// Under a craft budget the model leaves a craftable with no usable price uncrafted (SPEC.md section 2) rather
+// than crafting it for free. That is only safe while the game data prices every craftable, so pin it here: a
+// data update that drops a price fails this test instead of silently removing a recipe from budgeted plans.
+describe('computeCraftUnitPrices over the game data', () => {
+  it('prices every craftable tier with a finite, non-negative price, and every one has an ingredient', () => {
+    const dag: RecipeDAG = new Map();
+    for (const tier of allPossibleTiers) generateRecipeDag(tier.id, dag);
+    const craftables = [...dag.values()].filter(node => !node.isLeaf);
+    const prices = computeCraftUnitPrices(dag, null);
+    expect(craftables.length).toBeGreaterThan(0);
+    const unpriced = craftables
+      .filter(node => {
+        const price = prices.get(node.id);
+        return price === undefined || !Number.isFinite(price) || price < 0;
+      })
+      .map(node => node.id);
+    expect(unpriced).toEqual([]);
+    expect(craftables.filter(node => !node.children.some(child => child.qty > 0)).map(node => node.id)).toEqual([]);
   });
 });
 
