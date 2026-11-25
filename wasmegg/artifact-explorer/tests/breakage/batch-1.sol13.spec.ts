@@ -22,8 +22,11 @@ describe('SOL-13 unbounded scale LP', () => {
       undefined,
       { report: true }
     );
-    // The very first (scale) LP is the one that reports no finite optimum.
-    expect(statuses).toEqual(['unbounded']);
+    // Mechanism check, changed with the SOL-13 fix: before it, the very first (scale) LP reported no finite
+    // optimum (statuses were exactly ['unbounded']) and the solve stopped there. An ingredient-less craftable
+    // now gets no craft column, so the solve runs and no LP in it is unbounded.
+    expect(statuses.length).toBeGreaterThan(0);
+    expect(statuses).not.toContain('unbounded');
     // BREAKAGE SOL-13
     expect(res.allocation[0]).toBeGreaterThan(0);
     expect(res.reported!.jointProbability).toBeGreaterThan(0.5);

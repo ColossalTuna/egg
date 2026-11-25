@@ -1,7 +1,7 @@
 // The mixed-integer program handed to HiGHS: the continuous per-target scale
 // LPs, and the integer outer-approximation MILP. See SPEC.md sections 2-4.
 
-import { UNBOUNDED_PER_SLOT, boundsFollowFromRows, maxLaunches, type Model } from './model';
+import { boundsFollowFromRows, maxLaunches, type Model } from './model';
 import { finiteQ, logHit } from '../objective';
 import { INF, type MilpModel } from './types';
 
@@ -33,8 +33,8 @@ export interface Layout {
 export type Variant = 'scale' | 'oa';
 
 // A group shares a class only when its duration alone bounds its per-slot count (the same test the
-// dominance pass applies): a group on the `UNBOUNDED_PER_SLOT` stand-in has a per-group per-slot cap no
-// shared column can carry, so it keeps a class of its own with exactly the bound it had before.
+// dominance pass applies). A zero-duration group has no such bound: it keeps a class of its own, capped
+// per slot by its own total, since no slot can hold more launches than the whole group has.
 function durationClasses(model: Model): Pick<Layout, 'classes' | 'classOf' | 'classSeconds' | 'classCap'> {
   const classOf = new Array<number>(model.groups.length);
   const classSeconds: number[] = [];
@@ -42,7 +42,7 @@ function durationClasses(model: Model): Pick<Layout, 'classes' | 'classOf' | 'cl
   const shared = new Map<number, number>();
   model.groups.forEach((grp, g) => {
     // In seconds, like the slot row this bound must not contradict (SPEC.md section 3).
-    const byTime = grp.timeSeconds > 0 ? maxLaunches(model.timeCapacitySeconds, grp.timeSeconds) : UNBOUNDED_PER_SLOT;
+    const byTime = grp.timeSeconds > 0 ? maxLaunches(model.timeCapacitySeconds, grp.timeSeconds) : Infinity;
     if (boundsFollowFromRows(grp, model.timeCapacitySeconds)) {
       let c = shared.get(grp.timeSeconds);
       if (c === undefined) {
@@ -55,7 +55,7 @@ function durationClasses(model: Model): Pick<Layout, 'classes' | 'classOf' | 'cl
     } else {
       classOf[g] = classSeconds.length;
       classSeconds.push(grp.timeSeconds);
-      classCap.push(Math.max(0, Math.min(grp.cap, byTime, UNBOUNDED_PER_SLOT)));
+      classCap.push(Math.max(0, Math.min(grp.cap, byTime)));
     }
   });
   return { classes: classSeconds.length, classOf, classSeconds, classCap };
@@ -116,6 +116,15 @@ function scaleBound(bound: number, scale: number): number {
   return scaled;
 }
 
+// A row whose own coefficients span more than HiGHS's ingestion window. No scale can write it, so the
+// model is not built; `solve.ts` catches exactly this class and falls back to its MILP-free plan.
+export class RowRangeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RowRangeError';
+  }
+}
+
 class Rows {
   private readonly names: string[] = [];
   private readonly offsets: number[] = [];
@@ -158,15 +167,22 @@ class Rows {
     if (entries.length === 0) return;
     entries.sort((a, b) => a[0] - b[0]);
 
+    // Up when the smallest entry is under the safe floor, down when the largest is over the safe ceiling:
+    // either way the row's bounds are scaled with it, so the constraint is the same one.
     const headroom = largest > 0 ? SAFE_LARGE_COEFFICIENT / largest : Infinity;
-    const scale = smallest < SAFE_COEFFICIENT ? Math.max(1, Math.min(1 / smallest, headroom)) : 1;
+    const scale =
+      smallest < SAFE_COEFFICIENT
+        ? Math.max(1, Math.min(1 / smallest, headroom))
+        : largest > SAFE_LARGE_COEFFICIENT
+          ? Math.min(1, Math.max(headroom, SAFE_COEFFICIENT / smallest))
+          : 1;
 
     // The check is on the entries as HiGHS will read them, not on how many there are: a row whose own
     // dynamic range is wider than the window cannot be written at any scale, and handing it over anyway
     // deletes its smallest terms silently — a budget row losing its coefficients stops budgeting, with
     // nothing anywhere saying so.
     if (smallest * scale <= SMALL_MATRIX_VALUE || largest * scale >= LARGE_MATRIX_VALUE) {
-      throw new Error(
+      throw new RowRangeError(
         `row ${name} spans ${smallest * scale} to ${largest * scale} after scaling, outside ` +
           `HiGHS's ingestion window (${SMALL_MATRIX_VALUE}, ${LARGE_MATRIX_VALUE})`
       );
@@ -266,6 +282,13 @@ function buildCore(model: Model, qs: readonly number[], theta: readonly number[]
     rows.end(-INF, 1);
   }
 
+  // The total gem cap, normalized like the fuel rows: one launch of a group draws `gemFraction` of it.
+  if (Number.isFinite(model.gemBudget)) {
+    rows.begin('gem');
+    for (let g = 0; g < layout.groups; g++) rows.add(layout.groupTotalBase + g, model.groups[g].gemFraction);
+    rows.end(-INF, 1);
+  }
+
   if (Number.isFinite(model.craftBudgetCapacity)) {
     rows.begin('price');
     for (let p = 0; p < layout.crafts; p++) rows.add(layout.craftBase + p, model.craftPrices[p]);
@@ -329,30 +352,49 @@ export function scaleLps(model: Model, qs: readonly number[]): (t: number) => Mi
   };
 }
 
+// Past this score a target is certain to the judge's resolution: g(30) = log(1 - e^-30) ~ -9e-14 nats,
+// below `EXACT_PRECISION.gapTol`. A grid anchored on a theta far above it puts every tangent where g is
+// flat to the last bit, the empty plan and the saturating one score the same, and HiGHS may return either
+// (SOL-01/02/03). So the grid's unit is theta capped here, which leaves every theta at or under it exactly
+// as before. SPEC.md section 4.
+export const SCORE_CEILING = 30;
+
+// The unit sigma is measured in, per target: the scale LP's theta, capped at `SCORE_CEILING`.
+export function oaUnits(theta: readonly number[]): number[] {
+  return theta.map(th => Math.min(th, SCORE_CEILING));
+}
+
+// `extraSigmas[t]` adds tangents for target t at those points (in the same units as `sigmaGrid`), which
+// is how `solve.ts` refines the envelope at an incumbent. Points outside (0, Infinity) are skipped.
 export function buildOaMilp(
   model: Model,
   qs: readonly number[],
   theta: readonly number[],
-  sigmaGrid: readonly number[]
+  sigmaGrid: readonly number[],
+  extraSigmas: readonly (readonly number[])[] = []
 ): MilpModel {
-  const core = buildCore(model, qs, theta, 'oa');
+  const units = oaUnits(theta);
+  const core = buildCore(model, qs, units, 'oa');
   const { layout, rows } = core;
 
   for (let t = 0; t < layout.targets; t++) {
-    for (let j = 0; j < sigmaGrid.length; j++) {
-      const gridPoint = sigmaGrid[j];
-      const s = theta[t] * gridPoint;
+    const points = [...sigmaGrid, ...(extraSigmas[t] ?? [])];
+    for (let j = 0; j < points.length; j++) {
+      const gridPoint = points[j];
+      const s = units[t] * gridPoint;
       if (!(s > 0) || !Number.isFinite(s)) continue;
-      const slope = theta[t] * slopeAt(s);
+      const slope = units[t] * slopeAt(s);
       const rhs = logHit(s) - slope * gridPoint;
       if (!Number.isFinite(slope) || !Number.isFinite(rhs)) continue;
       rows.begin(`cut_t${t}_${j}`);
       rows.add(layout.envelopeBase + t, 1);
       // Dropped here rather than by HiGHS at ingestion, which is where it went before and said nothing:
       // past s ~ 400 the slope underflows next to the unit coefficient above and the row leaves the
-      // window `Rows.end` now enforces. Sound because sigma <= 1, so the term is worth at most `slope`
-      // nats across the whole feasible range and the cut it leaves is the same tangent held flat — which
-      // may sit under g by that much, a thousandth of the envelope error the grid already carries.
+      // window `Rows.end` now enforces. With the unit capped at `SCORE_CEILING` and every point in (0, 1]
+      // (`solve.ts` adds no refinement point above 1), the smallest slope written is
+      // SCORE_CEILING / expm1(SCORE_CEILING) ~ 2.8e-12, so this is a guard for a caller's own grid rather
+      // than a path the default one takes. Where it does fire, the cut is the tangent held flat, which sits
+      // under it by at most `slope * sigma`.
       if (slope >= FLAT_CUT_SLOPE) rows.add(layout.scoreBase + t, -slope);
       rows.end(-INF, rhs);
     }
