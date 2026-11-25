@@ -71,6 +71,11 @@ export interface ProbabilityFields {
   dropProbability: number;
 }
 
+// 1 - exp(logMiss) for logMiss <= 0, with a positive zero where nothing can miss: `-Math.expm1(0)` is -0.
+function hitOf(logMiss: number): number {
+  return logMiss < 0 ? -Math.expm1(logMiss) : 0;
+}
+
 export function craftsToProbability(
   craftCount: number,
   legendaryYield: Map<string, number>,
@@ -84,17 +89,19 @@ export function craftsToProbability(
   const node = recipeDag.get(root);
   const pCraft = node?.legendaryCraftProbability ?? 0;
 
+  // Every probability here is 1 - exp(-x) for some x >= 0, so each is computed as -expm1(-x) off the
+  // log of its miss probability, as `logHit` is: `1 - exp(...)` cancels to a few digits at the ~1e-13
+  // probabilities the judge resolves, and the card would then print a figure the judge never graded.
   const crafts = craftCount > 0 ? craftCount : 0;
-  let craftProbability = 0;
-  if (pCraft > 0 && crafts > 0) {
-    if (pCraft >= 1) craftProbability = 1;
-    else craftProbability = 1 - Math.exp(crafts * Math.log(1 - pCraft));
-  }
+  const certainCraft = pCraft >= 1 && crafts > 0;
+  const logCraftMiss = pCraft > 0 && crafts > 0 && !certainCraft ? crafts * Math.log1p(-pCraft) : 0;
+  const craftProbability = certainCraft ? 1 : hitOf(logCraftMiss);
 
   const lambda = legendaryYield.get(root) ?? 0;
-  const dropProbability = lambda > 0 ? 1 - Math.exp(-lambda) : 0;
+  const logDropMiss = lambda > 0 ? -lambda : 0;
+  const dropProbability = hitOf(logDropMiss);
 
-  const bestProbability = 1 - (1 - craftProbability) * (1 - dropProbability);
+  const bestProbability = certainCraft ? 1 : hitOf(logCraftMiss + logDropMiss);
 
   return { bestProbability, craftProbability: craftProbability, dropProbability };
 }

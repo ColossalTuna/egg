@@ -42,6 +42,13 @@ export interface PlanProblem {
   readonly ownedStock: ReadonlyMap<string, number>;
   // Optional cap on the plan's craft cost in golden eggs; absent means unconstrained.
   readonly craftBudget?: CraftBudget;
+  // Optional cap on the TOTAL gem cost of every launch in the plan: the sum over options of
+  // `allocation[i] * options[i].cost` may not exceed it. Absent means no total cap, which is what
+  // every caller predating it gets. It is a budget like the others above, so a NaN or negative value
+  // normalizes to 0 (only free launches), and so does `Infinity`: "unlimited" is spelled by leaving it
+  // out. A per-ship price ceiling is a different thing and stays a filter on the menu, upstream.
+  // With a cap present, an option whose `cost` is not a finite non-negative number is dropped.
+  readonly gemBudget?: number;
 }
 
 // A problem that has been through `normalizeProblem`: its axes are materialized, so nothing
@@ -74,6 +81,7 @@ export function normalizeProblem(problem: PlanProblem): NormalizedProblem {
     fuelCapacity: capacityOf(problem.fuelCapacity),
     fuelAxes: axes.length > 0 ? axes.map(ax => ({ egg: ax.egg, capacity: capacityOf(ax.capacity) })) : [EMPTY_TANK],
     timeCapacityPerSlot: capacityOf(problem.timeCapacityPerSlot),
+    gemBudget: problem.gemBudget === undefined ? undefined : capacityOf(problem.gemBudget),
   };
 }
 

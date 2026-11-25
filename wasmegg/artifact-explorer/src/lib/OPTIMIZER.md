@@ -1,6 +1,7 @@
 # The Path of Virtue mission optimizer
 
-Given a set of budgets and game state (player's ships, a fuel budget, a per-slot time horizon, etc.), the optimizer
+Given a set of budgets and game state (player's ships, a fuel budget, a per-slot time horizon, an optional total
+gem budget for every launch in the plan, etc.), the optimizer
 picks integer counts of each launch option so as to maximize the chance of ending
 up with a legendary of **every** artifact the player selected.
 
@@ -59,9 +60,18 @@ plan's drop rates. If you change anything about the tangent grid, this is the
 property to preserve: an over-estimate reorders candidates slightly, whereas
 letting the approximation leak into a reported figure would make the tool lie.
 
+The grid sits in units of each target's own ceiling theta, capped at a score of 30,
+past which $g$ is flat to the judge's resolution (`SPEC.md` section 4). Without
+the cap, a target that saturates easily put every tangent where $g$ is flat, and
+the search could not tell the empty plan from a certain one. With more than one
+target, a few refinement rounds then add a tangent at the incumbent wherever the
+envelope over-states it, and keep the best judged plan (`SPEC.md` section 5).
+
 ## Search structure
 
-`optimizeFull` states the whole problem as one MILP and hands it to HiGHS. The model,
+`optimizeFull` states the whole problem as one MILP and hands it to HiGHS, re-solving
+it with a tighter envelope for up to four rounds when there are several targets.
+A HiGHS failure propagates as an error rather than reading as an empty plan. The model,
 the outer approximation and HiGHS's own numeric traps are in
 `src/lib/solver/SPEC.md`; the judge's simplex has a separate set, in the header of
 `src/lib/solver/simplex.ts`. What follows is only what a reader of this file needs.
@@ -80,7 +90,7 @@ budgets didn't fully resolve the invariants, so the current deployment was
 tuned to balance runtime with the frequency and severity of the violations. But
 there is a latent mechanism the sweep does not isolate from that explanation:
 the per-target scale $\theta_t$ is an LP maximum computed _subject to the
-budgets_, and the tangent grid is placed in units of theta, so changing a
+budgets_, and the tangent grid is placed in units of theta (capped at 30), so changing a
 budget re-approximates the objective rather than merely enlarging the feasible
 set. How much of the observed violation each mechanism accounts for is open, and
 the A1/A2 monotonicity invariants are not theorems even at proven optimality until
