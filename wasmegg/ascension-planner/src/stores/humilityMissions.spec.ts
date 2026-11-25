@@ -13,7 +13,8 @@ import { simulate } from 'lib/planners/engine/simulate';
 import { resetAllStores } from '@/lib/modes';
 import { exportPlanData, importPlanLogic } from '@/stores/actions/io';
 import { useHumilityMissionsStore } from '@/stores/humilityMissions';
-import { createEmptySnapshot } from '@/types';
+import { useActionsStore } from '@/stores/actions';
+import { createEmptySnapshot, createSimAction } from '@/types';
 import type { Action } from '@/types';
 
 const TAG = 'humility-plan:shift_a1b2c3d';
@@ -64,5 +65,48 @@ describe('switching plans', () => {
 
     expect(store.file).toBeNull();
     expect(store.drift).toEqual([]);
+  });
+});
+
+describe('checking the loaded file against the plan', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  it('assesses the file against the plan in the actions store, and stages with its warnings kept', async () => {
+    const fixture = new URL('../../../artifact-explorer/tests/fixtures/humility-missions.json', import.meta.url);
+    const store = useHumilityMissionsStore();
+    store.load(JSON.parse(readFileSync(fixture, 'utf8')));
+    // The empty plan has none of the file's visits.
+    expect(store.assessment?.matches).toBe(false);
+    expect(store.assessment?.mismatch).toMatch(/None of its visits/);
+
+    const actions = useActionsStore();
+    const snapshot = { ...createEmptySnapshot(), tankLevel: 7 };
+    actions._initialSnapshot = snapshot;
+    actions.actions = simulate(
+      [
+        createSimAction('start_ascension', { initialEgg: 'curiosity' }),
+        { ...createSimAction('shift', { fromEgg: 'curiosity', toEgg: 'humility', newShiftCount: 0 }), id: 'h1' },
+        createSimAction('modify_bank', { mode: 'set', amount: 1e60, previousValue: 0, delta: 1e60 }),
+      ],
+      getSimulationContext(),
+      createBaseEngineState(snapshot)
+    );
+    expect(store.planState.ids).toEqual(['h1']);
+    await store.stage({
+      visitId: 'h1',
+      visitIndex: 0,
+      label: 'H1',
+      jointProbability: 0.5,
+      launches: [{ ship: 'CHICKEN_ONE', duration: 'SHORT', targetAfxId: 0, count: 3 }],
+      makespanSeconds: 1200,
+      fuelRequired: {},
+      gemCost: 0,
+      gemBudget: 1,
+      epicResearchFTLLevel: 60,
+    });
+    expect(store.warnings).toEqual([expect.stringMatching(/FTL level 60/)]);
+    expect(store.planState.staged?.has('h1')).toBe(true);
+    store.clear();
+    expect(store.warnings).toEqual([]);
   });
 });

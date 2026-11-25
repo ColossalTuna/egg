@@ -12,7 +12,10 @@ import {
   fileMatchesPlan,
   humilityVisitIds,
   parseHumilityMissions,
+  planVisitBases,
+  planVisitState,
   stageableVisitIds,
+  visitPositionLabel,
   type HumilityMissionsVisit,
 } from '../../../ascension-planner/src/lib/humilityMissions';
 import { stageHumilityVisit } from '../../../ascension-planner/src/lib/humilityMissionsStage';
@@ -39,6 +42,9 @@ function start(): Action {
 }
 function bank(amount: number, id = 'bank'): Action {
   return { ...createSimAction('modify_bank', { mode: 'set', amount, previousValue: 0, delta: amount }), id };
+}
+function wait(totalTimeSeconds: number, id = 'wait'): Action {
+  return { ...createSimAction('wait_for_time', { totalTimeSeconds }), id };
 }
 const sim = (actions: Action[]) => simulate(actions, ctx(), baseState());
 
@@ -67,22 +73,31 @@ function file(visits: HumilityMissionsVisit[]) {
   });
 }
 
+// SEAM-14 and SEAM-15 rewritten with the KP fix. An id list cannot tell two plans with the same ids apart, so
+// the check now reads the plan itself (`planVisitState`) against the visit inputs the explorer records in the file
+// (`basis`, written by K4). The edits are now ones those inputs see: under the K4 reader the budget is the bank on
+// arrival plus earnings over the window, so a bank set after arrival alone does not change the question the file
+// answers. The edited plans therefore also spend a day on Humility before the launch.
 describe('SEAM-14: visitId is the only staleness check', () => {
-  it('refuses to stage when the plan was edited after export but the ids survive', () => {
-    // Plan A is what was exported; plan B keeps every action id but the Humility visit's bank was edited.
-    const exported = sim([start(), shift('humility', 'h1'), bank(1e60)]);
-    const edited = sim([start(), shift('humility', 'h1'), bank(1)]);
-    const f = file([visit({ gemBudget: 1e60 })]);
+  const exportedPlan = () => sim([start(), shift('humility', 'h1'), bank(1e60)]);
+  const editedPlan = () => sim([start(), shift('humility', 'h1'), bank(1), wait(86400)]);
+  const solved = () => visit({ gemBudget: 1e60, basis: planVisitBases(exportedPlan()).get('h1')! });
 
-    expect(humilityVisitIds(edited)).toEqual(humilityVisitIds(exported)); // same ids: the only thing checked
-    // BREAKAGE SEAM-14: an edited plan must not be stageable, but the id-only check accepts it.
-    expect([...stageableVisitIds(f, humilityVisitIds(edited))]).toEqual([]);
+  it('refuses to stage when the plan was edited after export but the ids survive', () => {
+    const exported = exportedPlan();
+    const edited = editedPlan();
+    const f = file([solved()]);
+
+    expect(humilityVisitIds(edited)).toEqual(humilityVisitIds(exported)); // same ids
+    expect([...stageableVisitIds(f, planVisitState(exported))]).toEqual(['h1']); // control
+    // BREAKAGE SEAM-14: an edited plan must not be stageable.
+    expect([...stageableVisitIds(f, planVisitState(edited))]).toEqual([]);
   });
 
   it('refuses to stage into an edited plan (end to end through stageHumilityVisit)', () => {
-    const edited = sim([start(), shift('humility', 'h1'), bank(1)]);
-    // BREAKAGE SEAM-14: the file says the budget was 1e60; the plan only holds 1. Staging should refuse.
-    expect(() => stageHumilityVisit(edited, visit({ gemBudget: 1e60 }), baseState(), ctx())).toThrow();
+    // BREAKAGE SEAM-14: staging should refuse, and say what changed.
+    expect(() => stageHumilityVisit(editedPlan(), solved(), baseState(), ctx())).toThrow(/time already planned/);
+    expect(() => stageHumilityVisit(exportedPlan(), solved(), baseState(), ctx())).not.toThrow();
   });
 });
 
@@ -90,12 +105,14 @@ describe('SEAM-15: plans loaded from one save share action ids', () => {
   it('a file does not load into a plan that was edited after import', () => {
     const original = [start(), shift('kindness', 'k1'), shift('humility', 'h1'), bank(1e60)];
     // "Import twice": the same JSON yields the same ids. Copy B is then edited (bank, plus an extra Humility wait).
-    const copyB = sim(
-      JSON.parse(JSON.stringify(original)).map((a: Action) => (a.type === 'modify_bank' ? bank(5, a.id) : a))
-    );
-    const f = file([visit()]);
+    const copyB = sim([
+      ...JSON.parse(JSON.stringify(original)).map((a: Action) => (a.type === 'modify_bank' ? bank(5, a.id) : a)),
+      wait(3600),
+    ]);
+    const f = file([visit({ basis: planVisitBases(sim(original)).get('h1')! })]);
+    expect(fileMatchesPlan(f, planVisitState(sim(original)))).toBe(true); // control
     // BREAKAGE SEAM-15: the edited copy is a different plan, yet the file matches and stages.
-    expect(fileMatchesPlan(f, humilityVisitIds(copyB))).toBe(false);
+    expect(fileMatchesPlan(f, planVisitState(copyB))).toBe(false);
   });
 });
 
@@ -124,15 +141,16 @@ describe('SEAM-19: help text says a different plan will not load the file', () =
   });
 });
 
+// Rewritten with the KP fix: the component now labels a visit with `visitPositionLabel`, its place in the plan as
+// it is now, so the test checks the component calls it and that it names the right position.
 describe('SEAM-16: label drifts after inserting a visit', () => {
-  it("H-label from the file's visitIndex and the plan's current count names the wrong position", () => {
-    // Mirror of HumilityMissionsImport.vue visitName(): `H${visit.visitIndex + 1} of ${planVisitIds.length}`.
+  it("H-label names the visit's current position in the plan", () => {
     const src = readFileSync(
       new URL('../../../../ui/components/planners/actions/rockets/HumilityMissionsImport.vue', import.meta.url).pathname,
       'utf8'
     );
-    expect(src).toContain('return `H${visit.visitIndex + 1} of ${planVisitIds.value.length}`;');
-    const visitName = (v: HumilityMissionsVisit, ids: string[]) => `H${v.visitIndex + 1} of ${ids.length}`;
+    expect(src).toContain('return visitPositionLabel(visit, planVisitIds.value);');
+    expect(src).not.toContain('return `H${visit.visitIndex + 1} of ${planVisitIds.value.length}`;');
 
     const f = file([visit(), visit({ visitId: 'h2', visitIndex: 1, label: 'H2' })]);
     // The user inserts a new Humility visit before h1 in AP.
@@ -149,8 +167,9 @@ describe('SEAM-16: label drifts after inserting a visit', () => {
     expect(ids).toEqual(['new', 'h1', 'h2']);
     const h1 = f.visits[0];
     const actualPosition = ids.indexOf(h1.visitId) + 1;
-    // BREAKAGE SEAM-16: label should say H2 of 3 (its place now), it says H1 of 3.
-    expect(visitName(h1, ids)).toBe(`H${actualPosition} of ${ids.length}`);
+    // BREAKAGE SEAM-16: label should say H2 of 3 (its place now), not H1 of 3.
+    expect(visitPositionLabel(h1, ids)).toBe(`H${actualPosition} of ${ids.length}`);
+    expect(visitPositionLabel(f.visits[1], ids)).toBe('H3 of 3');
   });
 });
 

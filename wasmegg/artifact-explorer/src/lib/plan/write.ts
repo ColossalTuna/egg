@@ -1,5 +1,7 @@
-// Project solved visits into the humility missions file. OptimizerSolution contains Maps
-// that JSON.stringify would lose; export only the fields the planner needs.
+// Project solved visits into the humility missions file. OptimizerSolution contains Maps that
+// JSON.stringify would lose, so the file is a plain-data projection of it. Not every field is read by
+// the planner: `targets`, `rawMakespanSeconds` and `effort` describe the answer for a reader of the
+// file, and `epicResearchFTLLevel` and `basis` let the planner check the plan still matches the solve.
 
 import { ei, getArtifactTierPropsFromId } from 'lib';
 
@@ -8,12 +10,14 @@ import type { OptimizerSolution } from '@/lib/types';
 import type { HumilityVisit } from './read';
 import {
   durationEnumName,
+  GEM_BUDGET_UNLIMITED,
   HUMILITY_MISSIONS_SCHEMA,
   HUMILITY_MISSIONS_SCHEMA_VERSION,
   type HumilityMissionsFile,
   type HumilityMissionsLaunch,
   type HumilityMissionsTarget,
   type HumilityMissionsVisit,
+  type HumilityMissionsVisitBasis,
   NON_HUMILITY_EGG_IDS,
   spaceshipEnumName,
   type VirtueEgg,
@@ -79,13 +83,37 @@ function targetsOf(solution: OptimizerSolution): HumilityMissionsTarget[] {
   }));
 }
 
+// See `HumilityMissionsVisit.gemBudget`: a total, always finite. No limit (undefined or +Infinity)
+// is written as GEM_BUDGET_UNLIMITED; an unreadable or negative figure as 0, so the importer's
+// `gemCost > gemBudget` check flags it rather than passing it.
+function gemBudgetOf(gemBudget: number | undefined): number {
+  if (gemBudget === undefined || gemBudget === Infinity) return GEM_BUDGET_UNLIMITED;
+  if (!(gemBudget >= 0)) return 0;
+  return Math.min(gemBudget, GEM_BUDGET_UNLIMITED);
+}
+
+function basisOf(visit: HumilityVisit): HumilityMissionsVisitBasis {
+  const fuelByEgg: Partial<Record<VirtueEgg, number>> = {};
+  for (const [name, id] of NON_HUMILITY_EGG_IDS) fuelByEgg[name] = visit.fuelByEgg?.get(id) ?? 0;
+  return {
+    bankValue: visit.bankValue,
+    earningsPerSecond: visit.earningsPerSecond,
+    tankLevel: visit.tankLevel,
+    plannedDurationSeconds: visit.plannedDurationSeconds,
+    fuelByEgg,
+  };
+}
+
 export function projectSolvedVisit(args: {
   visit: HumilityVisit;
   solution: OptimizerSolution;
   effort: string;
-  gemBudget: number;
+  // The visit's TOTAL gem budget the solve ran under; undefined when it ran with no gem limit.
+  gemBudget: number | undefined;
+  // The FTL level the solve priced durations at. Defaults to the visit's own level.
+  epicResearchFTLLevel?: number;
 }): HumilityMissionsVisit {
-  const { visit, solution, effort, gemBudget } = args;
+  const { visit, solution, effort } = args;
   const { launches, gemCost } = aggregateLaunches(solution);
   return {
     visitId: visit.visitId,
@@ -98,8 +126,10 @@ export function projectSolvedVisit(args: {
     rawMakespanSeconds: solution.runningTimeSeconds,
     fuelRequired: fuelRequiredOf(solution),
     gemCost,
-    gemBudget,
+    gemBudget: gemBudgetOf(args.gemBudget),
     effort,
+    epicResearchFTLLevel: args.epicResearchFTLLevel ?? visit.epicResearchFTLLevel,
+    basis: basisOf(visit),
   };
 }
 

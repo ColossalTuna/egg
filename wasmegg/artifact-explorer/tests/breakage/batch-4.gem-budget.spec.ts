@@ -79,8 +79,12 @@ describe('SEAM-05: gemBudget is the cap the solve used', () => {
   });
 });
 
+// Rewritten with the KP fix. Per the contract (section 2) gemBudget is now the visit's TOTAL gem budget, so AP's
+// `gemCost > gemBudget` warning is a real invariant check and stays, reworded as totals. The old test asserted the
+// "plan budget" wording and a fixture whose visit 0 cost more than its (then per-ship) budget; K4 rewrote the
+// fixture with total budgets, so that precondition no longer holds either.
 describe('SEAM-06: AP reads gemBudget as a total', () => {
-  it('AP shows no "plan budget" warning for the fixture, whose visit 0 is a valid answer', () => {
+  it('AP warns only when the total cost is over the total budget, and says so in totals', () => {
     const src = readFileSync(
       new URL('../../../../ui/components/planners/actions/rockets/HumilityMissionsImport.vue', import.meta.url).pathname,
       'utf8'
@@ -88,11 +92,17 @@ describe('SEAM-06: AP reads gemBudget as a total', () => {
     const cond = /<p v-if="(visit\.gemCost > visit\.gemBudget)"/.exec(src);
     expect(cond).not.toBeNull();
     const warns = (visit: unknown) => new Function('visit', `return ${cond![1]};`)(visit) as boolean;
-    const v0 = fixture('humility-missions.json').visits[0];
-    expect(v0.gemCost).toBeGreaterThan(v0.gemBudget); // 3.77e39 > 2.33e39
-    // The warning text AP shows for it:
-    expect(src).toContain('plan budget:');
-    // BREAKAGE SEAM-06: valid fixture output still triggers the warning.
-    expect(warns(v0)).toBe(false);
+    // BREAKAGE SEAM-06: valid explorer output must not trigger the warning.
+    for (const v of fixture('humility-missions.json').visits) {
+      expect(v.gemCost).toBeLessThanOrEqual(v.gemBudget);
+      expect(warns(v)).toBe(false);
+    }
+    // An answer over its total budget is a broken invariant, and is still flagged.
+    expect(warns({ gemCost: 2, gemBudget: 1 })).toBe(true);
+    // The no-limit sentinel never trips it.
+    expect(warns({ gemCost: 1e300, gemBudget: Number.MAX_VALUE })).toBe(false);
+    expect(src).not.toContain('plan budget:');
+    expect(src).not.toContain('Purchase limits apply per ship');
+    expect(src).toMatch(/in total, more than its total gem budget/);
   });
 });

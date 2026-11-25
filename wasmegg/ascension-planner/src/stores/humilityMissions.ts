@@ -6,15 +6,18 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 
 import {
+  assessFile,
   fuelDrift,
   parseHumilityMissions,
   resolveLaunches,
+  type FileAssessment,
   type FuelDrift,
   type HumilityMissionsFile,
   type HumilityMissionsVisit,
+  type PlanVisitState,
 } from '@/lib/humilityMissions';
 import { fuelForLaunches } from 'lib/planners/rockets/launches';
-import { humilitySourceTag, stageHumilityVisit, type StageOptions } from '@/lib/humilityMissionsStage';
+import { humilitySourceTag, importPlanState, stageHumilityVisit, type StageOptions } from '@/lib/humilityMissionsStage';
 import { createBaseEngineState, getSimulationContext } from 'lib/planners/engine/adapter';
 import { useActionsStore } from './actions';
 import { useInitialStateStore } from './initialState';
@@ -23,16 +26,35 @@ import { computeSnapshot } from 'lib/planners/engine/compute';
 export const useHumilityMissionsStore = defineStore('humilityMissions', () => {
   const file = ref<HumilityMissionsFile | null>(null);
   const drift = ref<FuelDrift[]>([]);
+  /** What the last staging warned about, e.g. an FTL level that differs from the solve's. */
+  const warnings = ref<string[]>([]);
 
   function load(json: unknown) {
     file.value = parseHumilityMissions(json);
     drift.value = [];
+    warnings.value = [];
   }
 
   function clear() {
     file.value = null;
     drift.value = [];
+    warnings.value = [];
   }
+
+  /** The plan's Humility visits and the inputs it gives each, as the file is checked against them. */
+  const planState = computed<PlanVisitState>(() => {
+    const actionsStore = useActionsStore();
+    return importPlanState(
+      actionsStore.actions,
+      getSimulationContext(),
+      createBaseEngineState(actionsStore._initialSnapshot)
+    );
+  });
+
+  /** Which of the file's visits can be staged, and why not for the rest. */
+  const assessment = computed<FileAssessment | null>(() =>
+    file.value ? assessFile(file.value, planState.value) : null
+  );
 
   const stagedTags = computed(() => {
     const tags = new Set<string>();
@@ -69,7 +91,8 @@ export const useHumilityMissionsStore = defineStore('humilityMissions', () => {
     }
     actionsStore.replaceSimulatedActions(replacement.actions, initialSnapshot);
     drift.value = fuelDrift(visit, fuelForLaunches(resolveLaunches(visit)));
+    warnings.value = replacement.warnings;
   }
 
-  return { file, drift, load, clear, isStaged, stage };
+  return { file, drift, warnings, planState, assessment, load, clear, isStaged, stage };
 });

@@ -6,7 +6,8 @@ import { projectSolvedVisit } from '@/lib/plan/write';
 import type { HumilityVisit } from '@/lib/plan/read';
 import type { OptimizerSolution } from '@/lib/types';
 import { launchSchedule, resolveLaunches } from '@planner/lib/humilityMissions';
-import { plan, stageAt, visitOf } from './batch-3.helpers';
+import { stageHumilityVisit } from '@planner/lib/humilityMissionsStage';
+import { baseState, contextAt, plan, stageAt, visitOf } from './batch-3.helpers';
 
 beforeEach(() => setActivePinia(createPinia()));
 
@@ -20,11 +21,21 @@ describe('SEAM-08 FTL edited after export', () => {
     expect(launch.totalTimeSeconds).toBeCloseTo(makespanSeconds, 3);
   });
 
+  // Rewritten with the KP fix. The contract (FTL mismatch: warn, do not refuse) rules out the old
+  // `toThrow()`; the test's own note allowed "a warning/recorded FTL", which is what is checked now.
   it('staging at a different FTL than the file was solved at is not silent (BREAKAGE SEAM-08)', () => {
     const makespanSeconds = launchSchedule(resolveLaunches(visitOf({ launches })), 55).totalSeconds;
-    const v = visitOf({ launches, makespanSeconds });
-    // BREAKAGE SEAM-08: expected an error (or a warning/recorded FTL); actual is a quiet 2.2x longer launch.
-    expect(() => stageAt(0, plan(), v)).toThrow();
+    // A file that records its FTL: staged anyway, with a warning naming both levels.
+    const recorded = visitOf({ launches, makespanSeconds, epicResearchFTLLevel: 55 });
+    const staged = stageHumilityVisit(plan(), recorded, baseState(), contextAt(0));
+    expect(staged.actions.some(a => a.type === 'launch_missions')).toBe(true);
+    // BREAKAGE SEAM-08
+    expect(staged.warnings.join(' ')).toMatch(/FTL level 55.*FTL level 0/);
+    // An older file without the field: the 2.2x longer launch is still reported, not quiet.
+    const older = stageHumilityVisit(plan(), visitOf({ launches, makespanSeconds }), baseState(), contextAt(0));
+    expect(older.warnings.join(' ')).toMatch(/longer than .* solved H1 for.*another FTL level/);
+    // And no warning at the level the file was solved at.
+    expect(stageHumilityVisit(plan(), recorded, baseState(), contextAt(55)).warnings).toEqual([]);
   });
 
   it('the writer records the FTL the visit was solved at (BREAKAGE SEAM-08)', () => {

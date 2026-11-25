@@ -1,7 +1,10 @@
 // Read Humility visits and their budgets from ascension-planner snapshots.
 // Earnings use the visit and pre-arrival snapshots; see earningsRateOf.
 
-import { ei } from 'lib';
+import { ei, fuelTankSizes } from 'lib';
+import { importedPlanName } from 'lib/planners/utils/export';
+
+import { MAX_FTL_LEVEL, MAX_ZEROG_LEVEL } from '@/lib/missions';
 
 import {
   AP_FTL_RESEARCH_ID,
@@ -9,12 +12,16 @@ import {
   NON_HUMILITY_EGG_IDS,
   type PlanSave,
   type PlanSaveAction,
+  STAGED_SOURCE_TAG_PREFIX,
   SUPPORTED_PLAN_SAVE_VERSION,
 } from './schema';
 
 export interface HumilityVisit {
-  // The id of the action that entered Humility. The join key AP matches on when the answer comes
-  // back, and the only staleness check there is.
+  // The id of the action that entered Humility: the join key AP matches on when the answer comes
+  // back. Always a nonempty string, unique within the plan. An action whose id is not one (a number,
+  // an empty string, or a repeat of an earlier visit's id, none of which AP itself writes) gets a
+  // derived id instead; AP will not find that id in its plan and reports the visit as not stageable,
+  // rather than rejecting the whole file.
   visitId: string;
   visitIndex: number;
   label: string;
@@ -25,11 +32,15 @@ export interface HumilityVisit {
   arrivalTimestamp: number | null;
   // Time the plan spends on Humility after arriving. Zero is normal and means the plan has
   // nothing scheduled there yet, which is exactly when a player comes here. The visit page takes
-  // a manual budget in that case.
+  // a manual budget in that case. Actions AP inserted when it staged an earlier answer (tagged
+  // `humility-plan:`) are not counted, so re-loading a staged plan poses the same question again.
   plannedDurationSeconds: number;
 
-  // Per-egg fuel banked in the tank on arrival, Humility excluded.
+  // Per-egg fuel in the tank at the point AP inserts the launch: the end of the visit's last
+  // untagged Humility action, so a `store_fuel` / `remove_fuel` during the visit is seen. Humility
+  // excluded.
   fuelByEgg: Map<ei.Egg, number>;
+  // An index into `fuelTankSizes`: an integer, checked to be in range.
   tankLevel: number;
   // What the plan holds the moment it lands on Humility, which is nothing: shifting zeroes the
   // bank. Everything the visit has to spend is therefore earned during it.
@@ -38,8 +49,11 @@ export interface HumilityVisit {
   // `earningsRateOf`.
   earningsPerSecond: number;
 
-  epicResearchFTLLevel: number;
-  epicResearchZerogLevel: number;
+  // The plan's epic research, checked against the game caps (FTL 0..60, Zero-G 0..10). Undefined
+  // when the plan does not say (AP omits `epicResearchLevels` on a save with none bought, and a
+  // key can be missing): the save's or the typed figure then applies, never a fabricated zero.
+  epicResearchFTLLevel?: number;
+  epicResearchZerogLevel?: number;
 }
 
 export class PlanSaveError extends Error {}
@@ -71,8 +85,12 @@ export function planEnvelopeName(json: unknown): string | undefined {
   return name === '' ? undefined : name;
 }
 
+// The label AP requires to be a nonempty string, so a filename with nothing left once its
+// `.json` / `.json.gz` / `.gz` is gone falls back to this.
+export const FALLBACK_PLAN_LABEL = 'ascension-plan';
+
 export function planLabelFor(json: unknown, filename: string): string {
-  return planEnvelopeName(json) ?? filename.replace(/\.json$/i, '');
+  return planEnvelopeName(json) ?? (importedPlanName(filename.trim()).trim() || FALLBACK_PLAN_LABEL);
 }
 
 // Validated rather than cast: the file is picked by the user and a missing `endState` further in
@@ -151,6 +169,46 @@ function requireNumber(value: unknown, field: string, actionId: string): number 
   return value;
 }
 
+// An epic research level the plan states, or undefined when it says nothing.
+function epicResearchLevel(save: PlanSave, id: string, max: number): number | undefined {
+  const levels: unknown = save.initialState.epicResearchLevels;
+  if (levels === undefined || levels === null) return undefined;
+  if (!isRecord(levels)) throw new PlanSaveError('Plan file has an unreadable `epicResearchLevels`.');
+  const level = levels[id];
+  if (level === undefined) return undefined;
+  if (typeof level !== 'number' || !Number.isInteger(level) || level < 0 || level > max) {
+    throw new PlanSaveError(`Plan file has an invalid epic research level for ${id}: expected 0 to ${max}.`);
+  }
+  return level;
+}
+
+function tankLevelOf(action: PlanSaveAction): number {
+  const level = requireNumber(action.endState.tankLevel, 'tankLevel', action.id);
+  if (!Number.isInteger(level) || level >= fuelTankSizes.length) {
+    throw new PlanSaveError(
+      `Action "${action.id}" has an invalid tankLevel: expected an integer from 0 to ${fuelTankSizes.length - 1}.`
+    );
+  }
+  return level;
+}
+
+function isStaged(action: PlanSaveAction): boolean {
+  return typeof action.sourceTag === 'string' && action.sourceTag.startsWith(STAGED_SOURCE_TAG_PREFIX);
+}
+
+// See `HumilityVisit.visitId`.
+function visitIdFor(action: PlanSaveAction, index: number, taken: Set<string>): string {
+  const raw: unknown = action.id;
+  let id = typeof raw === 'string' && raw.trim() !== '' ? raw : '';
+  if (id === '' || taken.has(id)) {
+    const stem = id === '' ? (typeof raw === 'number' ? `action-${raw}` : 'humility-visit') : id;
+    id = `${stem}#${index + 1}`;
+    for (let n = 2; taken.has(id); n++) id = `${stem}#${index + 1}-${n}`;
+  }
+  taken.add(id);
+  return id;
+}
+
 function secondsOf(action: PlanSaveAction): number {
   return requireNumber(action.totalTimeSeconds, 'totalTimeSeconds', action.id);
 }
@@ -177,13 +235,14 @@ function fuelByEggOf(action: PlanSaveAction): Map<ei.Egg, number> {
 }
 
 export function sliceHumilityVisits(save: PlanSave): HumilityVisit[] {
-  const ftl = save.initialState.epicResearchLevels?.[AP_FTL_RESEARCH_ID] ?? 0;
   // AP has no epic-research action, so epic research is fixed for the whole plan and reading it
   // off the initial state is right at every visit. `store_fuel` / `remove_fuel` do exist, which
   // is why the tank is read per visit instead.
-  const zerog = save.initialState.epicResearchLevels?.[AP_ZEROG_RESEARCH_ID] ?? 0;
+  const ftl = epicResearchLevel(save, AP_FTL_RESEARCH_ID, MAX_FTL_LEVEL);
+  const zerog = epicResearchLevel(save, AP_ZEROG_RESEARCH_ID, MAX_ZEROG_LEVEL);
   const start = ascensionStartSeconds(save);
 
+  const takenIds = new Set<string>();
   const visits: HumilityVisit[] = [];
   let elapsed = 0;
   let current: HumilityVisit | null = null;
@@ -195,13 +254,13 @@ export function sliceHumilityVisits(save: PlanSave): HumilityVisit[] {
     if (onHumility && current === null) {
       const index = visits.length;
       current = {
-        visitId: action.id,
+        visitId: visitIdFor(action, index, takenIds),
         visitIndex: index,
         label: `Humility #${index + 1}`,
         arrivalTimestamp: start === null ? null : start + elapsed + secondsOf(action),
         plannedDurationSeconds: 0,
         fuelByEgg: fuelByEggOf(action),
-        tankLevel: requireNumber(action.endState.tankLevel, 'tankLevel', action.id),
+        tankLevel: tankLevelOf(action),
         bankValue: requireNumber(action.endState.bankValue, 'bankValue', action.id),
         earningsPerSecond: Math.max(earningsRateOf(action), earningsRateOf(previous)),
         epicResearchFTLLevel: ftl,
@@ -210,9 +269,14 @@ export function sliceHumilityVisits(save: PlanSave): HumilityVisit[] {
       visits.push(current);
     } else if (onHumility && current !== null) {
       // Time the plan already spends on Humility after arriving. The departing shift is not part
-      // of the run and so is not counted.
-      current.plannedDurationSeconds += secondsOf(action);
-      current.earningsPerSecond = Math.max(current.earningsPerSecond, earningsRateOf(action));
+      // of the run and so is not counted, and neither is a staged answer's launch and wait.
+      if (!isStaged(action)) {
+        current.plannedDurationSeconds += secondsOf(action);
+        current.earningsPerSecond = Math.max(current.earningsPerSecond, earningsRateOf(action));
+        // AP inserts the launch after the run's last action and checks fuel there, so that is the
+        // tank the solve has to budget against.
+        current.fuelByEgg = fuelByEggOf(action);
+      }
     } else if (!onHumility) {
       current = null;
     }
@@ -224,9 +288,12 @@ export function sliceHumilityVisits(save: PlanSave): HumilityVisit[] {
   return visits;
 }
 
-// Per-ship price limit: arrival bank plus earnings over the chosen duration.
-// This does not cap total spending.
+// The visit's TOTAL gem budget: the bank on arrival plus what the farm earns over the chosen
+// duration, i.e. everything the visit's launches together can spend. Clamped to the largest finite
+// double, so an absurd rate or duration never becomes Infinity (written to JSON as null, which AP
+// rejects).
 export function gemBudgetFor(visit: HumilityVisit, durationSeconds: number): number {
   const seconds = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0;
-  return visit.bankValue + visit.earningsPerSecond * seconds;
+  const budget = visit.bankValue + visit.earningsPerSecond * seconds;
+  return Number.isNaN(budget) ? visit.bankValue : Math.min(budget, Number.MAX_VALUE);
 }
