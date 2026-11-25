@@ -284,14 +284,13 @@ describe('STA-26 arrival dates are never consumed', () => {
   });
 });
 
-describe('STA-28 craft cap comments claim "no cap" for bad capacities', () => {
-  it('normalizeProblem treats NaN / -1 / Infinity craft capacity as no cap rather than throwing', () => {
+describe('STA-28 craft cap comments no longer claim "no cap" for bad capacities', () => {
+  // K5 rewrite (doc-only): the comments in store/schema.ts and store/index.ts now say what the code does.
+  it('normalizeProblem rejects a NaN / -1 / Infinity craft capacity, and the store never produces one', () => {
     for (const capacity of [NaN, -1, Infinity]) {
-      // BREAKAGE STA-28: comments in schema.ts:132 and store/index.ts:561 say these read as "no cap";
-      // normalizeProblem throws instead.
       expect(() =>
         normalizeProblem({ craftBudget: { capacity, unitPrices: new Map() }, fuelCapacity: 1 } as never)
-      ).not.toThrow();
+      ).toThrow();
     }
   });
 });

@@ -403,6 +403,7 @@ import {
   playerShipsConfig,
   playerTankFuels,
   playerTankLevel,
+  clampTankLevel,
   setCraftingLevel,
   setEffort,
   setEpicResearchFTLLevel,
@@ -554,7 +555,12 @@ export default defineComponent({
       const editable = sourceTankLevel.value === null || overrides.value.tankLevel;
       return editable ? extras.value.tankLevel : sourceTankLevel.value;
     });
-    const tankCapacityLabel = computed(() => formatEIValue(fuelTankSizes[shownTankLevel.value] ?? 0, { trim: true }));
+    // A plan visit's own tank is what the budget uses; the override is ignored there (see effectiveFuelTankCapacity).
+    const tankCapacityLabel = computed(() =>
+      formatEIValue(fuelTankSizes[clampTankLevel(activePlanVisit.value?.tankLevel ?? shownTankLevel.value)], {
+        trim: true,
+      })
+    );
 
     // Per-egg amounts to budget against: the plan's bank on arrival at a visit, the save's tank
     // otherwise. Without either there is nothing to budget against and the control would be a dead

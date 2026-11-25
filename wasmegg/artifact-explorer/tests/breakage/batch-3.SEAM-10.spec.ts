@@ -36,15 +36,17 @@ describe('SEAM-10 full-tank budget ignores stored fuel', () => {
     expect(store.effectiveFuelByEggCapacity.value).toBeNull();
     const pooled = store.effectiveFuelTankCapacity.value;
 
-    // The answer fills the pooled budget with integrity: 6000 Quintillion EPIC = 300e12 integrity.
-    const launches = [{ ship: 'MILLENIUM_CHICKEN', duration: 'EPIC', targetAfxId: 0, count: 6000 }];
+    // K5: the pooled budget is the tank less what is stored: 500e12 - 450e12 = 50e12.
+    expect(pooled).toBe(50e12);
+    // The answer fills the pooled budget with integrity: 1000 Quintillion EPIC = 50e12 integrity.
+    const launches = [{ ship: 'MILLENIUM_CHICKEN', duration: 'EPIC', targetAfxId: 0, count: 1000 }];
     const fuel = fuelForLaunches(resolveLaunches(visitOf({ launches })));
-    expect(fuel.integrity).toBe(300e12);
+    expect(fuel.integrity).toBe(50e12);
     expect(fuel.integrity).toBeLessThanOrEqual(pooled);
 
     const base = baseState(7);
     base.fuelTankAmounts.curiosity = 450e12;
-    // BREAKAGE SEAM-10: AP throws "would overflow the fuel tank" (750e12 in a 500e12 tank).
+    // BREAKAGE SEAM-10 (was: AP threw "would overflow the fuel tank" (750e12 in a 500e12 tank) for a 300e12 answer).
     expect(() => stageAt(0, plan(), visitOf({ launches }), base)).not.toThrow();
   });
 });

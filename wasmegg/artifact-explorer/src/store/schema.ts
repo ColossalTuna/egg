@@ -129,8 +129,8 @@ export function isMissionFilters(x: unknown): x is MissionFilters {
     (m.maxGemCostEnabled === undefined || typeof m.maxGemCostEnabled === 'boolean') &&
     (m.maxGemCost === undefined || typeof m.maxGemCost === 'number') &&
     (m.maxGoldenEggCostEnabled === undefined || typeof m.maxGoldenEggCostEnabled === 'boolean') &&
-    // Finite and non-negative, not merely a number: `buildModel` reads a negative or non-finite capacity as
-    // "no cap", so a value that fails this would leave the checkbox on with nothing enforcing it.
+    // Finite and non-negative, not merely a number: `normalizeProblem` throws on a negative or non-finite
+    // craft capacity (there is no "no cap" reading of one), so a value that fails this is rejected here.
     (m.maxGoldenEggCost === undefined || (Number.isFinite(m.maxGoldenEggCost) && m.maxGoldenEggCost >= 0)) &&
     (m.waitTimeDays === undefined || typeof m.waitTimeDays === 'string') &&
     (m.fuelFromTankContents === undefined || typeof m.fuelFromTankContents === 'boolean')

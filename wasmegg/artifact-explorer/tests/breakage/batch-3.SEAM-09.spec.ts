@@ -24,25 +24,25 @@ beforeEach(async () => {
 
 describe('SEAM-09 tank-level override', () => {
   it('an explorer answer within its budgeted tank stages in a plan with a smaller tank (BREAKAGE SEAM-09)', () => {
-    const visits = sliceHumilityVisits(parsePlanSave(fixture('ascension-plan.json'))).map(v => ({ ...v, tankLevel: 4 }));
+    const visits = sliceHumilityVisits(parsePlanSave(fixture('ascension-plan.json'))).map(v => ({ ...v, tankLevel: 4, fuelByEgg: new Map() }));
     planStore.setLoadedPlan('fixture', visits);
     planStore.setCurrentVisit(visits[0].visitId);
     store.setOverrideTankLevel(true);
     store.setTankLevel(7);
     planStore.setVisitFuelBudget(visits[0].visitId, 'full-tank'); // pooled tank row
 
+    // K5: with a plan visit active the override is ignored; the budget is the visit's own tank (level 4).
     const explorerCapacity = store.effectiveFuelTankCapacity.value;
-    expect(explorerCapacity).toBe(500e12);
+    expect(explorerCapacity).toBe(TANK_CAPACITIES[4]);
     expect(store.effectiveFuelByEggCapacity.value).toBeNull();
 
-    // 2 Atreggies EPIC need 330e12 of non-Humility fuel: inside the 500e12 the explorer budgeted against.
-    const launches = [{ ship: 'ATREGGIES', duration: 'EPIC', targetAfxId: 0, count: 2 }];
+    // 1 Atreggies EPIC needs 165e12 of non-Humility fuel: inside the visit's 200e12 tank.
+    const launches = [{ ship: 'ATREGGIES', duration: 'EPIC', targetAfxId: 0, count: 1 }];
     const fuel = fuelForLaunches(resolveLaunches(visitOf({ launches })));
     const nonHumility = fuel.curiosity + fuel.integrity + fuel.resilience + fuel.kindness;
     expect(nonHumility).toBeLessThanOrEqual(explorerCapacity);
-    expect(nonHumility).toBeGreaterThan(TANK_CAPACITIES[4]);
 
-    // BREAKAGE SEAM-09: the planner throws "would overflow the fuel tank" for this answer.
+    // BREAKAGE SEAM-09 (was: the planner threw "would overflow the fuel tank" for an answer budgeted against the override).
     expect(() => stageAt(0, plan(), visitOf({ launches }), baseState(4))).not.toThrow();
   });
 });
