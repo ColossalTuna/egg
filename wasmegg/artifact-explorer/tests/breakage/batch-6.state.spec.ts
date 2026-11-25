@@ -75,6 +75,21 @@ describe('STA-10 missing epic research in plan overrides the save', () => {
     // BREAKAGE STA-10: expected the save's 60 (the plan said nothing), actual 0
     expect(store.effectiveConfig.value.epicResearchFTLLevel).toBe(60);
   });
+
+  it('SAT-SEAM-14: a map without the FTL key solves at AP\'s 0, not at the save FTL', () => {
+    // AP replaces its map with the plan's, so the missing key is level 0 when it stages. The
+    // explorer must price the solve at the same level or AP schedules the launches ~2.2x longer.
+    store.setPlayerData(backupWith({ ftl: 55 }));
+    plan.setLoadedPlan(
+      'no-ftl-key',
+      visitsFrom(p => {
+        delete p.initialState.epicResearchLevels.afx_mission_time;
+      })
+    );
+    plan.setCurrentVisit(plan.loadedPlan.value!.visits[0].visitId);
+    expect(plan.activePlanVisit.value!.epicResearchFTLLevel).toBe(0);
+    expect(store.effectiveConfig.value.epicResearchFTLLevel).toBe(0);
+  });
 });
 
 describe('STA-17 launch-point rounding', () => {

@@ -325,6 +325,21 @@ describe('reading a malformed plan save', () => {
     expect(first.epicResearchZerogLevel).toBeUndefined();
   });
 
+  it('reads a key missing from a present epic research map as level zero, as AP does (SAT-SEAM-14)', () => {
+    // AP's hydrate replaces its whole map with the plan's, so a key the map lacks is level 0 to AP
+    // (humilityMissionsStage `?? 0`, RocketActions `|| 0`). Reading it as unknown let the explorer
+    // solve at the save's FTL while AP staged at 0: launches about 2.2x longer, plus a warning.
+    const plan = raw();
+    const levels = { ...(plan.initialState.epicResearchLevels as Record<string, number>) };
+    delete levels.afx_mission_time;
+    delete levels.afx_mission_capacity;
+    const [first] = sliceHumilityVisits(
+      parsePlanSave({ ...plan, initialState: { ...plan.initialState, epicResearchLevels: levels } })
+    );
+    expect(first.epicResearchFTLLevel).toBe(0);
+    expect(first.epicResearchZerogLevel).toBe(0);
+  });
+
   it('prices a visit at its bank alone when the duration it is given is unusable', () => {
     const [first] = sliceHumilityVisits(planSave());
     expect(gemBudgetFor(first, -86400)).toBe(first.bankValue);

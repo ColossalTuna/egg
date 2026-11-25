@@ -50,8 +50,9 @@ export interface HumilityVisit {
   earningsPerSecond: number;
 
   // The plan's epic research, checked against the game caps (FTL 0..60, Zero-G 0..10). Undefined
-  // when the plan does not say (AP omits `epicResearchLevels` on a save with none bought, and a
-  // key can be missing): the save's or the typed figure then applies, never a fabricated zero.
+  // when the plan has no `epicResearchLevels` (AP omits it on a save with none bought): the save's
+  // or the typed figure then applies, never a fabricated zero. A key missing from a map the plan
+  // does carry is 0, the level AP stages at for that plan.
   epicResearchFTLLevel?: number;
   epicResearchZerogLevel?: number;
 }
@@ -169,13 +170,17 @@ function requireNumber(value: unknown, field: string, actionId: string): number 
   return value;
 }
 
-// An epic research level the plan states, or undefined when it says nothing.
+// An epic research level the plan states, or undefined when the plan has no map at all. With no map
+// AP keeps the levels it already had, so the plan says nothing (STA-10). With a map AP replaces its
+// levels with it wholesale and reads a key the map lacks as 0 (humilityMissionsStage `?? 0`), so a
+// missing key is level 0 here too; reading it as unknown let the explorer solve at the save's level
+// while AP staged at 0 (SAT-SEAM-14).
 function epicResearchLevel(save: PlanSave, id: string, max: number): number | undefined {
   const levels: unknown = save.initialState.epicResearchLevels;
   if (levels === undefined || levels === null) return undefined;
   if (!isRecord(levels)) throw new PlanSaveError('Plan file has an unreadable `epicResearchLevels`.');
   const level = levels[id];
-  if (level === undefined) return undefined;
+  if (level === undefined) return 0;
   if (typeof level !== 'number' || !Number.isInteger(level) || level < 0 || level > max) {
     throw new PlanSaveError(`Plan file has an invalid epic research level for ${id}: expected 0 to ${max}.`);
   }
