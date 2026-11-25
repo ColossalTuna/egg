@@ -32,13 +32,18 @@ export function buildRecipeDag(
           ? playerInventory.getItem({ name: artifactProps.afx_id, level: artifactProps.afx_level }).crafted
           : 0;
 
+    // `craftChance` throws for a rarity the tier has no effect at (a T1, or a tier with no legendary, as a
+    // legacy link can still name). No legendary effect means no legendary craft: the node keeps a craft
+    // probability of 0, so its figure is drop-only, rather than taking the whole page down.
+    const hasLegendary = (artifactProps.effects ?? []).some(e => e.afx_rarity === ei.ArtifactSpec.Rarity.LEGENDARY);
     // craftChance returns a percentage value, not a raw probability
-    artifactDagNode.legendaryCraftProbability =
-      artifactItem.craftChance(
-        getCraftingInfoFromLevel(playerLevel).rarityMult,
-        ei.ArtifactSpec.Rarity.LEGENDARY,
-        previousCrafts
-      ) / 100.0;
+    artifactDagNode.legendaryCraftProbability = hasLegendary
+      ? artifactItem.craftChance(
+          getCraftingInfoFromLevel(playerLevel).rarityMult,
+          ei.ArtifactSpec.Rarity.LEGENDARY,
+          previousCrafts
+        ) / 100.0
+      : 0;
   }
 
   return recipeDag;
@@ -119,9 +124,11 @@ function computeFuelByEgg(solution: OptimizerSolution): Map<ei.Egg, number> {
 // identical solutions.
 export function finalizeSolutions(solutions: OptimizerSolution[], dag: RecipeDAG): OptimizerSolution[] {
   for (const solution of solutions) {
+    // Summed before the display sort, so the per-egg totals accumulate in the same (allocation) order as
+    // the core's own `fuelByEgg` and agree with it to the bit rather than to the last ulp.
+    solution.fuelByEgg = computeFuelByEgg(solution);
     solution.choiceHistory.sort((a: LaunchSolution, b: LaunchSolution) => a.ship.shipType - b.ship.shipType);
     solution.expectedDrops = computeExpectedDrops(solution, dag);
-    solution.fuelByEgg = computeFuelByEgg(solution);
   }
   return solutions;
 }

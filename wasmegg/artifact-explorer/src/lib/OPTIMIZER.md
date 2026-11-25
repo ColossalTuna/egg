@@ -13,7 +13,8 @@ score(T) = Q_T \cdot crafts_T + \lambda_T
 $$
 
 $crafts_T$ is how many copies of `T` the player's inventory merged with the dropped
-items from the optimizer's selected missions supports crafting, $\lambda_T$ is `T`'s
+items from the optimizer's selected missions supports crafting (always 0 for a leaf
+target: it has no recipe, so its figure is drop-only), $\lambda_T$ is `T`'s
 expected direct legendary drop count, and $Q_T = -\log(1 - p_{CraftLegendary_T})$ is
 what one craft is worth. The search maximizes
 
@@ -86,6 +87,36 @@ set. How much of the observed violation each mechanism accounts for is open, and
 the A1/A2 monotonicity invariants are not theorems even at proven optimality until
 it is settled.
 
+## Makespan and packing
+
+`timeUnitsUsed` (written to the plan file as `makespanSeconds`) is the **minimized**
+makespan: the busiest slot of the arrangement with the smallest busiest slot the
+packer finds, not of the first arrangement that merely fits. `optimizer-core.ts`
+starts from the better of the feasibility witness and a longest-first (LPT)
+arrangement, then bisects on the capacity it hands `packWitness`, between the lower
+bound max(longest mission, total load / 3) and the busiest slot of a real witness;
+each success tightens the bound to that witness's actual load. The reported figure is
+therefore always the load of an arrangement that exists. It stops within half a
+second (or 1e-9 of the capacity) of the lower bound. Each probe is capped by a count
+of candidate splits tried (`packWitness`'s `stepBudget`), not a clock; if one runs out,
+the search stops at the best real arrangement found so far, which on very large
+plans can be the LPT one.
+If the plan cannot be packed at all, the makespan is a longest-first estimate, as
+before. `runningTimeSeconds` is the raw (unfloored) flight time of that same busiest
+slot. Both are rounded to whole seconds with `Math.round`, which is monotone, so
+`runningTimeSeconds <= timeUnitsUsed` holds after rounding.
+
+`packWitness` scales its tolerance (1e-9 of the capacity) and its memo key's grid
+(2^-40 of the capacity) to the capacity. A fixed absolute tolerance is below one ulp
+once capacity reaches about 1e7 seconds, and whole-unit memo keys merged distinct
+sub-second states.
+
+**Menu inputs.** A NaN `maximumCost` is rejected with a `RangeError` (it would compare
+false against every price and empty the menu); `Infinity` remains the legal "whole
+menu". An option whose `actualTime` is NaN because the launch period was NaN keeps its
+raw duration: a NaN period imposes no floor. An option with no finite raw duration is
+still dropped.
+
 ## The worker boundary
 
 The planner runs off the main thread (`optimizer.worker.ts`). Every solve is
@@ -112,7 +143,9 @@ fields on the way out and rebuilt on the way in.
 the newest one's result is delivered — with auto-compute on, a burst of input
 changes queues several solves and every result but the last describes settings
 the user has already moved past. A superseded or torn-down request resolves with
-`null`, which callers read as "no result is coming, leave state alone".
+`null`, which callers read as "no result is coming, leave state alone". A request
+whose `postMessage` throws (for example a `DataCloneError`) is removed from the
+pending map and rejects with that error, since no reply can ever settle it.
 
 The request carries the problem and nothing else; the search budget is fixed at
 compile time in `DEFAULT_TUNING`, as a node count rather than a wall clock, so the
@@ -124,7 +157,9 @@ A target's `legendaryCraftProbability` depends on how many times the player has
 already crafted it. With a save loaded each target uses **its own** crafted count;
 a manual override applies to **every** target. `buildRecipeDag` implements this by
 treating an undefined `previousCraftsOverride` as "read per-target". The override
-feeds `legendaryCraftProbability` only — pricing always reads the real counts.
+feeds `legendaryCraftProbability` only — pricing always reads the real counts. A tier
+with no legendary effect (a T1, or a tier a legacy link can still name) gets a
+`legendaryCraftProbability` of 0 instead of throwing.
 
 `computeOwnedStock` counts the player's stock across all rarities, because each
 can be demoted to common. This is "how many copies you can feed a recipe",
