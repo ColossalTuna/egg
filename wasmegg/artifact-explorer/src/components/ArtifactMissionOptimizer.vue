@@ -31,6 +31,10 @@
               {{ noAnswerMessage }}
             </p>
             <p v-if="playerLoadError" role="alert" class="text-sm text-red-600">{{ playerLoadError }}</p>
+            <p v-if="planSaveFailed" role="alert" class="text-sm text-red-600">
+              The plan could not be saved in this browser's storage (it may be full). This tab keeps its answers, but
+              answers recorded since are lost if the page is reloaded.
+            </p>
             <p v-if="planChangedInAnotherTab" role="alert" class="text-sm text-amber-700">
               This plan was replaced or unloaded in another tab. This tab keeps its own copy; reload the page to follow
               the other tab instead.
@@ -106,7 +110,6 @@ import {
   effectiveCraftingLevel,
   effectiveWaitTimeSeconds,
   EFFORT_LAUNCH_PERIOD_SECONDS,
-  extras,
   missionFilters,
   overrides,
   playerGoldenEggs,
@@ -121,6 +124,7 @@ import {
   loadedPlan,
   clearSolvedVisit,
   planChangedInAnotherTab,
+  planSaveFailed,
   recordSolvedVisit,
   retainSolvedVisitsMatching,
   setVisitWaitTime,
@@ -149,6 +153,13 @@ import OptimizerSidebar from './optimizer/OptimizerSidebar.vue';
 import OptimizerInventoryPanel from './optimizer/OptimizerInventoryPanel.vue';
 import OptimizerSolutionCard from './optimizer/OptimizerSolutionCard.vue';
 
+// The id as the save server reads it: `requestFirstContact` drops a leading "mk2!", and the form
+// trims what is typed. Two spellings of one id fetch the same save.
+function normalizePlayerId(id: string): string {
+  const trimmed = id.trim();
+  return trimmed.startsWith('mk2!') ? trimmed.slice(4) : trimmed;
+}
+
 export default defineComponent({
   components: { OptimizerSidebar, OptimizerInventoryPanel, OptimizerSolutionCard },
   props: {
@@ -176,9 +187,19 @@ export default defineComponent({
     // the page holds before the save arrives and record that answer over a good one.
     const loadingPlayer = ref(false);
     const playerLoadError = ref('');
+    // The player id (normalized) whose save was last loaded whole, or null when the last load failed
+    // or returned no usable save.
+    const loadedPlayerId = ref<string | null>(null);
+    // Whether the page's inputs are a real save's: there is no player id, or the id's save loaded.
+    // Otherwise they are placeholders (or another player's data), and recorded answers are neither
+    // judged against them nor replaced by an answer solved on them.
+    const playerSaveReady = computed(
+      () => !playerId.value || loadedPlayerId.value === normalizePlayerId(playerId.value)
+    );
+    const KEPT_NOTE = 'Recorded answers are kept, and results are not recorded until the save loads.';
     let playerRequest = 0;
     // Never rejects: a failed fetch is reported on the page, and the page then solves on the inputs it
-    // has, as it would with no player id at all.
+    // has, as it would with no player id at all, without recording what it finds.
     async function loadPlayer(id: string): Promise<void> {
       const request = ++playerRequest;
       loadingPlayer.value = true;
@@ -187,9 +208,16 @@ export default defineComponent({
         const data = await requestFirstContact(id);
         if (request !== playerRequest) return;
         if (data.backup) setPlayerData(data.backup);
+        // What setPlayerData needs to replace the player's data; anything less is no save.
+        if (data.backup?.game && data.backup.artifactsDb) loadedPlayerId.value = normalizePlayerId(id);
+        else {
+          loadedPlayerId.value = null;
+          playerLoadError.value = `Could not load the save for ${id}: no save was returned. ${KEPT_NOTE}`;
+        }
       } catch (err) {
         if (request !== playerRequest) return;
-        playerLoadError.value = `Could not load the save for ${id}: ${err instanceof Error ? err.message : String(err)}`;
+        loadedPlayerId.value = null;
+        playerLoadError.value = `Could not load the save for ${id}: ${err instanceof Error ? err.message : String(err)}. ${KEPT_NOTE}`;
       } finally {
         if (request === playerRequest) loadingPlayer.value = false;
       }
@@ -244,6 +272,14 @@ export default defineComponent({
       goldenEggs: number | null;
       visitIndex: number;
     } | null>(null);
+    // The parts of the ships config the solve reads, other than epic research (`enumerateLaunchOptions`
+    // and the mission durations and capacities it prices). The rest (the drop-stats target checkboxes,
+    // the legacy only-Henners/Liners flags) is display, and changing it changes no answer.
+    const solveShipsConfig = computed(() => {
+      const c = effectiveConfig.value;
+      return { shipLevels: c.shipLevels, shipVisibility: c.shipVisibility, showNodata: c.showNodata };
+    });
+
     // Compare the meaning of inputs, not their object identity or normalized spelling.
     // Launch enumeration is a deterministic function of config, targets, and effort.
     const questionKey = computed(() =>
@@ -251,7 +287,11 @@ export default defineComponent({
         priceMode: gemCostMode.value,
         visit: activePlanVisit.value?.visitId,
         targets: artifactIds.value,
-        config: effectiveConfig.value,
+        config: {
+          ...solveShipsConfig.value,
+          ftl: effectiveConfig.value.epicResearchFTLLevel,
+          zerog: effectiveConfig.value.epicResearchZerogLevel,
+        },
         crafting: effectiveCraftingLevel.value,
         previousCrafts: effectivePreviousCraftsOverride.value,
         inventory: inventoryRevision.value,
@@ -271,6 +311,9 @@ export default defineComponent({
     // A visit's own inputs (targets, time, fuel and gem settings) are guarded in `store/plan.ts`;
     // the visit's own epic research is left out here for the same reason. Recorded with each answer;
     // when it changes, every answer solved under another key is dropped, other visits' included.
+    // Only what the solve reads is in it. The tank-level override is not: a plan visit budgets against
+    // its own tank (SEAM-09), and answers are only recorded for plan visits. The player id is the one
+    // the save server reads, so another spelling of the same id is the same player.
     const inventoryFingerprint = computed(() => {
       const inventory = playerInventory.value;
       if (!inventory) return null;
@@ -280,14 +323,11 @@ export default defineComponent({
         .join(';');
     });
     const globalInputsKey = computed(() => {
-      const ships: Partial<typeof effectiveConfig.value> = { ...effectiveConfig.value };
-      delete ships.epicResearchFTLLevel;
-      delete ships.epicResearchZerogLevel;
       const player = playerShipsConfig.value;
       return JSON.stringify({
-        player: playerId.value,
+        player: normalizePlayerId(playerId.value),
         inventory: inventoryFingerprint.value,
-        ships,
+        ships: solveShipsConfig.value,
         // What a visit that carries no epic research of its own falls back on.
         ftl: overrides.value.epicResearchFTLLevel
           ? config.value.epicResearchFTLLevel
@@ -295,7 +335,6 @@ export default defineComponent({
         zerog: overrides.value.epicResearchZerogLevel
           ? config.value.epicResearchZerogLevel
           : (player?.epicResearchZerogLevel ?? config.value.epicResearchZerogLevel),
-        tank: overrides.value.tankLevel ? extras.value.tankLevel : null,
         crafting: effectiveCraftingLevel.value,
         previousCrafts: effectivePreviousCraftsOverride.value ?? null,
         craftBudget: craftingCostInvalid.value ? 'invalid' : (effectiveCraftingBudget.value ?? null),
@@ -407,7 +446,9 @@ export default defineComponent({
         const solution = computedResults.value[0];
         const unanswered = solution ? noAnswerReason(input, solution, effort) : 'No ship set was found.';
         noAnswerMessage.value = unanswered ?? '';
-        if (visit) {
+        // On placeholder inputs (the save did not load) the answer is shown but not recorded, and the
+        // one recorded for the visit, if any, is kept.
+        if (visit && playerSaveReady.value) {
           if (solution && unanswered === null) {
             recordSolvedVisit(
               projectSolvedVisit({ visit, solution, effort, gemBudget, epicResearchFTLLevel }),
@@ -421,7 +462,7 @@ export default defineComponent({
         noAnswerMessage.value = '';
         computedResults.value = [];
         snapshot.value = null;
-        if (visit) clearSolvedVisit(visit.visitId);
+        if (visit && playerSaveReady.value) clearSolvedVisit(visit.visitId);
       } finally {
         if (requestGeneration === generation) computing.value = false;
       }
@@ -449,14 +490,15 @@ export default defineComponent({
       { immediate: true, flush: 'sync' }
     );
 
-    // Drop the answers to questions the page can no longer pose. Not while a save is loading: the
-    // inputs are then the placeholders, and the save, once in, is what the recorded answers are judged
-    // against. Pre-flush rather than sync, so a save landing field by field is judged once, whole.
+    // Drop the answers to questions the page can no longer pose. Not while a save is loading, nor
+    // after it failed to load or came back empty: the inputs are then placeholders, and only a save
+    // that loaded is what the recorded answers are judged against. Pre-flush rather than sync, so a
+    // save landing field by field is judged once, whole.
     let checkedInputsKey: string | undefined;
     watch(
-      [globalInputsKey, loadingPlayer],
+      [globalInputsKey, loadingPlayer, playerSaveReady],
       () => {
-        if (loadingPlayer.value || globalInputsKey.value === checkedInputsKey) return;
+        if (loadingPlayer.value || !playerSaveReady.value || globalInputsKey.value === checkedInputsKey) return;
         checkedInputsKey = globalInputsKey.value;
         retainSolvedVisitsMatching(checkedInputsKey);
       },
@@ -545,6 +587,7 @@ export default defineComponent({
       loadingPlayer,
       playerLoadError,
       planChangedInAnotherTab,
+      planSaveFailed,
       playerId,
       submitPlayerId,
       playerInventory,

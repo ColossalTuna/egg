@@ -179,10 +179,12 @@
           </div>
           <p v-if="gemCostInvalid" class="mt-1 text-xs text-red-500">Enter a non-negative amount (e.g. 10S).</p>
           <p v-else-if="gemCostMode === 'custom'" class="mt-1 text-xs text-gray-400">
-            Only schedule ships costing at most this many gems (e.g. 10S = 10 septillion)
+            Total budget for the plan: all its ships together cost at most this many gems, so no single ship costs more
+            (e.g. 10S = 10 septillion)
           </p>
           <p v-else-if="gemCostMode === 'plan'" class="mt-1 text-xs text-gray-400">
-            Per ship: bank on arrival + visit earnings. Select "Override" to change.
+            Total budget for the plan, across all its ships: bank on arrival + visit earnings. Select "Override" to
+            change.
           </p>
         </div>
 
