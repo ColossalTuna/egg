@@ -56,7 +56,19 @@ export function getActionsRequiringRemovalLogic(
       }
     }
 
-    // 2. Tier locks
+    // 2. Staged actions. An action staged on behalf of another carries a `sourceTag` of
+    // `<source>:<id>` naming it; ascension-planner tags a staged Humility answer
+    // `humility-plan:<visitId>`, where the visit id is the action arriving on Humility. Its fuel
+    // stores and extra egg phases sit outside that visit, so they go with it explicitly.
+    for (const action of actions) {
+      if (toRemove.has(action.id)) continue;
+      const tag = (action as { sourceTag?: unknown }).sourceTag;
+      if (typeof tag !== 'string') continue;
+      const separator = tag.indexOf(':');
+      if (separator !== -1 && toRemove.has(tag.slice(separator + 1))) toRemove.add(action.id);
+    }
+
+    // 3. Tier locks
     const purchasesByTier = new Array(15).fill(0);
     // Initialize with initialResearchLevels
     for (const [id, level] of Object.entries(initialResearchLevels)) {
