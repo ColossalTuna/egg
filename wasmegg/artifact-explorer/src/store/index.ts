@@ -200,7 +200,17 @@ export const effectiveTankLevel = computed<number>(() => {
   return overrides.value.tankLevel ? extras.value.tankLevel : source;
 });
 
-export const effectiveFuelTankCapacity = computed<number>(() => fuelTankSizes[effectiveTankLevel.value]);
+// The pooled capacity the optimizer budgets against. In the full-tank mode of a plan visit, fuel
+// already in the tank on arrival, Humility included, takes room from the same tank, so it is
+// left out; otherwise an answer that fills the pooled budget overflows the plan's tank.
+export const effectiveFuelTankCapacity = computed<number>(() => {
+  const capacity = fuelTankSizes[effectiveTankLevel.value];
+  const visit = activePlanVisit.value;
+  if (!visit || effectiveFuelByEggCapacity.value !== null) return capacity;
+  let stored = visit.humilityFuel ?? 0;
+  for (const amount of visit.fuelByEgg.values()) stored += amount;
+  return Number.isFinite(stored) && stored > 0 ? Math.max(0, capacity - stored) : capacity;
+});
 
 export const effectiveConfig = computed<ShipsConfig>(() => {
   const player = playerShipsConfig.value;

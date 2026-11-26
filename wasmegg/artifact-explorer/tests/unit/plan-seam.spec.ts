@@ -700,7 +700,10 @@ describe('the budgets the optimizer worker is handed', () => {
     // Null is the aggregate tank row: one pooled capacity, which is the whole point. The solver
     // picks the split, and that split is what the plan then has to go store.
     expect(store.effectiveFuelByEggCapacity.value).toBeNull();
-    expect(store.effectiveFuelTankCapacity.value).toBe(fuelTankSizes[visit.tankLevel]);
+    // Fuel already in the tank on arrival, Humility included, takes room from the same tank, so the
+    // pooled budget is the tank less what is stored (never negative).
+    const stored = [...visit.fuelByEgg.values()].reduce((x, y) => x + y, visit.humilityFuel ?? 0);
+    expect(store.effectiveFuelTankCapacity.value).toBe(Math.max(0, fuelTankSizes[visit.tankLevel] - stored));
 
     plan.setVisitFuelBudget(visit.visitId, 'banked');
     expect(store.effectiveFuelByEggCapacity.value!.get(ei.Egg.CURIOSITY)).toBe(4.5e14);

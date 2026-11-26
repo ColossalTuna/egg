@@ -30,6 +30,10 @@ export interface HumilityVisit {
 
   // Per-egg fuel banked in the tank on arrival, Humility excluded.
   fuelByEgg: Map<ei.Egg, number>;
+  // Humility already in the tank on arrival. Never budgeted (the farm makes Humility during the
+  // visit), but it takes room in the same tank, so a full-tank budget has to leave it out.
+  // Optional: a visit persisted before this field existed reads as none.
+  humilityFuel?: number;
   tankLevel: number;
   // What the plan holds the moment it lands on Humility, which is nothing: shifting zeroes the
   // bank. Everything the visit has to spend is therefore earned during it.
@@ -167,6 +171,13 @@ function earningsRateOf(action: PlanSaveAction | undefined): number {
   );
 }
 
+// Humility in the tank on arrival. Older saves may lack the key, which reads as none.
+function humilityFuelOf(action: PlanSaveAction): number {
+  const amounts = action.endState.fuelTankAmounts;
+  const amount = isRecord(amounts) ? amounts.humility : undefined;
+  return amount === undefined ? 0 : requireNumber(amount, 'fuelTankAmounts.humility', action.id);
+}
+
 function fuelByEggOf(action: PlanSaveAction): Map<ei.Egg, number> {
   const amounts = action.endState.fuelTankAmounts;
   const fuels = new Map<ei.Egg, number>();
@@ -201,6 +212,7 @@ export function sliceHumilityVisits(save: PlanSave): HumilityVisit[] {
         arrivalTimestamp: start === null ? null : start + elapsed + secondsOf(action),
         plannedDurationSeconds: 0,
         fuelByEgg: fuelByEggOf(action),
+        humilityFuel: humilityFuelOf(action),
         tankLevel: requireNumber(action.endState.tankLevel, 'tankLevel', action.id),
         bankValue: requireNumber(action.endState.bankValue, 'bankValue', action.id),
         earningsPerSecond: Math.max(earningsRateOf(action), earningsRateOf(previous)),

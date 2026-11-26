@@ -15,6 +15,7 @@ import { computeSnapshot } from 'lib/planners/engine/compute';
 import type { EngineState, SimulationContext } from '@/engine/types';
 import { TANK_CAPACITIES } from '@/stores/fuelTank';
 import { fuelForLaunches, launchCost } from 'lib/planners/rockets/launches';
+import { formatNumber } from '@/lib/format';
 import {
   fuelShortfalls,
   humilityVisitInsertIndex,
@@ -271,7 +272,19 @@ export function stageHumilityVisit(
   );
 
   const result = simulate(weave(filled), context, base);
-  for (const step of result) validateTank(step.endState.fuelTankAmounts, step.endState.tankLevel);
+  for (const step of result) {
+    try {
+      validateTank(step.endState.fuelTankAmounts, step.endState.tankLevel);
+    } catch (err) {
+      // Humility the plan already keeps in the tank takes room the explorer may not have known about.
+      const humility = step.endState.fuelTankAmounts.humility ?? 0;
+      if (!(err instanceof HumilityMissionsError) || !(humility > 0)) throw err;
+      throw new HumilityMissionsError(
+        `${err.message} The tank already holds ${formatNumber(humility, 2)} Humility there; re-solve in the ` +
+          'explorer from the current plan, which leaves room for it.'
+      );
+    }
+  }
   const launchedIndex = result.findIndex(step => step.id === launch.id);
   const launched = result[launchedIndex];
   const remaining = Math.max(0, visit.makespanSeconds - launched.totalTimeSeconds);
