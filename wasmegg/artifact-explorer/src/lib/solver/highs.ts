@@ -17,14 +17,60 @@ const wasmLocation = (() => {
 
 let cached: Promise<MilpSolve> | null = null;
 
+// `solve` returns the solution as HiGHS's *pretty* writer prints it, which keeps about six significant
+// digits: an integer column of 1234567 comes back as 1234570, above its own bound (SAT2-SOL-01). The raw
+// writer prints every value round-trippably, but the binding writes it only to a file it does not expose.
+// What it does expose is enough to get it anyway: `solve` looks `Highs_writeSolutionPretty` up on the module
+// each call, so wrapping it lets the raw writer run first on the same handle, sending its text to stdout,
+// which reaches the loader's `print`. Raw values replace pretty ones by column name; if nothing parsable
+// arrives (a binding that changed shape), the pretty values stand as before.
+interface HighsModule {
+  cwrap(name: string, returns: 'number', args: string[]): (...args: (number | string)[]) => number;
+  Highs_writeSolutionPretty?: (handle: number, file: string) => number;
+}
+
+let printed: string[] | null = null;
+let rawLines: string[] | null = null;
+
+function captureRawSolutions(highs: unknown): void {
+  const binding = highs as HighsModule;
+  const pretty = binding.Highs_writeSolutionPretty;
+  if (typeof binding.cwrap !== 'function' || typeof pretty !== 'function') return;
+  const writeRaw = binding.cwrap('Highs_writeSolution', 'number', ['number', 'string']);
+  const setBool = binding.cwrap('Highs_setBoolOptionValue', 'number', ['number', 'string', 'number']);
+  binding.Highs_writeSolutionPretty = (handle, file) => {
+    // An empty file name is stdout, which HiGHS writes through its logger: both switches have to be on
+    // for the text to come out, and they go back off before the pretty writer runs.
+    printed = [];
+    try {
+      setBool(handle, 'output_flag', 1);
+      setBool(handle, 'log_to_console', 1);
+      writeRaw(handle, '');
+    } catch {
+      printed = null;
+    } finally {
+      setBool(handle, 'output_flag', 0);
+      setBool(handle, 'log_to_console', 0);
+    }
+    rawLines = printed;
+    printed = null;
+    return pretty(handle, file);
+  };
+}
+
 export function loadHighs(): Promise<MilpSolve> {
-  cached ??= highsLoader({ locateFile: () => wasmLocation })
+  cached ??= highsLoader({
+    locateFile: () => wasmLocation,
+    print: (line: string) => printed?.push(line),
+  } as Parameters<typeof highsLoader>[0])
     .then((highs): MilpSolve => {
+      captureRawSolutions(highs);
       return (model, limits) => {
         // Serialized outside the `try` on purpose: the backstop below is for HiGHS
         // throwing, not for laundering a crash in our own writer into `unknown`.
         const lp = writeLp(model);
         let raw: RawHighsSolution;
+        rawLines = null;
         try {
           raw = highs.solve(lp, {
             ...SOLVER_OPTIONS,
@@ -36,7 +82,9 @@ export function loadHighs(): Promise<MilpSolve> {
           // ("HiGHS error -1"). See SPEC.md section 8.
           return { status: 'unknown', objective: 0, columnValues: new Float64Array(model.columnCount) };
         }
-        return readSolution(model, raw);
+        const exact = rawLines && rawPrimal(rawLines);
+        rawLines = null;
+        return readSolution(model, raw, exact);
       };
     })
     .catch((error: unknown) => {
@@ -153,7 +201,28 @@ const STATUS: Readonly<Record<string, MilpSolution['status']>> = {
   'Postsolve error': 'unknown',
 };
 
-function readSolution(model: MilpModel, solution: RawHighsSolution): MilpSolution {
+// The primal column block of HiGHS's raw solution text: "# Primal solution values", a status line ("None"
+// when there is no primal), "Objective <v>", "# Columns <n>", then n lines of "<name> <value>".
+function rawPrimal(lines: readonly string[]): Map<string, number> | null {
+  const start = lines.lastIndexOf('# Primal solution values');
+  if (start < 0 || lines[start + 1] === 'None') return null;
+  let i = start + 2;
+  if (lines[i]?.startsWith('Objective')) i++;
+  const header = /^# Columns (\d+)$/.exec(lines[i] ?? '');
+  if (!header) return null;
+  const n = Number(header[1]);
+  const values = new Map<string, number>();
+  for (let k = 1; k <= n; k++) {
+    const parts = (lines[i + k] ?? '').trim().split(/\s+/);
+    if (parts.length !== 2) return null;
+    const v = parts[1] === 'inf' ? Infinity : parts[1] === '-inf' ? -Infinity : Number(parts[1]);
+    if (Number.isNaN(v)) return null;
+    values.set(parts[0], v);
+  }
+  return values;
+}
+
+function readSolution(model: MilpModel, solution: RawHighsSolution, exact: Map<string, number> | null): MilpSolution {
   // Keyed by *name*, not the reported `Index` — see SPEC.md section 8.
   const columnValues = new Float64Array(model.columnCount);
   let hasPrimal = false;
@@ -161,7 +230,7 @@ function readSolution(model: MilpModel, solution: RawHighsSolution): MilpSolutio
     if (typeof column.Primal !== 'number') continue;
     const j = Number(name.slice(1));
     if (!Number.isInteger(j) || j < 0 || j >= model.columnCount) continue;
-    columnValues[j] = column.Primal;
+    columnValues[j] = exact?.get(name) ?? column.Primal;
     hasPrimal = true;
   }
 
