@@ -19,11 +19,13 @@ let cached: Promise<MilpSolve> | null = null;
 
 // `solve` returns the solution as HiGHS's *pretty* writer prints it, which keeps about six significant
 // digits: an integer column of 1234567 comes back as 1234570, above its own bound (SAT2-SOL-01). The raw
-// writer prints every value round-trippably, but the binding writes it only to a file it does not expose.
+// writer keeps every significant digit down to an absolute 1e-13, below which it prints 0, but the binding
+// writes it only to a file it does not expose.
 // What it does expose is enough to get it anyway: `solve` looks `Highs_writeSolutionPretty` up on the module
 // each call, so wrapping it lets the raw writer run first on the same handle, sending its text to stdout,
-// which reaches the loader's `print`. Raw values replace pretty ones by column name; if nothing parsable
-// arrives (a binding that changed shape), the pretty values stand as before.
+// which reaches the loader's `print`. Raw values replace pretty ones by column name wherever the raw one is
+// the more precise (see `PRETTY_BELOW`); if nothing parsable arrives (a binding that changed shape), the
+// pretty values stand as before.
 interface HighsModule {
   cwrap(name: string, returns: 'number', args: string[]): (...args: (number | string)[]) => number;
   Highs_writeSolutionPretty?: (handle: number, file: string) => number;
@@ -222,6 +224,11 @@ function rawPrimal(lines: readonly string[]): Map<string, number> | null {
   return values;
 }
 
+// Pretty is good to about 5e-7 relative, raw to about 1e-13 absolute, so raw is the sharper of the two from
+// about 2e-7 up. Below that the pretty value is kept: a scale LP's score of 1e-14 prints as 0 in raw, and
+// reading it as 0 would mark a reachable target unscorable.
+const PRETTY_BELOW = 1e-6;
+
 function readSolution(model: MilpModel, solution: RawHighsSolution, exact: Map<string, number> | null): MilpSolution {
   // Keyed by *name*, not the reported `Index` — see SPEC.md section 8.
   const columnValues = new Float64Array(model.columnCount);
@@ -230,7 +237,7 @@ function readSolution(model: MilpModel, solution: RawHighsSolution, exact: Map<s
     if (typeof column.Primal !== 'number') continue;
     const j = Number(name.slice(1));
     if (!Number.isInteger(j) || j < 0 || j >= model.columnCount) continue;
-    columnValues[j] = exact?.get(name) ?? column.Primal;
+    columnValues[j] = Math.abs(column.Primal) < PRETTY_BELOW ? column.Primal : (exact?.get(name) ?? column.Primal);
     hasPrimal = true;
   }
 
