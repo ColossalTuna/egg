@@ -42,10 +42,15 @@ interface Assembly {
 }
 
 // Per-slot occupancy of a chosen allocation. Repacked here because the seam the MILP returns through carries
-// only totals; if the exact packer cannot place the plan, the makespan shown is a best-fit estimate, not a claim.
-function slotSummariesOf(options: LaunchOption[], alloc: Map<number, number>, capacity: number): SlotSummary[] {
+// only totals; if the exact packer cannot place the plan, the makespan shown is a best-fit estimate, not a claim,
+// and `estimated` says so, so the result can carry it (SAT2-SOL-04).
+function slotSummariesOf(
+  options: LaunchOption[],
+  alloc: Map<number, number>,
+  capacity: number
+): { summaries: SlotSummary[]; estimated: boolean } {
   const idx = [...alloc.keys()].filter(i => (alloc.get(i) ?? 0) > 0);
-  if (idx.length === 0) return [];
+  if (idx.length === 0) return { summaries: [], estimated: false };
 
   const durations = idx.map(i => options[i].actualTime);
   const counts = idx.map(i => alloc.get(i) ?? 0);
@@ -76,11 +81,12 @@ function slotSummariesOf(options: LaunchOption[], alloc: Map<number, number>, ca
     }
   }
 
-  return load.map((seconds, b) => ({
+  const summaries = load.map((seconds, b) => ({
     loadSeconds: seconds,
     rawLoadSeconds: rawLoad[b],
     missionCount: count[b],
   }));
+  return { summaries, estimated: !witness };
 }
 
 // The whole plan, start to finish. Async because the solver is a WebAssembly module instantiated once;
@@ -135,7 +141,10 @@ export async function optimizeFull(args: OptimizeArgs): Promise<OptimizerSolutio
     if (allocation[i] > 0) alloc.set(i, allocation[i]);
   }
 
-  return assembleFullSolution(assembly, alloc, slotSummariesOf(feasibleOptions, alloc, S), craftSplit);
+  const { summaries, estimated } = slotSummariesOf(feasibleOptions, alloc, S);
+  const solution = assembleFullSolution(assembly, alloc, summaries, craftSplit);
+  if (estimated) solution.makespanIsEstimate = true;
+  return solution;
 }
 
 function assembleFullSolution(

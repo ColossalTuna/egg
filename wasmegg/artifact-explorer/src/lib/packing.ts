@@ -53,6 +53,18 @@ export function packWitness(
   // still empty, which is where the search prunes hardest.
   active.sort((a, b) => durations[b] - durations[a]);
 
+  // Load still to place from position t on, and the shortest active duration. A slot with less room than
+  // the shortest mission can take nothing more, so its room is wasted; when what is left exceeds the room
+  // that is still usable, the state cannot complete. This is what lets a near-exact fill (little or no
+  // slack anywhere) prune early instead of exhausting the node budget (SAT2-SOL-04). It only cuts states
+  // that would fail anyway, so every result the search returned before is returned unchanged.
+  const rest = new Array<number>(active.length + 1).fill(0);
+  for (let t = active.length - 1; t >= 0; t--) rest[t] = rest[t + 1] + counts[active[t]] * durations[active[t]];
+  const shortest = durations[active[active.length - 1]];
+  // Looser than the search's own per-slot EPS (one per slot, plus summation-order rounding on `rest`), so the
+  // cut can only miss a dead state, never remove a live one.
+  const restSlack = NUM_SLOTS * EPS + total * 1e-12;
+
   // Only infeasible states are worth memoising: the first `true` propagates straight to the root and ends the
   // search, so a feasible state is never re-queried.
   const infeasible = new Set<string>();
@@ -68,6 +80,9 @@ export function packWitness(
       exhausted = true;
       return false;
     }
+    let usable = 0;
+    for (const l of loads) if (capacity - l + EPS >= shortest) usable += capacity - l;
+    if (rest[t] > usable + restSlack) return false;
     const key = `${t}#${Math.round(loads[0])},${Math.round(loads[1])},${Math.round(loads[2])}`;
     if (infeasible.has(key)) return false;
 

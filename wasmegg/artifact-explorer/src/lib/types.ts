@@ -93,6 +93,10 @@ export interface OptimizerSolution {
   timeUnitsUsed: integer; // makespan: the busiest slot's floored load
   runningTimeSeconds: integer; // the busiest slot's real (raw) flight time
   slots?: SlotSummary[];
+  // Set when the exact packer found no slot assignment (provably none, or its node budget ran out) and
+  // `timeUnitsUsed`/`slots` come from the longest-first fallback instead: then the makespan is an
+  // estimate that may exceed the slot capacity, not an exact packing. Absent means exact.
+  makespanIsEstimate?: true;
   choiceHistory: LaunchSolution[];
   expectedDrops: DropRow[];
   supplyByItem: Map<string, number>;
