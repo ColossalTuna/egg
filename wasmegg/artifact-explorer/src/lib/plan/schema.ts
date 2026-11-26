@@ -39,6 +39,10 @@ export interface PlanSaveAction {
   type: string;
   totalTimeSeconds: number;
   payload?: unknown;
+  // Gems the action spends. Read for launches the plan already makes inside a Humility visit.
+  cost?: unknown;
+  // Set by AP on actions it staged from a humility missions file (`humility-plan:<visitId>`).
+  sourceTag?: unknown;
   endState: PlanSaveEndState;
 }
 

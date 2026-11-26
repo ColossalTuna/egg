@@ -6,6 +6,7 @@ import { computed, ref } from 'vue';
 import { ei, formatDuration, getLocalStorage, parseDurationDays, setLocalStorage } from 'lib';
 
 import { parseBudgetInput } from '@/store/budget-input';
+import { NUM_SLOTS } from '@/lib/packing';
 
 import type { HumilityVisit } from '@/lib/plan/read';
 import type { HumilityMissionsVisit } from '@/lib/plan/schema';
@@ -123,8 +124,17 @@ function waitTimeSecondsOf(settings: VisitSettings, plannedDurationSeconds: numb
   return override === null ? plannedDurationSeconds : parseDurationDays(override);
 }
 
-export function waitTimeSecondsFor(visit: HumilityVisit): number {
+// How long the player is on Humility for this visit: what they typed, or what the plan spends.
+function visitDurationSecondsFor(visit: HumilityVisit): number {
   return waitTimeSecondsOf(settingsFor(visit.visitId), visit.plannedDurationSeconds);
+}
+
+// Seconds per mission slot the answer can use: the visit's duration, less the slot time the
+// plan's own launches in the visit already hold, spread over the slots.
+export function waitTimeSecondsFor(visit: HumilityVisit): number {
+  const committed = visit.committedSlotSeconds ?? 0;
+  const duration = visitDurationSecondsFor(visit);
+  return committed > 0 ? Math.max(0, duration - committed / NUM_SLOTS) : duration;
 }
 
 export function waitTimeInputFor(visit: HumilityVisit): string {

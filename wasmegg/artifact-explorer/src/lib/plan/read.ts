@@ -3,6 +3,7 @@
 
 import { ei } from 'lib';
 
+import { NUM_SLOTS } from '@/lib/packing';
 import {
   AP_FTL_RESEARCH_ID,
   AP_ZEROG_RESEARCH_ID,
@@ -44,6 +45,12 @@ export interface HumilityVisit {
 
   epicResearchFTLLevel: number;
   epicResearchZerogLevel: number;
+
+  // Launches the plan itself already makes inside the visit (placed by hand in AP, not staged from
+  // a humility missions file). They hold mission slots and spend gems in the same window, so the
+  // answer gets only what they leave. Optional for visits persisted before these fields existed.
+  committedSlotSeconds?: number;
+  committedGemCost?: number;
 }
 
 export class PlanSaveError extends Error {}
@@ -178,6 +185,33 @@ function humilityFuelOf(action: PlanSaveAction): number {
   return amount === undefined ? 0 : requireNumber(amount, 'fuelTankAmounts.humility', action.id);
 }
 
+// AP's tag on actions it staged from a humility missions file. Those launches are a previous
+// answer for this visit, which a re-solve replaces, so they do not count as committed.
+function isStagedAnswer(action: PlanSaveAction): boolean {
+  return typeof action.sourceTag === 'string' && action.sourceTag.startsWith('humility-plan:');
+}
+
+// Slot time and gems a launch the plan already makes takes from the visit. Slot time is the
+// launch's schedule on each slot it uses (at most all of them); with no readable payload every
+// slot is taken for the whole action. Gems are the action's cost, or the bank it drops by.
+function committedLaunchOf(
+  action: PlanSaveAction,
+  previous: PlanSaveAction | undefined
+): { slotSeconds: number; gems: number } {
+  const payload = action.payload;
+  const missions = isRecord(payload) ? payload.totalMissions : undefined;
+  const schedule = isRecord(payload) ? payload.totalTimeSeconds : undefined;
+  const slotSeconds =
+    typeof missions === 'number' && missions >= 0 && typeof schedule === 'number' && schedule >= 0
+      ? Math.min(missions, NUM_SLOTS) * schedule
+      : NUM_SLOTS * secondsOf(action);
+  const gems =
+    typeof action.cost === 'number' && Number.isFinite(action.cost) && action.cost >= 0
+      ? action.cost
+      : Math.max(0, (previous?.endState?.bankValue ?? 0) - (action.endState?.bankValue ?? 0));
+  return { slotSeconds: Number.isFinite(slotSeconds) ? slotSeconds : 0, gems };
+}
+
 function fuelByEggOf(action: PlanSaveAction): Map<ei.Egg, number> {
   const amounts = action.endState.fuelTankAmounts;
   const fuels = new Map<ei.Egg, number>();
@@ -218,6 +252,8 @@ export function sliceHumilityVisits(save: PlanSave): HumilityVisit[] {
         earningsPerSecond: Math.max(earningsRateOf(action), earningsRateOf(previous)),
         epicResearchFTLLevel: ftl,
         epicResearchZerogLevel: zerog,
+        committedSlotSeconds: 0,
+        committedGemCost: 0,
       };
       visits.push(current);
     } else if (onHumility && current !== null) {
@@ -225,6 +261,11 @@ export function sliceHumilityVisits(save: PlanSave): HumilityVisit[] {
       // of the run and so is not counted.
       current.plannedDurationSeconds += secondsOf(action);
       current.earningsPerSecond = Math.max(current.earningsPerSecond, earningsRateOf(action));
+      if (action.type === 'launch_missions' && !isStagedAnswer(action)) {
+        const committed = committedLaunchOf(action, previous);
+        current.committedSlotSeconds = (current.committedSlotSeconds ?? 0) + committed.slotSeconds;
+        current.committedGemCost = (current.committedGemCost ?? 0) + committed.gems;
+      }
     } else if (!onHumility) {
       current = null;
     }
@@ -236,9 +277,9 @@ export function sliceHumilityVisits(save: PlanSave): HumilityVisit[] {
   return visits;
 }
 
-// Per-ship price limit: arrival bank plus earnings over the chosen duration.
-// This does not cap total spending.
+// Per-ship price limit: arrival bank plus earnings over the chosen duration, less the gems the
+// plan's own launches in the visit already spend. This does not cap total spending.
 export function gemBudgetFor(visit: HumilityVisit, durationSeconds: number): number {
   const seconds = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0;
-  return visit.bankValue + visit.earningsPerSecond * seconds;
+  return Math.max(0, visit.bankValue + visit.earningsPerSecond * seconds - (visit.committedGemCost ?? 0));
 }

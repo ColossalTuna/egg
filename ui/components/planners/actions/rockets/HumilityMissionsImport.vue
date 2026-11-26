@@ -74,6 +74,15 @@
           </label>
         </p>
 
+        <ul
+          v-if="missionsStore.isStaged(visit) && missionsStore.warningsFor(visit.visitId).length > 0"
+          class="mt-1 space-y-0.5"
+        >
+          <li v-for="(warning, i) in missionsStore.warningsFor(visit.visitId)" :key="i" class="text-[11px] text-amber-700">
+            {{ warning }}
+          </li>
+        </ul>
+
         <div class="mt-2 flex items-center gap-2">
           <button
             type="button"

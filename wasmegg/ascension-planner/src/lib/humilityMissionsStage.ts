@@ -133,6 +133,13 @@ export function previewLaunchDurations(
   return durations;
 }
 
+export interface StageResult {
+  actions: Action[];
+  initialEgg?: VirtueEgg;
+  /** Things the staged plan does differently from the explorer's answer, for the visit's card. */
+  warnings: string[];
+}
+
 export interface StageOptions {
   /** Equip the earnings set for the launch and put the elr set back after it. */
   equipEarningsSet?: boolean;
@@ -145,8 +152,9 @@ export function stageHumilityVisit(
   base: EngineState,
   context: SimulationContext,
   options: StageOptions = {}
-): { actions: Action[]; initialEgg?: VirtueEgg } {
+): StageResult {
   const tag = humilitySourceTag(visit.visitId);
+  const warnings: string[] = [];
   let actions = simulate(
     original.filter(action => action.sourceTag !== tag),
     context,
@@ -162,6 +170,19 @@ export function stageHumilityVisit(
   // Check capacity before expanding launches. Humility is produced on the farm
   // and needs no tank space, matching stores/rockets.ts isOverBudget.
   validateTank({ ...required, humility: 0 }, previous.tankLevel);
+
+  // Launches the plan already makes in this visit hold mission slots in the same window.
+  const handLaunches = actions
+    .slice(arrivalIndex + 1, launchIndex)
+    .filter((step): step is Action<'launch_missions'> => step.type === 'launch_missions');
+  if (handLaunches.length > 0) {
+    const missions = handLaunches.reduce((sum, step) => sum + step.payload.totalMissions, 0);
+    warnings.push(
+      `This visit already has ${missions} mission${missions === 1 ? '' : 's'} launched in the plan. They hold ` +
+        'mission slots and gems in the same window, so an answer not solved from a plan that includes them ' +
+        'may not fit alongside them.'
+    );
+  }
 
   let initialEgg: VirtueEgg | undefined;
   if (arrivalIndex === 0 && actions[0].type === 'start_ascension') {
@@ -288,7 +309,7 @@ export function stageHumilityVisit(
   const launchedIndex = result.findIndex(step => step.id === launch.id);
   const launched = result[launchedIndex];
   const remaining = Math.max(0, visit.makespanSeconds - launched.totalTimeSeconds);
-  if (remaining === 0) return { actions: result, initialEgg };
+  if (remaining === 0) return { actions: result, initialEgg, warnings };
   // The rest of the window is waited out on the set the plan had on, after any swap is undone.
   const tailIndex = launchedIndex + (swap ? 2 : 1);
   const tail = simulate(
@@ -297,5 +318,5 @@ export function stageHumilityVisit(
     result[tailIndex - 1].endState,
     tailIndex
   );
-  return { actions: [...result.slice(0, tailIndex), ...tail], initialEgg };
+  return { actions: [...result.slice(0, tailIndex), ...tail], initialEgg, warnings };
 }

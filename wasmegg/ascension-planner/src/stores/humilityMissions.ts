@@ -23,15 +23,18 @@ import { computeSnapshot } from 'lib/planners/engine/compute';
 export const useHumilityMissionsStore = defineStore('humilityMissions', () => {
   const file = ref<HumilityMissionsFile | null>(null);
   const drift = ref<FuelDrift[]>([]);
+  const warningsByVisit = ref<Record<string, string[]>>({});
 
   function load(json: unknown) {
     file.value = parseHumilityMissions(json);
     drift.value = [];
+    warningsByVisit.value = {};
   }
 
   function clear() {
     file.value = null;
     drift.value = [];
+    warningsByVisit.value = {};
   }
 
   const stagedTags = computed(() => {
@@ -44,6 +47,10 @@ export const useHumilityMissionsStore = defineStore('humilityMissions', () => {
 
   function isStaged(visit: HumilityMissionsVisit): boolean {
     return stagedTags.value.has(humilitySourceTag(visit.visitId));
+  }
+
+  function warningsFor(visitId: string): string[] {
+    return warningsByVisit.value[visitId] ?? [];
   }
 
   async function stage(visit: HumilityMissionsVisit, options: StageOptions = {}) {
@@ -69,7 +76,8 @@ export const useHumilityMissionsStore = defineStore('humilityMissions', () => {
     }
     actionsStore.replaceSimulatedActions(replacement.actions, initialSnapshot);
     drift.value = fuelDrift(visit, fuelForLaunches(resolveLaunches(visit)));
+    warningsByVisit.value = { ...warningsByVisit.value, [visit.visitId]: replacement.warnings };
   }
 
-  return { file, drift, load, clear, isStaged, stage };
+  return { file, drift, load, clear, isStaged, warningsFor, stage };
 });
