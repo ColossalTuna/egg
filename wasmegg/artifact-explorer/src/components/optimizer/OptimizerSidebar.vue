@@ -388,6 +388,8 @@ import {
   setGemCostMode,
   setGemCostInput,
   setCraftingCostInput,
+  normalizeGemCostDraft,
+  normalizeCraftingCostDraft,
   effectiveConfig,
   effectiveFuelByEggCapacity,
   EFFORT_LEVELS,
@@ -430,7 +432,6 @@ import {
 } from '@/store/plan';
 import { parsePlanSave, planLabelFor, PlanSaveError, sliceHumilityVisits } from '@/lib/plan/read';
 import { readImportedJson } from 'lib/planners/utils/export';
-import { normalizeBudgetInput } from '@/store/budget-input';
 import { buildHumilityMissionsFile, humilityMissionsFilename } from '@/lib/plan/write';
 
 // Set the first time the export help is dismissed, so it opens unprompted only once.
@@ -642,8 +643,8 @@ export default defineComponent({
     }
 
     const onGemModeChange = (event: Event) => setGemCostMode((event.target as HTMLSelectElement).value as GemCostMode);
-    const normalizeGemCost = () => setGemCostInput(normalizeBudgetInput(gemCostInput.value));
-    const normalizeCraftingCost = () => setCraftingCostInput(normalizeBudgetInput(craftingCostInput.value));
+    const normalizeGemCost = normalizeGemCostDraft;
+    const normalizeCraftingCost = normalizeCraftingCostDraft;
     const gemCostFieldValue = computed(() =>
       gemCostMode.value === 'custom'
         ? gemCostInput.value
@@ -704,7 +705,8 @@ export default defineComponent({
 
     const exportDisabledReason = computed(() => {
       if (solvedVisitCount.value === 0) return 'Solve at least one visit first.';
-      if (props.exportBlocked) return 'Unavailable while a solve is running or the settings are invalid.';
+      if (props.exportBlocked)
+        return "Unavailable while this visit's recorded answer is being re-solved or its settings are invalid.";
       return undefined;
     });
 

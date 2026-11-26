@@ -45,7 +45,7 @@ import {
   waitTimeSecondsFor,
   type GemCostMode,
 } from './plan';
-import { formatBudgetValue, parseBudgetInput } from '@/store/budget-input';
+import { formatBudgetValue, normalizeBudgetInput, parseBudgetInput } from '@/store/budget-input';
 import { gemBudgetFor } from '@/lib/plan/read';
 export type { ExtrasConfig, MissionFilters, OverrideFlags, EffortLevel } from './schema';
 export { EFFORT_LEVELS, EFFORT_LAUNCH_PERIOD_SECONDS } from './schema';
@@ -336,6 +336,7 @@ export function setPlayerData(backup: ei.IBackup): void {
   // The cap tracks the save's balance for as long as it is off, so ticking it on means "what I can
   // afford right now". Once on the value is the user's, and reloading a save leaves it be.
   if (!missionFilters.value.maxGoldenEggCostEnabled) {
+    craftingDraft.value = null;
     missionFilters.value.maxGoldenEggCost = playerGoldenEggs.value;
   }
 
@@ -495,6 +496,9 @@ export function setMaxGemCost(cost: number): void {
 }
 
 export function setMaxGoldenEggCostEnabled(enabled: boolean): void {
+  // A draft outliving "off" would come back on tick in place of the balance the field now tracks,
+  // and only until the next reload drops it.
+  if (!enabled) craftingDraft.value = null;
   missionFilters.value.maxGoldenEggCostEnabled = enabled;
 }
 
@@ -520,8 +524,10 @@ export const craftingCostInput = computed(
 export function setGemCostMode(mode: GemCostMode): void {
   const visit = activePlanVisit.value;
   if (visit) {
-    if (mode === 'custom' && gemCostMode.value === 'plan') {
-      setVisitGemCostInput(visit.visitId, formatBudgetValue(effectiveMaxGemCost.value ?? 0));
+    // Seed an Override nobody has filled yet from the plan's budget, whatever mode it is entered from;
+    // a cap already in it is the user's and comes back as they left it.
+    if (mode === 'custom' && activeVisitSettings.value?.gemCostInput === '') {
+      setVisitGemCostInput(visit.visitId, formatBudgetValue(gemBudgetFor(visit, effectiveWaitTimeSeconds.value)));
     }
     setVisitGemCostMode(visit.visitId, mode);
   } else missionFilters.value.maxGemCostEnabled = mode === 'custom';
@@ -538,6 +544,14 @@ export function setCraftingCostInput(raw: string): void {
   const value = parseBudgetInput(raw);
   if (Number.isFinite(value)) missionFilters.value.maxGoldenEggCost = value;
   craftingDraft.value = raw;
+}
+// Blur normalization rewrites only what was typed. With no draft the field shows the stored cap
+// rounded for display, and writing that back would replace the cap with its rounding.
+export function normalizeGemCostDraft(): void {
+  if (gemDraft.value !== null) setGemCostInput(normalizeBudgetInput(gemDraft.value));
+}
+export function normalizeCraftingCostDraft(): void {
+  if (craftingDraft.value !== null) setCraftingCostInput(normalizeBudgetInput(craftingDraft.value));
 }
 // A field shows four significant figures; a cap nobody has typed over is still enforced to the digit.
 export const effectiveMaxGemCost = computed<number | undefined>(() => {

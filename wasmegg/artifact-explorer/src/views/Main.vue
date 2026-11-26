@@ -14,7 +14,11 @@
     <p>&dagger; Artifacts marked with &dagger; are not available from missions.</p>
   </div>
   <router-view name="artifact" />
-  <fuel-tank-planner v-if="selectedTankArtifactIds.length > 0" :artifact-ids="selectedTankArtifactIds" />
+  <!-- A plan visit keeps its controls (visit picker, export, unload) even after its last target is removed. -->
+  <fuel-tank-planner
+    v-if="selectedTankArtifactIds.length > 0 || activePlanVisit !== null"
+    :artifact-ids="selectedTankArtifactIds"
+  />
   <artifact-grid />
 </template>
 
@@ -24,7 +28,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import { parseKnownTankIds } from '@/lib/filter';
 import { offPlanTankTargets } from '@/store';
-import { activePlanVisit, activeVisitSettings, setVisitTargets } from '@/store/plan';
+import { activePlanVisit, activeVisitSettings, setCurrentVisit, setVisitTargets } from '@/store/plan';
 import SpoilerAlert from '@/components/SpoilerAlert.vue';
 import ArtifactGrid from '@/components/ArtifactGrid.vue';
 import ArtifactSelector from '@/components/ArtifactSelector.vue';
@@ -96,13 +100,17 @@ export default defineComponent({
       },
     });
 
-    // Import targets from legacy links on arrival, then return to the home route.
+    // Import targets from legacy links on arrival, then return to the home route. A link fills the
+    // standalone selection and goes off-plan; it never rewrites a stored visit's targets or answer.
     watch(
       tankPlannerArtifactId,
       current => {
         if (current === null) return;
         const ids = parseKnownTankIds(current);
-        if (ids.length > 0) selectedTankArtifactIds.value = ids;
+        if (ids.length > 0) {
+          if (activePlanVisit.value) setCurrentVisit(null);
+          offPlanTankTargets.value = [...ids];
+        }
         router.replace({ name: 'home' });
       },
       { immediate: true }
@@ -110,6 +118,7 @@ export default defineComponent({
 
     return {
       route,
+      activePlanVisit,
       selectedMissionId,
       selectedArtifactId,
       selectedTankArtifactIds,

@@ -3,7 +3,7 @@
     <div class="lg:sticky lg:top-4 self-start">
       <optimizer-sidebar
         :player-id="playerId"
-        :export-blocked="computing || !inputsValid || !!computeError"
+        :export-blocked="exportBlocked"
         :wait-time-days="waitTimeDays"
         :time-budget-invalid="!timeBudgetValid"
         @submit-player-id="submitPlayerId"
@@ -40,7 +40,13 @@
             </p>
             <p v-else-if="computeError" class="text-sm text-red-600">Could not compute a plan: {{ computeError }}</p>
             <p v-else-if="solutionViews.length === 0" class="text-sm text-gray-400">
-              {{ inputsValid ? 'No ship set found for the current settings.' : invalidBudgetMessage }}
+              {{
+                artifactIds.length === 0
+                  ? 'Select at least one target to solve this visit.'
+                  : inputsValid
+                    ? 'No ship set found for the current settings.'
+                    : invalidBudgetMessage
+              }}
             </p>
           </div>
           <div v-if="dimSolution" role="status" class="absolute inset-0 flex items-start justify-center pt-8">
@@ -126,6 +132,10 @@ import OptimizerSidebar from './optimizer/OptimizerSidebar.vue';
 import OptimizerInventoryPanel from './optimizer/OptimizerInventoryPanel.vue';
 import OptimizerSolutionCard from './optimizer/OptimizerSolutionCard.vue';
 
+// Module-wide because the player data it guards is: a response is applied only if no newer request,
+// from this mount or a later one, has been made since.
+let latestPlayerRequest = 0;
+
 export default defineComponent({
   components: { OptimizerSidebar, OptimizerInventoryPanel, OptimizerSolutionCard },
   props: {
@@ -150,8 +160,9 @@ export default defineComponent({
 
     const playerId = ref(new URLSearchParams(window.location.search).get('playerId') || getSavedPlayerID() || '');
     if (playerId.value) {
+      const request = ++latestPlayerRequest;
       requestFirstContact(playerId.value).then(data => {
-        if (data.backup) setPlayerData(data.backup);
+        if (request === latestPlayerRequest && data.backup) setPlayerData(data.backup);
       });
     }
 
@@ -170,14 +181,24 @@ export default defineComponent({
     const submitPlayerId = async (id: string) => {
       playerId.value = id;
       savePlayerID(id);
+      const request = ++latestPlayerRequest;
       const data = await requestFirstContact(id);
-      if (data.backup) setPlayerData(data.backup);
+      if (request === latestPlayerRequest && data.backup) setPlayerData(data.backup);
     };
 
     const computing = ref(false);
     const computeError = ref('');
     const computedResults = ref<OptimizerSolution[]>([]);
     const inputsValid = computed(() => timeBudgetValid.value && costBudgetsValid.value);
+    // A plan visit can be emptied of targets while its controls stay on screen; there is nothing to solve.
+    const canSolve = computed(() => inputsValid.value && artifactIds.value.length > 0);
+    // Export carries recorded answers only. The active visit's state can hold it back only when that
+    // visit's own answer is among them and is being re-solved, or now sits behind invalid inputs.
+    const exportBlocked = computed(() => {
+      const visit = activePlanVisit.value;
+      if (!visit || !loadedPlan.value?.solved[visit.visitId]) return false;
+      return computing.value || !inputsValid.value || !!computeError.value;
+    });
     // Names the field that's blocking a solve, and — for a plan visit whose time budget is empty
     // because the plan hasn't scheduled its missions yet — says why, rather than pointing at "the
     // budget" in general.
@@ -249,7 +270,7 @@ export default defineComponent({
     const craftUnitPrices = computed(() => computeCraftUnitPrices(recipeDag.value, playerInventory.value));
 
     const computeInputs = computed<OptimizerRequestInput | null>(() => {
-      if (!inputsValid.value) return null;
+      if (!canSolve.value) return null;
       const maxGemCost = effectiveMaxGemCost.value;
       const craftBudget =
         effectiveCraftingBudget.value !== undefined
@@ -281,6 +302,8 @@ export default defineComponent({
       const input = computeInputs.value;
       if (!input) {
         computing.value = false;
+        computedResults.value = [];
+        snapshot.value = null;
         return;
       }
       const visit = activePlanVisit.value;
@@ -334,7 +357,7 @@ export default defineComponent({
         ++generation; // Retire even a running request before the debounced replacement starts.
         clearTimeout(debounceTimer);
         computeError.value = '';
-        computing.value = inputsValid.value;
+        computing.value = canSolve.value;
         if (computing.value) debounceTimer = setTimeout(runCompute, 250);
         else {
           computedResults.value = [];
@@ -394,6 +417,7 @@ export default defineComponent({
       dimSolution,
       snapshot,
       inputsValid,
+      exportBlocked,
       timeBudgetValid,
       invalidBudgetMessage,
       computing,

@@ -51,7 +51,8 @@ function newVisitSettings(): VisitSettings {
     // The plan's own numbers, until the player says otherwise.
     fuelBudget: 'banked',
     gemCostMode: 'plan',
-    gemCostInput: '0',
+    // Empty until Override is first entered, which seeds it from the plan's budget.
+    gemCostInput: '',
   };
 }
 
