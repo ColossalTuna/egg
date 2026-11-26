@@ -112,7 +112,17 @@ export function previewLaunchDurations(
   context: SimulationContext
 ): LaunchDurations | null {
   const tag = humilitySourceTag(visit.visitId);
-  const untagged = actions.filter(action => action.sourceTag !== tag);
+  let untagged = actions.filter(action => action.sourceTag !== tag);
+  // Staging simulates the plan without its earlier answer, and that answer's extra phases change
+  // what follows them (each shift costs soul eggs). The stored end states after the first tagged
+  // action are therefore stale, so they are worked out again the same way.
+  const firstTagged = actions.findIndex(action => action.sourceTag === tag);
+  if (firstTagged > 0) {
+    untagged = [
+      ...untagged.slice(0, firstTagged),
+      ...simulate(untagged.slice(firstTagged), context, untagged[firstTagged - 1].endState, firstTagged),
+    ];
+  }
   const launchIndex = humilityVisitInsertIndex(untagged, visit.visitId);
   if (launchIndex === null || launchIndex === 0) return null;
   const previous = untagged[launchIndex - 1].endState;
