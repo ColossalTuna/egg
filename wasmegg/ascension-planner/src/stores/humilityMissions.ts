@@ -20,6 +20,19 @@ import { useActionsStore } from './actions';
 import { useInitialStateStore } from './initialState';
 import { computeSnapshot } from 'lib/planners/engine/compute';
 
+/** Whether the plan holds this card's answer, another answer for the same visit, or none. */
+export type StagedState = 'none' | 'this' | 'other';
+
+// Launches as a multiset keyed by ship, duration and target, so order does not matter.
+function launchKey(launches: readonly { ship: number; duration: number; targetAfxId?: number; count: number }[]) {
+  const counts = new Map<string, number>();
+  for (const { ship, duration, targetAfxId, count } of launches) {
+    const key = `${ship}/${duration}/${targetAfxId}`;
+    counts.set(key, (counts.get(key) ?? 0) + count);
+  }
+  return JSON.stringify([...counts].sort(([a], [b]) => a.localeCompare(b)));
+}
+
 export const useHumilityMissionsStore = defineStore('humilityMissions', () => {
   const file = ref<HumilityMissionsFile | null>(null);
   const drift = ref<FuelDrift[]>([]);
@@ -37,16 +50,29 @@ export const useHumilityMissionsStore = defineStore('humilityMissions', () => {
     warningsByVisit.value = {};
   }
 
-  const stagedTags = computed(() => {
-    const tags = new Set<string>();
+  // The staged launch for each visit, keyed by its launches.
+  const stagedLaunches = computed(() => {
+    const launches = new Map<string, string>();
     for (const action of useActionsStore().actions) {
-      if (action.sourceTag) tags.add(action.sourceTag);
+      if (action.sourceTag && action.type === 'launch_missions') {
+        launches.set(action.sourceTag, launchKey(action.payload.missions));
+      }
     }
-    return tags;
+    return launches;
   });
 
+  function stagedState(visit: HumilityMissionsVisit): StagedState {
+    const staged = stagedLaunches.value.get(humilitySourceTag(visit.visitId));
+    if (staged === undefined) return 'none';
+    try {
+      return staged === launchKey(resolveLaunches(visit)) ? 'this' : 'other';
+    } catch {
+      return 'other';
+    }
+  }
+
   function isStaged(visit: HumilityMissionsVisit): boolean {
-    return stagedTags.value.has(humilitySourceTag(visit.visitId));
+    return stagedState(visit) === 'this';
   }
 
   function warningsFor(visitId: string): string[] {
@@ -79,5 +105,5 @@ export const useHumilityMissionsStore = defineStore('humilityMissions', () => {
     warningsByVisit.value = { ...warningsByVisit.value, [visit.visitId]: replacement.warnings };
   }
 
-  return { file, drift, load, clear, isStaged, warningsFor, stage };
+  return { file, drift, load, clear, isStaged, stagedState, warningsFor, stage };
 });

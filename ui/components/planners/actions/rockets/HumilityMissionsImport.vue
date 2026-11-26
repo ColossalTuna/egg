@@ -74,6 +74,10 @@
           </label>
         </p>
 
+        <p v-if="missionsStore.stagedState(visit) === 'other'" class="mt-1 text-[11px] text-amber-700">
+          A different answer is staged for this visit. Staging this one replaces it.
+        </p>
+
         <ul
           v-if="missionsStore.isStaged(visit) && missionsStore.warningsFor(visit.visitId).length > 0"
           class="mt-1 space-y-0.5"

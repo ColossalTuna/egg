@@ -279,7 +279,7 @@ describe('staging a Humility visit', () => {
     const fuel = actions.actions.find(a => a.type === 'store_fuel' && a.payload.egg === 'integrity')!;
     expect(fuel.dependsOn).toContain(actions.actions[0].id);
     expect(actions.actions[0].dependents).toContain(fuel.id);
-    expect(useHumilityMissionsStore().isStaged(visit())).toBe(true);
+    expect(useHumilityMissionsStore().isStaged(visit('BCR'))).toBe(true);
   });
 
   it('preserves the initial farm and snapshot except for the starting egg, including on export', async () => {
