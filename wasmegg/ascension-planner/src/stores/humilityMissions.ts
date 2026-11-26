@@ -20,6 +20,10 @@ import { useActionsStore } from './actions';
 import { useInitialStateStore } from './initialState';
 import { computeSnapshot } from 'lib/planners/engine/compute';
 
+export interface VisitFuelDrift extends FuelDrift {
+  visitId: string;
+}
+
 /** Whether the plan holds this card's answer, another answer for the same visit, or none. */
 export type StagedState = 'none' | 'this' | 'other';
 
@@ -35,18 +39,23 @@ function launchKey(launches: readonly { ship: number; duration: number; targetAf
 
 export const useHumilityMissionsStore = defineStore('humilityMissions', () => {
   const file = ref<HumilityMissionsFile | null>(null);
-  const drift = ref<FuelDrift[]>([]);
+  // Kept per visit: each staging replaces only its own visit's entries.
+  const driftByVisit = ref<Record<string, FuelDrift[]>>({});
   const warningsByVisit = ref<Record<string, string[]>>({});
+
+  const drift = computed<VisitFuelDrift[]>(() =>
+    Object.entries(driftByVisit.value).flatMap(([visitId, entries]) => entries.map(entry => ({ ...entry, visitId })))
+  );
 
   function load(json: unknown) {
     file.value = parseHumilityMissions(json);
-    drift.value = [];
+    driftByVisit.value = {};
     warningsByVisit.value = {};
   }
 
   function clear() {
     file.value = null;
-    drift.value = [];
+    driftByVisit.value = {};
     warningsByVisit.value = {};
   }
 
@@ -75,6 +84,10 @@ export const useHumilityMissionsStore = defineStore('humilityMissions', () => {
     return stagedState(visit) === 'this';
   }
 
+  function driftFor(visitId: string): FuelDrift[] {
+    return driftByVisit.value[visitId] ?? [];
+  }
+
   function warningsFor(visitId: string): string[] {
     return warningsByVisit.value[visitId] ?? [];
   }
@@ -101,9 +114,12 @@ export const useHumilityMissionsStore = defineStore('humilityMissions', () => {
       }
     }
     actionsStore.replaceSimulatedActions(replacement.actions, initialSnapshot);
-    drift.value = fuelDrift(visit, fuelForLaunches(resolveLaunches(visit)));
+    driftByVisit.value = {
+      ...driftByVisit.value,
+      [visit.visitId]: fuelDrift(visit, fuelForLaunches(resolveLaunches(visit))),
+    };
     warningsByVisit.value = { ...warningsByVisit.value, [visit.visitId]: replacement.warnings };
   }
 
-  return { file, drift, load, clear, isStaged, stagedState, warningsFor, stage };
+  return { file, drift, driftByVisit, load, clear, isStaged, stagedState, driftFor, warningsFor, stage };
 });

@@ -87,6 +87,18 @@
           </li>
         </ul>
 
+        <div
+          v-if="missionsStore.isStaged(visit) && missionsStore.driftFor(visit.visitId).length > 0"
+          class="mt-1 rounded-md border border-red-300 bg-red-50 p-2"
+        >
+          <p class="text-[11px] font-bold text-red-700">Fuel amounts differ. Using this planner's values.</p>
+          <ul class="mt-1 space-y-0.5">
+            <li v-for="d in missionsStore.driftFor(visit.visitId)" :key="d.egg" class="text-[11px] text-red-700">
+              {{ d.egg }}: here {{ formatNumber(d.ours, 2) }}, in the file {{ formatNumber(d.theirs, 2) }}
+            </li>
+          </ul>
+        </div>
+
         <div class="mt-2 flex items-center gap-2">
           <button
             type="button"
@@ -102,15 +114,6 @@
         </div>
       </li>
     </ul>
-
-    <div v-if="missionsStore.drift.length > 0" class="rounded-md border border-red-300 bg-red-50 p-2">
-      <p class="text-[11px] font-bold text-red-700">Fuel amounts differ. Using this planner's values.</p>
-      <ul class="mt-1 space-y-0.5">
-        <li v-for="d in missionsStore.drift" :key="d.egg" class="text-[11px] text-red-700">
-          {{ d.egg }}: here {{ formatNumber(d.ours, 2) }}, in the file {{ formatNumber(d.theirs, 2) }}
-        </li>
-      </ul>
-    </div>
   </div>
 </template>
 

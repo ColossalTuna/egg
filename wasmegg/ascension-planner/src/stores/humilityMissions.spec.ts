@@ -56,7 +56,8 @@ describe('switching plans', () => {
     const fixture = new URL('../../../artifact-explorer/tests/fixtures/humility-missions.json', import.meta.url);
     const store = useHumilityMissionsStore();
     store.load(JSON.parse(readFileSync(fixture, 'utf8')));
-    store.drift = [{ egg: 'curiosity', ours: 1, theirs: 2 }];
+    store.driftByVisit = { humility: [{ egg: 'curiosity', ours: 1, theirs: 2 }] };
+    expect(store.drift).toHaveLength(1);
     expect(store.file).not.toBeNull();
 
     // Every mode flow (library load, start from scratch, plan future, continue, reconcile) starts here.
