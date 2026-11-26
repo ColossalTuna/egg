@@ -116,6 +116,16 @@ function scaleBound(bound: number, scale: number): number {
   return scaled;
 }
 
+// A row whose own coefficients span more than the ingestion window, so no scale can write it (SOL-11/12).
+// A property of the inputs' magnitudes rather than a failed solve, which is why `solveWith` can catch it
+// alone and fall back to the plans that need no MILP.
+export class RowRangeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RowRangeError';
+  }
+}
+
 class Rows {
   private readonly names: string[] = [];
   private readonly offsets: number[] = [];
@@ -166,7 +176,7 @@ class Rows {
     // deletes its smallest terms silently — a budget row losing its coefficients stops budgeting, with
     // nothing anywhere saying so.
     if (smallest * scale <= SMALL_MATRIX_VALUE || largest * scale >= LARGE_MATRIX_VALUE) {
-      throw new Error(
+      throw new RowRangeError(
         `row ${name} spans ${smallest * scale} to ${largest * scale} after scaling, outside ` +
           `HiGHS's ingestion window (${SMALL_MATRIX_VALUE}, ${LARGE_MATRIX_VALUE})`
       );

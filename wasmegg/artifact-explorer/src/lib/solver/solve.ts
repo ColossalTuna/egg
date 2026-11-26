@@ -1,10 +1,10 @@
 // The outer approximation: holds each concave g(s_T) under a fixed tangent grid so
 // HiGHS sees a MILP, and returns an incumbent only once `./evaluator` certifies it.
 
-import type { CraftSplitReport, MilpLimits, MilpSolve, PlanProblem, PlanResult } from './types';
+import type { CraftSplitReport, MilpLimits, MilpModel, MilpSolve, PlanProblem, PlanResult } from './types';
 import { EXACT_PRECISION, STEERING_PRECISION, evaluateCounts, type EvalResult } from './evaluator';
-import { buildModel, type Model } from './model';
-import { buildOaMilp, decodeCounts, effectiveQs, layoutOf, nCol, scaleLps, type Layout } from './milp';
+import { buildModel, maxLaunches, type Model } from './model';
+import { RowRangeError, buildOaMilp, decodeCounts, effectiveQs, layoutOf, nCol, scaleLps, type Layout } from './milp';
 
 export interface Tuning {
   maxNodes: number;
@@ -147,6 +147,37 @@ function scales(model: Model, qs: readonly number[], solve: MilpSolve, limits: M
   return theta;
 }
 
+// The plans that need no MILP, for when a row cannot be written at any scale: each group alone, flown as
+// often as its own budgets and the slots allow, kept only if it beats the empty plan. Run whatever the empty
+// plan scores, so owned stock that already scores every target cannot switch the fallback off (SAT2-SOL-02).
+function singleGroupPlan(model: Model, empty: readonly number[]): readonly number[] {
+  const judge = (counts: readonly number[]) => {
+    try {
+      return evaluateCounts(model, counts, STEERING_PRECISION).logJoint;
+    } catch {
+      return -Infinity;
+    }
+  };
+  let best = empty;
+  let bestValue = judge(empty);
+  const capacity = model.timeCapacitySeconds;
+  for (let g = 0; g < model.groups.length; g++) {
+    const grp = model.groups[g];
+    const perSlot = grp.timeSeconds > 0 ? maxLaunches(capacity, grp.timeSeconds) : Infinity;
+    const n = Math.floor(Math.min(grp.cap, model.slots * perSlot));
+    if (!(n >= 1) || !Number.isFinite(n)) continue;
+    const counts = new Array<number>(model.groups.length).fill(0);
+    counts[g] = n;
+    if (fuelExceeded(model, counts)) continue;
+    const value = judge(counts);
+    if (value > bestValue) {
+      best = counts;
+      bestValue = value;
+    }
+  }
+  return best;
+}
+
 export function solveWith(
   problem: PlanProblem,
   solve: MilpSolve,
@@ -159,10 +190,18 @@ export function solveWith(
 
   const qs = effectiveQs(model);
   const limits: MilpLimits = { maxNodes: tuning.maxNodes, relGap: MIP_REL_GAP };
-  const theta = scales(model, qs, solve, limits);
-  if (!theta) return emit(problem, model, empty, report);
+  // Only a row no scale can write is caught; anything else propagates so the caller reports an error.
+  let oa: MilpModel | null = null;
+  try {
+    const theta = scales(model, qs, solve, limits);
+    if (theta) oa = buildOaMilp(model, qs, theta, tuning.sigmaGrid);
+  } catch (error: unknown) {
+    if (!(error instanceof RowRangeError)) throw error;
+    return emit(problem, model, singleGroupPlan(model, empty), report);
+  }
+  if (!oa) return emit(problem, model, empty, report);
 
-  const solution = solve(buildOaMilp(model, qs, theta, tuning.sigmaGrid), limits);
+  const solution = solve(oa, limits);
   // A whitelist, not a blacklist of the failures known today: only these two carry a point that is a
   // plan rather than a waypoint on a ray or a leftover from an errored solve.
   if (solution.status !== 'optimal' && solution.status !== 'feasible') return emit(problem, model, empty, report);
