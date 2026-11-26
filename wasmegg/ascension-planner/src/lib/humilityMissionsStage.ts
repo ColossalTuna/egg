@@ -184,10 +184,18 @@ export function stageHumilityVisit(
     );
   }
 
+  const cost = launchCost(launches);
   let initialEgg: VirtueEgg | undefined;
+  // True when the plan opens on Humility and fetching fuel would cost the bank the launch is paid
+  // from; the launch then goes on the start as it is, short of that fuel.
+  let keepStart = false;
   if (arrivalIndex === 0 && actions[0].type === 'start_ascension') {
-    initialEgg = fuelShortfalls(required, previous.fuelTankAmounts).find(fuel => fuel.egg !== 'humility')?.egg;
-    if (initialEgg) {
+    const fuelEgg = fuelShortfalls(required, previous.fuelTankAmounts).find(fuel => fuel.egg !== 'humility')?.egg;
+    if (fuelEgg) {
+      const short = fuelShortfalls(required, previous.fuelTankAmounts)
+        .filter(fuel => fuel.egg !== 'humility')
+        .map(fuel => `${formatNumber(fuel.amount, 2)} ${fuel.egg}`)
+        .join(', ');
       const start = actions[0];
       const initialFarmState = start.payload.initialFarmState;
       const fuelStart: Action<'start_ascension'> = {
@@ -195,23 +203,47 @@ export function stageHumilityVisit(
         id: generateActionId(),
         payload: {
           ...start.payload,
-          initialEgg,
+          initialEgg: fuelEgg,
           ...(initialFarmState && {
-            initialFarmState: { ...initialFarmState, eggType: ei.Egg[initialEgg.toUpperCase() as keyof typeof ei.Egg] },
+            initialFarmState: { ...initialFarmState, eggType: ei.Egg[fuelEgg.toUpperCase() as keyof typeof ei.Egg] },
           }),
         },
       };
       // Keep the visit id on its new incoming shift so exports and restaging still find it.
       const arrival = {
-        ...createSimAction('shift', { fromEgg: initialEgg, toEgg: 'humility', newShiftCount: 0 }),
+        ...createSimAction('shift', { fromEgg: fuelEgg, toEgg: 'humility', newShiftCount: 0 }),
         id: visit.visitId,
         timestamp: Date.now(),
       };
-      base = { ...base, currentEgg: initialEgg };
-      actions = simulate([fuelStart, arrival, ...actions.slice(1)], context, base);
-      arrivalIndex = 1;
-      launchIndex = humilityVisitInsertIndex(actions, visit.visitId)!;
-      previous = actions[launchIndex - 1].endState;
+      const fuelBase = { ...base, currentEgg: fuelEgg };
+      const rewritten = simulate([fuelStart, arrival, ...actions.slice(1)], context, fuelBase);
+      const rewrittenLaunchIndex = humilityVisitInsertIndex(rewritten, visit.visitId)!;
+      const rewrittenPrevious = rewritten[rewrittenLaunchIndex - 1].endState;
+      const startBank = start.endState.bankValue;
+      if (previous.bankValue >= cost && rewrittenPrevious.bankValue < cost) {
+        // The shift to Humility would empty the bank the explorer budgeted this launch against,
+        // and the launch would have to be saved for from a restarted farm.
+        keepStart = true;
+        warnings.push(
+          `The plan opens on Humility and the tank is short of ${short}. Fetching it means starting on ` +
+            `${fuelEgg} and shifting to Humility, which empties the bank (${formatNumber(startBank, 2)}) this ` +
+            'launch is paid from and restarts the farm, so the launch was staged on the start without that ' +
+            'fuel. Store it before this visit, or re-solve with the fuel the tank holds.'
+        );
+      } else {
+        initialEgg = fuelEgg;
+        base = fuelBase;
+        actions = rewritten;
+        arrivalIndex = 1;
+        launchIndex = rewrittenLaunchIndex;
+        previous = rewrittenPrevious;
+        if (startBank > 0 || start.endState.population > 1) {
+          warnings.push(
+            `To fetch ${short}, the plan now starts on ${fuelEgg} and shifts to Humility. That shift ` +
+              `empties the bank (${formatNumber(startBank, 2)}) and restarts the farm.`
+          );
+        }
+      }
     }
   }
 
@@ -259,7 +291,7 @@ export function stageHumilityVisit(
   // Store remaining fuel in new egg visits: shift, refill habs, then store.
   // Simulation recalculates these seed payloads against the post-shift state.
   const newPhases: Action[] = [];
-  for (const { egg } of fuelShortfalls(required, previous.fuelTankAmounts)) {
+  for (const { egg } of keepStart ? [] : fuelShortfalls(required, previous.fuelTankAmounts)) {
     if (egg === 'humility') continue;
     newPhases.push(
       action('shift', { fromEgg: previous.currentEgg, toEgg: egg, newShiftCount: 0 }),
@@ -278,7 +310,7 @@ export function stageHumilityVisit(
   }
   insert(arrivalIndex, newPhases);
 
-  const { payload, cost } = launchPayload(launches, context);
+  const { payload } = launchPayload(launches, context);
   const launch = action('launch_missions', payload, cost);
   const swap = options.equipEarningsSet && canSwapToEarningsSet(previous);
   insert(
